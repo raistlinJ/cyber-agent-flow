@@ -4,14 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Acosta Kali MCP Frontend</title>
-    <meta name="description" content="Run Kali Linux MCP tools with local LLMs via the Model Context Protocol">
+    <title>AgentFlow</title>
+    <meta name="description" content="Run MCP tools with local LLMs via AgentFlow">
     <!-- Google Fonts for typography -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=static_asset_version) }}">
     <!-- Phosphor Icons fallback (deferred to avoid DNS blocking UI) -->
     <script src="https://unpkg.com/@phosphor-icons/web" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
 </head>
 
 <body>
@@ -29,9 +30,9 @@
                         d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200ZM176,128a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h80A8,8,0,0,1,176,128Z">
                     </path>
                 </svg>
-                <h1>Acosta Kali MCP Frontend</h1>
+                <h1>AgentFlow</h1>
             </div>
-            <p class="subtitle">Run Kali tools with local LLMs via the Model Context Protocol</p>
+            <p class="subtitle">Run Agent tools with local LLMs via the Model Context Protocol</p>
         </header>
 
         <div class="glass-panel layout-wrapper">
@@ -263,9 +264,9 @@
                             <div class="divider"></div>
 
                             <div class="form-section">
-                                <h2 class="section-title" title="Configure the command used to launch the mcp-kali-server">
+                                <h2 class="section-title" title="Configure the command used to launch the mcp-server">
                                     <i class="ph ph-shield-check"></i>
-                                    Kali Server Integration
+                                    AgentFlow Server Integration
                                 </h2>
 
                                 <div class="input-group">
@@ -273,8 +274,8 @@
                                     <div class="select-wrapper">
                                         <i class="ph ph-terminal icon-left"></i>
                                         <select id="kali-command-type">
-                                            <option value="python" selected>Custom Acosta MCP for Kali</option>
-                                            <option value="apt">APT Package (mcp-kali-server)</option>
+                                            <option value="python" selected>AgentFlow Local MCP</option>
+                                            <option value="apt">APT Package (mcp-server)</option>
                                         </select>
                                         <i class="ph ph-caret-down icon-right"></i>
                                     </div>
@@ -1334,6 +1335,101 @@
                     <div class="watcher-modal-footer">
                         <button id="watcher-modal-copy" class="btn btn-secondary" style="width:auto">Copy Scaffold</button>
                         <button id="watcher-modal-dismiss" class="btn btn-secondary" style="width:auto">Close</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Asset Config Modal -->
+            <div id="asset-config-modal-overlay" class="modal-overlay" style="display: none; z-index: 9998;">
+                <div class="annotation-modal" style="max-width: 500px; width: 92%;">
+                    <div class="modal-header">
+                        <h3 id="asset-modal-title"><i class="ph ph-robot"></i> Configure Claude Code</h3>
+                    </div>
+                    <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                        <div class="input-group">
+                            <label for="asset-provider-select">Provider</label>
+                            <div class="select-wrapper">
+                                <i class="ph ph-stack icon-left"></i>
+                                <select id="asset-provider-select">
+                                    <option value="ollama_direct" selected>Ollama (direct)</option>
+                                    <option value="litellm">LiteLLM</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="claude">Claude</option>
+                                </select>
+                                <i class="ph ph-caret-down icon-right"></i>
+                            </div>
+                            <span class="input-hint">If you choose a non-Anthropic provider, we will auto-launch a proxy in the background for Claude Code.</span>
+                        </div>
+                        <div class="input-group">
+                            <label for="asset-url-input">Instance URL / Base URL</label>
+                            <div class="input-with-icon">
+                                <i class="ph ph-plugs-connected icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                <input type="url" id="asset-url-input" placeholder="http://localhost:11434">
+                            </div>
+                        </div>
+                        <div class="input-group" id="asset-api-key-group">
+                            <label for="asset-api-key">API Key</label>
+                            <div class="input-with-icon">
+                                <i class="ph ph-key icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                <input type="password" id="asset-api-key" placeholder="Provider API Key" autocomplete="off" spellcheck="false">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="asset-model-select">Model</label>
+                            <div class="select-wrapper">
+                                <i class="ph ph-robot icon-left"></i>
+                                <select id="asset-model-select" disabled>
+                                    <option value="" disabled selected>Fetch models to load options</option>
+                                </select>
+                                <i class="ph ph-caret-down icon-right"></i>
+                            </div>
+                            <div id="asset-fetch-error" class="error-label" style="display: none; color: var(--status-error); font-size: 0.82rem; margin-top: 0.6rem; padding: 0.4rem 0.6rem; border-radius: 4px; background: rgba(var(--status-error-rgb, 255, 68, 68), 0.1);"></div>
+                            <button type="button" id="asset-fetch-models-btn" class="btn btn-secondary" style="width: auto; margin-top: 0.5rem; font-size: 0.82rem; padding: 0.4rem 0.6rem;">
+                                <i class="ph ph-arrows-clockwise"></i> Fetch Models
+                            </button>
+                        </div>
+                        
+                        <hr style="border:0; border-top:1px solid var(--panel-border); margin: 1.5rem 0;">
+
+                        <div class="input-group">
+                            <label for="asset-tag">Asset Tag / Namespace</label>
+                            <input type="text" id="asset-tag" placeholder="e.g. nmap_scanner">
+                        </div>
+                        <div class="input-group config-card-lite" style="margin-top: 1rem;">
+                            <label class="checkbox-container">
+                                <input type="checkbox" id="asset-auto-add" checked>
+                                <span><strong>Auto-add to tools list</strong></span>
+                            </label>
+                            <p class="input-hint" style="margin-top: 0.3rem; margin-left: 1.5rem;">Instructs Claude to add the newly generated tool to `kali_tools.json` upon completion.</p>
+                        </div>
+                        <div class="input-group" style="margin-top: 1rem;">
+                            <label>Output Path</label>
+                            <input type="text" id="asset-output-path" disabled value="Working Directory: ./tools/">
+                            <span class="input-hint">The resulting files will be generated relative to the WebUI root.</span>
+                        </div>
+                    </div>
+                    <div class="modal-footer" style="justify-content: flex-end; gap: 0.75rem;">
+                        <button type="button" id="cancel-asset-config-btn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="confirm-asset-config-btn" class="btn btn-primary">Generate</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Asset Terminal Modal -->
+            <div id="asset-terminal-modal-overlay" class="modal-overlay" style="display: none; z-index: 9999;">
+                <div class="annotation-modal" style="max-width: 900px; width: 95%; height: 80vh; display: flex; flex-direction: column;">
+                    <div class="modal-header" style="flex-shrink: 0;">
+                        <h3 id="asset-terminal-title"><i class="ph ph-terminal"></i> Claude Code Interactive Session</h3>
+                        <button id="close-asset-terminal-btn" class="watcher-close-btn" aria-label="Close" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted);">✕</button>
+                    </div>
+                    <div class="modal-body" style="flex: 1; padding: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--panel-bg);">
+                        <div class="isess-log-viewer" id="asset-terminal-viewer" style="flex: 1; height: 100%;">
+                            <div class="log-entry log-status">Initializing PTY session...</div>
+                        </div>
+                        <div class="isess-input-row" id="asset-terminal-input-row" style="flex-shrink: 0; background: var(--bg-dark);">
+                            <span class="isess-prompt-indicator">></span>
+                            <input type="text" class="isess-input" id="asset-terminal-input" placeholder="Type a command and press Enter (or Ctrl+C to interrupt)..." disabled>
+                        </div>
                     </div>
                 </div>
             </div>

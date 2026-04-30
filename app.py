@@ -11,6 +11,9 @@ import queue
 import time
 import sys
 import logging
+import pty
+import subprocess
+import fcntl
 from datetime import datetime
 
 app = Flask(__name__)
@@ -78,6 +81,8 @@ _session_state = {
     "ssl_verify": True,
     "isess_sessions": set(), # Set of active isess-XXX IDs
 }
+_local_terminals = {}
+_local_terminal_counter = 0
 _session_lock = threading.Lock()
 _analysis_jobs = {} # job_id -> {status, result, error, run_id, start_time}
 _analysis_lock = threading.Lock()
@@ -678,8 +683,7 @@ def _build_analysis_output_template(span_req: str, analysis_outputs=None) -> str
             "- Name: <short descriptive name>\n"
             "- Problem: <what recurring issue or delay it addresses>\n"
             "- Expected Gain: <estimated time, turns, or manual-step reduction>\n"
-            "- Why Better Than Prompting Alone: <why this should be encoded as tooling or instructions>\n"
-            "- Starter Prompt: <sample prompt the operator can give the agent to create it>"
+            "- AI Scaffolding Details: <detailed prompt for an AI coding assistant (like Claude) to create this asset. Include necessary context, inputs, expected outputs, and constraints.>"
         ),
         "Progress Analysis": (
             "- Major Finding: <what has been established so far>\n"
@@ -1015,11 +1019,10 @@ def _prepare_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
                 "- a Markdown instruction/playbook file that would help the agent execute recurring sequences faster\n"
                 "For each recommended asset, use this exact mini-template:\n"
                 "- Type: <new MCP tool | existing tool enhancement | markdown playbook>\n"
-                "- Name: <short descriptive name>\n"
+                "- Name: <short descriptive name, e.g. my_tool_name>\n"
                 "- Problem: <what recurring issue or delay it addresses>\n"
                 "- Expected Gain: <estimated time, turns, or manual-step reduction>\n"
-                "- Why Better Than Prompting Alone: <why this should be encoded as tooling or instructions>\n"
-                "- Starter Prompt: <sample prompt the operator can give the agent to create it>\n\n"
+                "- AI Scaffolding Details: <detailed prompt for an AI coding assistant (like Claude) to create this asset. Include necessary context, inputs, expected outputs, and constraints.>\n\n"
                 if "tooling_assets" in normalized_outputs else ""
             )
             + (
@@ -1504,6 +1507,184 @@ def session_isess_write():
         app.logger.error(f"Error writing to isess {session_id}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/sessions/<run_id>/scaffolding', methods=['GET'])
+def get_session_scaffolding(run_id):
+    """List generated scaffolding assets for a specific session."""
+    scaffolding_dir = os.path.join(RUNS_DIR, run_id, "scaffolding")
+    assets = []
+    
+    if os.path.isdir(scaffolding_dir):
+        for entry in os.listdir(scaffolding_dir):
+            asset_path = os.path.join(scaffolding_dir, entry)
+            prompt_path = os.path.join(asset_path, "CLAUDE_PROMPT.md")
+            if os.path.isdir(asset_path) and os.path.isfile(prompt_path):
+                with open(prompt_path, 'r') as f:
+                    prompt_content = f.read()
+                
+                assets.append({
+                    "name": entry,
+                    "prompt_content": prompt_content
+                })
+    
+    return jsonify({"success": True, "assets": assets})
+
+@app.route('/api/scaffolding/generate', methods=['POST'])
+def generate_scaffolding():
+    """Spawn a Claude Code PTY session with the given scaffolding prompt."""
+    global _local_terminal_counter
+    
+    data = request.json or {}
+    run_id = data.get("run_id")
+    asset_name = data.get("asset_name")
+    api_key = data.get("api_key")
+    base_url = data.get("base_url")
+    provider = data.get("provider", "anthropic")
+    model = data.get("model", "")
+    tag = data.get("tag", "")
+    auto_add = data.get("auto_add", False)
+    
+    if not run_id or not asset_name:
+        return jsonify({"success": False, "error": "run_id and asset_name are required."}), 400
+        
+    prompt_path = os.path.join(RUNS_DIR, run_id, "scaffolding", asset_name, "CLAUDE_PROMPT.md")
+    if not os.path.exists(prompt_path):
+        return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
+        
+    with open(prompt_path, 'r') as f:
+        prompt_content = f.read()
+        
+    # Append auto-add instructions if requested
+    if auto_add:
+        prompt_content += f"\n\nIMPORTANT: When you are finished creating the tool, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
+
+    _local_terminal_counter += 1
+    term_id = f"term-{_local_terminal_counter}"
+    
+    master_fd, slave_fd = pty.openpty()
+    env = os.environ.copy()
+    
+    proxy_proc = None
+    if provider != "anthropic":
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            proxy_port = s.getsockname()[1]
+            
+        proxy_cmd = ["litellm", "--model", f"{provider}/{model}", "--port", str(proxy_port)]
+        if base_url:
+            proxy_cmd.extend(["--api_base", base_url])
+            
+        try:
+            proxy_proc = subprocess.Popen(
+                proxy_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            time.sleep(2) # Allow proxy time to bind
+        except Exception as e:
+            app.logger.error(f"Failed to start litellm proxy: {e}")
+            os.close(slave_fd)
+            os.close(master_fd)
+            return jsonify({"success": False, "error": f"Failed to start local litellm proxy: {e}"}), 500
+            
+        env["ANTHROPIC_API_KEY"] = "sk-ant-dummy"
+        env["ANTHROPIC_BASE_URL"] = f"http://localhost:{proxy_port}"
+        
+        # Pass the actual API key through if provided
+        if api_key:
+            if provider == "openai":
+                env["OPENAI_API_KEY"] = api_key
+            else:
+                env[f"{provider.upper()}_API_KEY"] = api_key
+    else:
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+        
+    cmd = ["claude", "-p", prompt_content]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+            env=env
+        )
+        os.close(slave_fd)
+        
+        _local_terminals[term_id] = {
+            "proc": proc,
+            "proxy_proc": proxy_proc,
+            "master_fd": master_fd,
+            "closed": False
+        }
+        
+        return jsonify({"success": True, "term_id": term_id})
+    except Exception as e:
+        if proxy_proc:
+            proxy_proc.terminate()
+        os.close(slave_fd)
+        os.close(master_fd)
+        app.logger.error(f"Failed to spawn claude-code: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/terminal/<term_id>/stream', methods=['GET'])
+def terminal_stream(term_id):
+    """Stream SSE output from a local PTY session."""
+    def generate():
+        term = _local_terminals.get(term_id)
+        if not term:
+            yield "data: {\"type\": \"close\"}\n\n"
+            return
+            
+        flags = fcntl.fcntl(term["master_fd"], fcntl.F_GETFL)
+        fcntl.fcntl(term["master_fd"], fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        
+        try:
+            while not term["closed"]:
+                try:
+                    data = os.read(term["master_fd"], 4096)
+                    if data:
+                        yield f"data: {json.dumps({'type': 'output', 'data': data.decode('utf-8', 'replace')})}\n\n"
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    term["closed"] = True
+                    yield "data: {\"type\": \"close\"}\n\n"
+                    break
+                    
+                if term["proc"].poll() is not None:
+                    term["closed"] = True
+                    yield "data: {\"type\": \"close\"}\n\n"
+                    break
+                    
+                time.sleep(0.05)
+        finally:
+            if term.get("proxy_proc"):
+                try:
+                    term["proxy_proc"].terminate()
+                except Exception:
+                    pass
+            
+    return Response(generate(), mimetype="text/event-stream")
+
+@app.route('/api/terminal/<term_id>/input', methods=['POST'])
+def terminal_input(term_id):
+    """Write input directly to a local PTY session's stdin."""
+    term = _local_terminals.get(term_id)
+    if not term or term["closed"]:
+        return jsonify({"success": False, "error": "Terminal not active."}), 400
+        
+    data = request.json.get("input", "")
+    try:
+        os.write(term["master_fd"], data.encode('utf-8'))
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error(f"Error writing to terminal {term_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/api/session/cancel_prompt', methods=['POST'])
 def session_cancel_prompt():
     """Cancel the currently running prompt processing."""
@@ -1981,9 +2162,43 @@ def download_session_archive(run_id):
     return send_file(
         memory_file,
         as_attachment=True,
-        download_name=f"acosta_kali_mcp_run_{run_id}.zip",
+        download_name=f"agentflow_run_{run_id}.zip",
         mimetype='application/zip'
     )
+
+
+def _create_scaffolding_from_analysis(run_id, response_text):
+    import re
+    if not response_text:
+        return
+    pattern = re.compile(
+        r"- Type:\s*(.*?)\n- Name:\s*(.*?)\n- Problem:\s*(.*?)\n- Expected Gain:\s*(.*?)\n- AI Scaffolding Details:\s*(.*?)(?=\n- Type:|\n## |\Z)",
+        re.DOTALL | re.IGNORECASE
+    )
+    matches = pattern.findall(response_text)
+    
+    if not matches:
+        return
+        
+    scaffolding_dir = os.path.join(RUNS_DIR, run_id, "scaffolding")
+    os.makedirs(scaffolding_dir, exist_ok=True)
+    
+    for type_val, name_val, problem_val, gain_val, scaffolding_details in matches:
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', name_val.strip())
+        if not safe_name:
+            continue
+            
+        asset_dir = os.path.join(scaffolding_dir, safe_name)
+        os.makedirs(asset_dir, exist_ok=True)
+        
+        prompt_content = f"# Scaffold Prompt for {name_val.strip()}\n\n"
+        prompt_content += f"**Type**: {type_val.strip()}\n"
+        prompt_content += f"**Problem addressed**: {problem_val.strip()}\n"
+        prompt_content += f"**Expected Gain**: {gain_val.strip()}\n\n"
+        prompt_content += f"## AI Scaffolding Details\n\n{scaffolding_details.strip()}\n"
+        
+        with open(os.path.join(asset_dir, "CLAUDE_PROMPT.md"), "w") as f:
+            f.write(prompt_content)
 
 
 @app.route('/api/sessions/<run_id>/analyze', methods=['POST'])
@@ -2075,6 +2290,12 @@ def analyze_session(run_id):
             with _analysis_lock:
                 _analysis_jobs[job_id] = completed_record
             _write_analysis_job_record(run_id, job_id, completed_record)
+            
+            try:
+                _create_scaffolding_from_analysis(run_id, details.get('response'))
+            except Exception as scaffold_err:
+                app.logger.error(f"Failed to create AI scaffolding for job {job_id}: {scaffold_err}")
+                
             app.logger.info('Analysis job completed job_id=%s completion_path=%s', job_id, details.get('completion_path'))
         except Exception as e:
             app.logger.error(f"Analysis job {job_id} failed: {e}")

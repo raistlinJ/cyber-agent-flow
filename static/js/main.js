@@ -3159,7 +3159,40 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch { detailContent.innerHTML = '<div class="empty-state">Could not load artifacts.</div>'; }
         } else if (tab === 'analysis') {
             if (_analysisCache[_browseRunId]) {
-                detailContent.innerHTML = `<div class="analysis-result" style="padding: 1rem;">${renderAnalysisResponseContent(_analysisCache[_browseRunId])}</div>`;
+                let assetsHtml = '';
+                try {
+                    const res = await fetch(`/api/sessions/${_browseRunId}/scaffolding`);
+                    const data = await res.json();
+                    if (data.success && data.assets && data.assets.length > 0) {
+                        assetsHtml = `
+                            <div class="scaffolding-assets-container" style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(var(--accent-primary-rgb, 100, 100, 255), 0.05); border-radius: 8px; border: 1px solid rgba(var(--accent-primary-rgb, 100, 100, 255), 0.2);">
+                                <h4 style="margin-top: 0; color: var(--accent-primary); display: flex; align-items: center; gap: 0.5rem;"><i class="ph ph-cube"></i> Generated Scaffolding Ready to Build</h4>
+                                <p class="input-hint" style="margin-bottom: 1rem;">The analysis engine extracted these assets. Click Generate to open an interactive Claude Code session and build them immediately.</p>
+                                <div class="assets-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
+                                    ${data.assets.map(a => `
+                                        <div class="asset-card config-card-lite" style="display: flex; flex-direction: column; justify-content: space-between;">
+                                            <div style="font-weight: 600; font-size: 1.1rem; margin-bottom: 1rem;">${escapeHtml(a.name)}</div>
+                                            <button type="button" class="btn btn-primary btn-generate-asset" data-asset-name="${escapeHtml(a.name)}" style="width: 100%; justify-content: center;">
+                                                <i class="ph ph-robot"></i> Generate
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error("Failed to load scaffolding assets", e);
+                }
+                
+                detailContent.innerHTML = `<div class="analysis-result" style="padding: 1rem;">${assetsHtml}${renderAnalysisResponseContent(_analysisCache[_browseRunId])}</div>`;
+                
+                // Add event listeners for the new buttons
+                detailContent.querySelectorAll('.btn-generate-asset').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        openAssetConfigModal(btn.dataset.assetName, _browseRunId);
+                    });
+                });
             } else {
                 detailContent.innerHTML = '<div class="empty-state">No analysis generated yet. Click "Analyze Session" to run inference.</div>';
             }
@@ -3716,4 +3749,227 @@ document.addEventListener('DOMContentLoaded', () => {
             showAlert('Failed to clear jobs: ' + err.message, 'error');
         }
     });
+
+    // ---------------------------------------------------------------
+    // Scaffolding Generation via Claude Code
+    // ---------------------------------------------------------------
+    const assetConfigModal = document.getElementById('asset-config-modal-overlay');
+    const assetTerminalModal = document.getElementById('asset-terminal-modal-overlay');
+    let _activeAssetConfig = null;
+    let _activeAssetTerminalId = null;
+    let _assetTerminalEventSource = null;
+
+    function openAssetConfigModal(assetName, runId) {
+        _activeAssetConfig = { assetName, runId };
+        
+        // Auto-fill from active global context
+        const providerSelect = document.getElementById('provider-select');
+        const ollamaUrlInput = document.getElementById('ollama-url');
+        const apiKeyInput = document.getElementById('api-key');
+        
+        const assetProvider = document.getElementById('asset-provider-select');
+        const assetUrl = document.getElementById('asset-url-input');
+        const assetApiKey = document.getElementById('asset-api-key');
+        
+        assetProvider.value = providerSelect.value || 'ollama_direct';
+        assetUrl.value = ollamaUrlInput.value || 'http://localhost:11434';
+        assetApiKey.value = apiKeyInput.value || '';
+        
+        // Set default tag based on asset name
+        document.getElementById('asset-tag').value = assetName;
+        document.getElementById('asset-output-path').value = `Working Directory: ./tools/${assetName}/`;
+        
+        assetConfigModal.style.display = 'flex';
+    }
+
+    document.getElementById('asset-fetch-models-btn').addEventListener('click', async () => {
+        const provider = document.getElementById('asset-provider-select').value;
+        const url = document.getElementById('asset-url-input').value.trim();
+        const apiKey = document.getElementById('asset-api-key').value.trim();
+        const errorLabel = document.getElementById('asset-fetch-error');
+        const btn = document.getElementById('asset-fetch-models-btn');
+        const modelSelect = document.getElementById('asset-model-select');
+        
+        await fetchModelsIntoSelect({
+            url: url,
+            provider: provider,
+            apiKey: apiKey,
+            sslVerify: true,
+            button: btn,
+            errorLabel: errorLabel,
+            selectElement: modelSelect,
+            progressTitleText: 'Fetching Claude Code Models',
+            successMessage: 'Models loaded for Claude Code generation.',
+            onSuccess: (models) => {
+                // Pre-select if global model matches
+                const globalModel = document.getElementById('model-select').value;
+                if (models.some(m => m.id === globalModel)) {
+                    modelSelect.value = globalModel;
+                }
+            },
+            onFailure: () => {}
+        });
+    });
+
+    document.getElementById('cancel-asset-config-btn').addEventListener('click', () => {
+        assetConfigModal.style.display = 'none';
+        _activeAssetConfig = null;
+    });
+
+    document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
+        if (!_activeAssetConfig) return;
+        
+        const provider = document.getElementById('asset-provider-select').value;
+        const model = document.getElementById('asset-model-select').value;
+        const apiKey = document.getElementById('asset-api-key').value.trim();
+        const baseUrl = document.getElementById('asset-url-input').value.trim();
+        const tag = document.getElementById('asset-tag').value.trim();
+        const autoAdd = document.getElementById('asset-auto-add').checked;
+        const btn = document.getElementById('confirm-asset-config-btn');
+        
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Starting...';
+        btn.disabled = true;
+        
+        try {
+            const res = await fetch('/api/scaffolding/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    run_id: _activeAssetConfig.runId,
+                    asset_name: _activeAssetConfig.assetName,
+                    provider: provider,
+                    model: model,
+                    api_key: apiKey,
+                    base_url: baseUrl,
+                    tag: tag,
+                    auto_add: autoAdd
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                assetConfigModal.style.display = 'none';
+                openAssetTerminal(data.term_id, _activeAssetConfig.assetName);
+            } else {
+                showAlert('Failed to start Claude Code: ' + data.error, 'error');
+            }
+        } catch (err) {
+            showAlert('Error starting generation: ' + err.message, 'error');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    });
+
+    function openAssetTerminal(termId, assetName) {
+        _activeAssetTerminalId = termId;
+        document.getElementById('asset-terminal-title').innerHTML = `<i class="ph ph-terminal"></i> Claude Code: ${escapeHtml(assetName)}`;
+        
+        const viewer = document.getElementById('asset-terminal-viewer');
+        viewer.innerHTML = '<div class="log-entry log-status">Connecting to Claude Code...</div>';
+        
+        const input = document.getElementById('asset-terminal-input');
+        input.value = '';
+        input.disabled = true;
+        
+        assetTerminalModal.style.display = 'flex';
+        
+        if (_assetTerminalEventSource) {
+            _assetTerminalEventSource.close();
+        }
+        
+        _assetTerminalEventSource = new EventSource(`/api/terminal/${termId}/stream`);
+        
+        _assetTerminalEventSource.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type === 'output') {
+                    const el = document.createElement('div');
+                    el.className = 'log-entry log-tool-result';
+                    // We preserve whitespace with log-pre class or pre tags
+                    el.innerHTML = `<pre class="log-pre" style="margin:0; padding:0; background:none; border:none; white-space: pre-wrap;">${escapeHtml(data.data)}</pre>`;
+                    viewer.appendChild(el);
+                    viewer.scrollTop = viewer.scrollHeight;
+                    
+                    if (input.disabled) {
+                        input.disabled = false;
+                        input.focus();
+                    }
+                } else if (data.type === 'close') {
+                    const el = document.createElement('div');
+                    el.className = 'log-entry log-status';
+                    el.textContent = 'Session closed.';
+                    viewer.appendChild(el);
+                    viewer.scrollTop = viewer.scrollHeight;
+                    input.disabled = true;
+                    _assetTerminalEventSource.close();
+                }
+            } catch (err) {
+                console.error("Error parsing terminal SSE", err);
+            }
+        };
+        
+        _assetTerminalEventSource.onerror = (err) => {
+            console.error("Terminal SSE Error", err);
+            _assetTerminalEventSource.close();
+        };
+    }
+
+    document.getElementById('asset-terminal-input').addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const inputEl = e.target;
+            const text = inputEl.value;
+            inputEl.value = '';
+            
+            const viewer = document.getElementById('asset-terminal-viewer');
+            const el = document.createElement('div');
+            el.className = 'log-entry log-user-input';
+            el.innerHTML = `<span class="isess-prompt-indicator">></span> ${escapeHtml(text)}`;
+            viewer.appendChild(el);
+            viewer.scrollTop = viewer.scrollHeight;
+            
+            if (_activeAssetTerminalId) {
+                try {
+                    await fetch(`/api/terminal/${_activeAssetTerminalId}/input`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ input: text + '\n' })
+                    });
+                } catch (err) {
+                    console.error("Failed to send terminal input", err);
+                }
+            }
+        }
+    });
+
+    document.getElementById('close-asset-terminal-btn').addEventListener('click', () => {
+        assetTerminalModal.style.display = 'none';
+        if (_assetTerminalEventSource) {
+            _assetTerminalEventSource.close();
+            _assetTerminalEventSource = null;
+        }
+        // Could also send a terminate request to the backend here, but we will rely on standard terminal closure.
+    });
+
+    if (typeof Sortable !== 'undefined' && chatTabBar) {
+        new Sortable(chatTabBar, {
+            animation: 150,
+            ghostClass: 'chat-tab-ghost',
+            filter: '.chat-tab[data-tab-id="main"]',
+            onMove: function (evt) {
+                return evt.related.dataset.tabId !== 'main';
+            }
+        });
+    }
+
+    if (chatTabBar) {
+        chatTabBar.addEventListener('wheel', (evt) => {
+            if (evt.deltaY !== 0) {
+                evt.preventDefault();
+                chatTabBar.scrollLeft += evt.deltaY;
+            }
+        });
+    }
+
 });

@@ -1253,6 +1253,7 @@ class MCPSession:
         self._pending_post_tool_reply = None
         self._pending_dangerous_tool_approval = None
         self._pending_tool_timeout_decision = None
+        self._active_interactive_sessions = set()
 
     def _build_initial_system_prompt(self, allow_text: str, disallow_text: str) -> str:
         prompt = (
@@ -1274,6 +1275,15 @@ class MCPSession:
             )
 
         prompt += f" You must obey the target access policy without exception. Allowed targets: {allow_text}. Disallowed targets: {disallow_text}. If a target is out of scope, do not attempt the action."
+        
+        if self._active_interactive_sessions:
+            active_sessions_str = ", ".join(sorted(self._active_interactive_sessions))
+            prompt += (
+                f"\n\nCURRENTLY ACTIVE INTERACTIVE SESSIONS: [{active_sessions_str}]. "
+                "You MUST use `interactive_session_write` to interact with these existing sessions "
+                "instead of running exploit tools to recreate them."
+            )
+            
         return prompt
 
     def _client_headers(self) -> dict | None:
@@ -1602,14 +1612,25 @@ class MCPSession:
             "command": command_text,
         }
 
+        is_exit_cmd = (
+            tool_name == "interactive_session_write" 
+            and isinstance(tool_args, dict)
+            and tool_args.get("input", "").strip().lower() in ["exit", "quit", "exit\n", "quit\n"]
+        )
+
+        if tool_name == "interactive_session_close" or is_exit_cmd:
+            msg = "The model requested to kill/close an interactive session. Review the request below and approve or cancel execution."
+        else:
+            msg = "The model requested a dangerous shell command. Review the command below and approve or cancel execution."
+
         _emit(self.event_callback, "status", {
-            "message": f"Dangerous tool approval required before executing {tool_name}."
+            "message": f"User approval required before executing {tool_name}."
         })
         _emit(self.event_callback, "dangerous_tool_approval", {
             "tool": tool_name,
             "args": tool_args,
             "command": command_text,
-            "message": "The model requested a dangerous shell command. Review the command below and approve or cancel execution.",
+            "message": msg,
             "options": ["approve", "cancel"],
         })
 
@@ -2155,10 +2176,16 @@ class MCPSession:
                     _emit(self.event_callback, "status", {"message": err_msg})
                     continue
 
-                if tool_name == "shell_dangerous":
+                is_exit_cmd = (
+                    tool_name == "interactive_session_write" 
+                    and isinstance(tool_args, dict)
+                    and tool_args.get("input", "").strip().lower() in ["exit", "quit", "exit\n", "quit\n"]
+                )
+
+                if tool_name in ["shell_dangerous", "interactive_session_close"] or is_exit_cmd:
                     approval = await self._prompt_dangerous_tool_approval(tool_name, tool_args, cancel_event)
                     if approval != "approve":
-                        denial_msg = "Dangerous shell command was cancelled by the user before execution."
+                        denial_msg = "Command was cancelled by the user before execution."
                         self._logger.log_tool_call(
                             name=tool_name,
                             args=tool_args,
@@ -2226,6 +2253,7 @@ class MCPSession:
                         isess_match = re.search(r"preserved as (isess-\w+)", result_text)
                         if isess_match:
                             isess_id = isess_match.group(1)
+                            self._active_interactive_sessions.add(isess_id)
                             # Build a short summary of the args for the tab label
                             args_summary = ""
                             if isinstance(tool_args, dict):
@@ -2237,6 +2265,15 @@ class MCPSession:
                                 "tool": tool_name or "",
                                 "args_summary": args_summary,
                             })
+
+                    if tool_name == "interactive_session_close" and exit_code == 0:
+                        closed_id = ""
+                        if isinstance(tool_args, dict):
+                            closed_id = tool_args.get("session_id", "")
+                        elif isinstance(tool_args, str):
+                            closed_id = tool_args
+                        if closed_id in self._active_interactive_sessions:
+                            self._active_interactive_sessions.discard(closed_id)
 
                     context_result = _truncate_tool_output(result_text)
                     self.messages.append({

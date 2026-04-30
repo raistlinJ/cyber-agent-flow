@@ -685,7 +685,7 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
     return shell_parts, None
 
 
-def _parse_shell_sequence(raw_args: str) -> tuple[list[str] | None, str | None]:
+def _parse_shell_sequence(raw_args: str, has_dangerous: bool = False) -> tuple[list[str] | None, str | None]:
     raw_text = (raw_args or "").strip()
     if not raw_text:
         return None, "Error: shell_sequence requires commands, either as a JSON array or one command per line"
@@ -704,7 +704,7 @@ def _parse_shell_sequence(raw_args: str) -> tuple[list[str] | None, str | None]:
 
     if not commands:
         return None, "Error: shell_sequence requires at least one non-empty command"
-    if len(commands) > _MAX_SHELL_SEQUENCE_COMMANDS:
+    if not has_dangerous and len(commands) > _MAX_SHELL_SEQUENCE_COMMANDS:
         return None, f"Error: shell_sequence allows at most {_MAX_SHELL_SEQUENCE_COMMANDS} commands per call"
 
     return commands, None
@@ -1111,19 +1111,19 @@ def _resolve_shell_delegation(config: dict, current_tool_name: str, arguments: d
 
 
 def _run_shell_sequence(arguments: dict, timeout_seconds: int, config: dict | None = None) -> tuple[str, int, int]:
+    # Check if shell_dangerous is available for fallback
+    has_dangerous = False
+    if config:
+        has_dangerous = any(t.get("name") == "shell_dangerous" for t in config.get("tools", []))
+
     raw_args = arguments.get("args", "")
-    commands, parse_error = _parse_shell_sequence(raw_args)
+    commands, parse_error = _parse_shell_sequence(raw_args, has_dangerous)
     if parse_error:
         return parse_error, -1, 0
 
     output_chunks = []
     t0 = time.time()
     overall_exit_code = 0
-
-    # Check if shell_dangerous is available for fallback
-    has_dangerous = False
-    if config:
-        has_dangerous = any(t.get("name") == "shell_dangerous" for t in config.get("tools", []))
 
     for index, command in enumerate(commands, start=1):
         cmd, error_text = _build_shell_command("shell_extended", {"args": command})

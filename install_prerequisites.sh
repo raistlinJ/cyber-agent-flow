@@ -42,8 +42,8 @@ if [ "$DISTRO_ID" = "kali" ]; then
     $SUDO apt-get install -y -qq xdotool x11-utils
     
     # Install psutil dependencies (for process info)
-    echo "[prerequisites] Installing python3-psutil..."
-    $SUDO apt-get install -y -qq python3-psutil
+    echo "[prerequisites] Installing python3-psutil, python3-venv, and npm..."
+    $SUDO apt-get install -y -qq python3-psutil python3-venv npm
     
     echo "[prerequisites] Kali Linux prerequisites installed successfully!"
     echo "[prerequisites] The system keylogger will now be able to detect active windows."
@@ -51,14 +51,14 @@ elif [ "$DISTRO_ID" = "debian" ]; then
     echo "[prerequisites] Debian detected - installing keylogger dependencies..."
     
     $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil
+    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv npm
     
     echo "[prerequisites] Debian prerequisites installed successfully!"
 elif [ "$DISTRO_ID" = "ubuntu" ]; then
     echo "[prerequisites] Ubuntu detected - installing keylogger dependencies..."
     
     $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil
+    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv npm
     
     echo "[prerequisites] Ubuntu prerequisites installed successfully!"
 else
@@ -67,6 +67,32 @@ else
     echo "[prerequisites]   - xdotool (for active window detection)"
     echo "[prerequisites]   - xprop (for window class detection)"
     echo "[prerequisites]   - python3-psutil (for process information)"
+    echo "[prerequisites]   - python3-venv (for Python virtual environments)"
+    echo "[prerequisites]   - npm (for installing Claude Code)"
+fi
+
+echo "[prerequisites] Installing Claude Code..."
+if command -v npm &> /dev/null; then
+    $SUDO npm install -g @anthropic-ai/claude-code
+else
+    echo "[prerequisites] WARNING: npm is not installed. Skipping Claude Code installation."
+fi
+
+echo "[prerequisites] Setting up Python virtual environment and installing dependencies..."
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -d "$PROJECT_DIR/venv" ]; then
+    python3 -m venv "$PROJECT_DIR/venv"
+fi
+
+if [ -f "$PROJECT_DIR/venv/bin/pip" ]; then
+    "$PROJECT_DIR/venv/bin/pip" install --upgrade pip
+    if [ -f "$PROJECT_DIR/requirements.txt" ]; then
+        "$PROJECT_DIR/venv/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
+    else
+        echo "[prerequisites] WARNING: requirements.txt not found."
+    fi
+else
+    echo "[prerequisites] WARNING: Virtual environment creation failed. Skipping pip installations."
 fi
 
 # Verify installation
