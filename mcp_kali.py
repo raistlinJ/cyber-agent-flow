@@ -1092,22 +1092,57 @@ def _resolve_shell_delegation(config: dict, current_tool_name: str, arguments: d
     if not shell_parts:
         return None
 
-    requested_command = shell_parts[0]
-    if requested_command == current_tool_name:
+    tools_by_name = {
+        str(tool.get("name", "")).strip(): tool
+        for tool in config.get("tools", [])
+        if isinstance(tool, dict)
+    }
+
+    # Try to find a matching tool name in the first few tokens of the command.
+    # This handles patterns like: "tcpdump -i eth0", "timeout 20 tcpdump -i eth0",
+    # "sudo tcpdump ...", etc.
+    matched_tool_name = None
+    matched_index = None
+    for i, part in enumerate(shell_parts[:5]):
+        # Strip path prefixes (e.g. /usr/bin/tcpdump → tcpdump)
+        basename = part.rsplit('/', 1)[-1]
+        if basename in tools_by_name and basename != current_tool_name:
+            matched_tool_name = basename
+            matched_index = i
+            break
+
+    if matched_tool_name is None:
         return None
 
-    delegated_tool = next(
-        (
-            tool for tool in config.get("tools", [])
-            if isinstance(tool, dict) and str(tool.get("name", "")).strip() == requested_command
-        ),
-        None,
-    )
-    if not delegated_tool:
-        return None
+    delegated_tool = tools_by_name[matched_tool_name]
 
-    delegated_args = shlex.join(shell_parts[1:]) if len(shell_parts) > 1 else ""
-    return requested_command, delegated_tool, {"args": delegated_args}
+    # Extract only the args AFTER the tool name, stripping prefix words
+    # like "timeout", "sudo", etc.
+    remaining_parts = shell_parts[matched_index + 1:]
+
+    # Sanitize: strip shell chaining from the delegated args
+    import re
+    delegated_args_str = shlex.join(remaining_parts) if remaining_parts else ""
+    # Strip everything after semicolons
+    delegated_args_str = delegated_args_str.split(';')[0].strip()
+    # Strip backgrounding: " & <command>" pattern
+    delegated_args_str = re.sub(r'\s+&\s+\S.*$', '', delegated_args_str).strip()
+    # Strip backtick and subshell patterns
+    delegated_args_str = re.sub(r'`[^`]*`', '', delegated_args_str)
+    delegated_args_str = re.sub(r'\$\([^)]*\)', '', delegated_args_str)
+    delegated_args_str = delegated_args_str.strip()
+
+    new_arguments = {"args": delegated_args_str}
+
+    # If the original command had "timeout <N>" before the tool, pass it
+    # through as timeout_seconds for {timeout}-wrapped tools.
+    if matched_index >= 1 and shell_parts[0] in ("timeout",):
+        try:
+            new_arguments["timeout_seconds"] = int(shell_parts[1])
+        except (ValueError, IndexError):
+            pass
+
+    return matched_tool_name, delegated_tool, new_arguments
 
 
 def _run_shell_sequence(arguments: dict, timeout_seconds: int, config: dict | None = None) -> tuple[str, int, int]:
