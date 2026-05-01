@@ -2448,16 +2448,15 @@ document.addEventListener('DOMContentLoaded', () => {
     function resizeChatPromptInput() {
         const minHeight = 52;
         const maxHeight = 250;
-        const viewportScrollY = window.scrollY;
 
-        chatPromptInput.style.height = 'auto';
+        // Temporarily override overflow to get the true scrollHeight without
+        // collapsing the element first (avoids the height:auto → reflow jitter).
+        const prevOverflow = chatPromptInput.style.overflowY;
+        chatPromptInput.style.overflowY = 'hidden';
+        chatPromptInput.style.height = '0';
         const nextHeight = Math.max(minHeight, Math.min(maxHeight, chatPromptInput.scrollHeight));
+        chatPromptInput.style.overflowY = prevOverflow || '';
         chatPromptInput.style.height = `${nextHeight}px`;
-
-        // Keep the viewport stable while the auto-growing prompt recalculates.
-        if (document.activeElement === chatPromptInput && window.scrollY !== viewportScrollY) {
-            window.scrollTo({ top: viewportScrollY, left: window.scrollX });
-        }
     }
 
     chatPromptInput.addEventListener('input', function() {

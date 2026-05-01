@@ -2,14 +2,16 @@
   "tools": [
     {
       "name": "tcpdump",
-      "command": "tcpdump",
-      "description": "Capture and analyze network traffic using tcpdump. CRITICAL: You MUST ALWAYS use either the '-c <count>' flag (e.g., -c 20) or the '-G <seconds> -W 1' flags to limit the capture. If you do not provide a limit, the command will hang indefinitely and break the session.",
+      "command": "timeout",
+      "base_args": ["{timeout}", "tcpdump"],
+      "description": "Capture and analyze network traffic using tcpdump. Automatically terminates after timeout_seconds (default 60). You can also pass '-c <count>' to limit by packet count.",
       "allow_args": true
     },
     {
       "name": "tshark",
-      "command": "tshark",
-      "description": "Capture and analyze network traffic using tshark (Wireshark CLI). CRITICAL: You MUST ALWAYS use either the '-c <count>' flag (e.g., -c 20) or the '-a duration:<seconds>' flag to limit the capture. If you do not provide a limit, the command will hang indefinitely and break the session.",
+      "command": "timeout",
+      "base_args": ["{timeout}", "tshark"],
+      "description": "Capture and analyze network traffic using tshark (Wireshark CLI). Automatically terminates after timeout_seconds (default 60). You can also pass '-c <count>' to limit by packet count.",
       "allow_args": true
     },
     {
