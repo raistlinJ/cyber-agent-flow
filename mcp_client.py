@@ -1304,29 +1304,26 @@ class MCPSession:
         normalized = self._normalize_scope(scope)
         guidance = {
             "broad": (
-                "Use a broad assessment scope for this request. Favor wide coverage across the reachable target surface, "
-                "identify any meaningful exposure, weakness, or misconfiguration, and pivot when a line of inquiry stalls. "
-                "Prioritize breadth and triage over deep pursuit of a single path. Enumerate adjacent services, hosts, or "
-                "surfaces before committing too early to one route."
+                "CRITICAL INSTRUCTION - BROAD SCOPE: You MUST favor wide network coverage over deep exploitation. "
+                "You are required to scan entire subnets (e.g., /24) and enumerate all adjacent services before drilling down. "
+                "Do NOT fixate on a single host or vulnerability. Prioritize breadth, discovery, and high-level triage."
             ),
             "medium-broad": (
-                "Use a medium-broad scope for this request. Cover the strongest adjacent attack surfaces and enumerate enough "
-                "to avoid blind spots, while still concentrating effort on the best leads. Do not stop at the first plausible "
-                "lead if nearby surfaces remain cheap to check."
+                "CRITICAL INSTRUCTION - MEDIUM-BROAD SCOPE: You MUST cover adjacent attack surfaces and enumerate enough "
+                "to avoid blind spots. Do not stop at the first plausible lead if nearby surfaces remain cheap to check. "
+                "Scan multiple related targets before deciding which one to exploit."
             ),
             "medium": (
-                "Use a balanced scope for this request. Combine sensible surface coverage with targeted follow-through on the "
-                "most promising findings. Explore enough to avoid obvious blind spots, then go deeper on the strongest result."
+                "INSTRUCTION - BALANCED SCOPE: Combine sensible surface coverage with targeted follow-through. "
+                "Explore enough to avoid obvious blind spots, then go deeper on the strongest result."
             ),
             "medium-narrow": (
-                "Use a medium-narrow scope for this request. Stay focused on the most promising paths and minimize side "
-                "exploration unless it is needed to validate or unblock the leading hypothesis. Avoid broad side enumeration "
-                "unless it directly supports the current path."
+                "CRITICAL INSTRUCTION - MEDIUM-NARROW SCOPE: You MUST stay tightly focused on the most promising paths. "
+                "Do NOT perform wide subnet scans or full-port sweeps unless explicitly asked. Minimize side exploration."
             ),
             "narrow": (
-                "Use a narrow scope for this request. Focus on finding at least one viable path to initial access or meaningful "
-                "compromise, and avoid broad enumeration unless it directly supports the most promising route. Stay tightly on "
-                "one path instead of branching into adjacent opportunities."
+                "CRITICAL INSTRUCTION - NARROW SCOPE: You MUST focus ONLY on the specific target, port, or vulnerability at hand. "
+                "ABSOLUTELY NO broad enumeration, subnet scanning, or side-exploration is allowed. Stick to a single path of exploitation."
             ),
         }
         return (
@@ -1339,31 +1336,27 @@ class MCPSession:
         normalized = self._normalize_urgency(urgency)
         guidance = {
             "stealthy": (
-                "Use a low-urgency, stealth-first operating tempo for this request. Prefer quieter commands, lower-noise timing, "
-                "smaller batches, and limited parallelism. Spend more time verifying each lead before escalating command intensity "
-                "or scan aggressiveness. Avoid aggressive scan settings, high-rate concurrency, or speed-first shortcuts unless the "
-                "user explicitly asks for them."
+                "CRITICAL INSTRUCTION - STEALTHY URGENCY: You MUST operate with extreme caution and low noise. "
+                "You are FORBIDDEN from using aggressive scanning profiles. You MUST use flags like -T1, -T2, or add "
+                "delays to your commands to avoid detection. Do not batch commands heavily."
             ),
             "methodical": (
-                "Use a cautious, methodical operating tempo for this request. Favor thorough validation and reasonable depth over "
-                "raw speed. Keep concurrency modest, avoid aggressive timing unless it is clearly justified, and sequence work so "
-                "findings stay explainable. Prefer deliberate but not unnecessarily slow execution."
+                "CRITICAL INSTRUCTION - METHODICAL URGENCY: Favor thorough, step-by-step validation over raw speed. "
+                "Do not use aggressive timing flags. Keep concurrency low and deliberately sequence your work."
             ),
             "balanced": (
-                "Use a balanced operating tempo for this request. Trade off stealth, depth, and speed pragmatically based on the "
-                "task, without defaulting to either slow exhaustive work or aggressive high-speed probing. Use normal timing and "
-                "normal validation unless the situation clearly calls for something else."
+                "INSTRUCTION - BALANCED URGENCY: Trade off stealth, depth, and speed pragmatically. "
+                "Use normal timing (e.g., -T3 for nmap) and normal validation unless the situation clearly calls for something else."
             ),
             "fast": (
-                "Use a fast operating tempo for this request. Bias toward quicker feedback and shorter iteration cycles. When allowed "
-                "and appropriate, use more assertive timing, broader batching, and higher parallelism to move the investigation along. "
-                "Prefer efficient scans and lighter validation over exhaustive confirmation."
+                "CRITICAL INSTRUCTION - FAST URGENCY: You MUST bias toward quicker feedback. "
+                "Use assertive timing flags (e.g., -T4 for nmap), broader batching, and higher parallelism. "
+                "Do not waste time on slow, exhaustive validation."
             ),
             "speed": (
-                "Use a speed-first operating tempo for this request. Optimize for rapid answers using aggressive but still safe timing, "
-                "parallelism, and command intensity where appropriate. Accept more noise and less depth when that materially improves speed. "
-                "For example, prefer faster scan settings, shorter feedback loops, and minimal confirmation before reporting progress; "
-                "do not add slow-down options such as scan delays unless they are clearly necessary for correctness, scope, or stealth."
+                "CRITICAL INSTRUCTION - MAX SPEED URGENCY: You MUST optimize for absolute maximum speed. "
+                "You are REQUIRED to use aggressive timing flags (e.g., -T5, --min-rate, --max-retries=1 for nmap). "
+                "Accept heavy noise and high unreliability to get immediate results. NEVER use slow-down or delay options."
             ),
         }
         return (

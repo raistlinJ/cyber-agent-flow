@@ -1365,14 +1365,23 @@ async def list_tools() -> list[Tool]:
         # Skip interactive session tools from kali_tools.json — always use builtins
         if t["name"] in _BUILTIN_INTERACTIVE_TOOLS:
             continue
+        properties = {
+            "args": {"type": "string", "description": "Arguments to pass to the tool"}
+        }
+        
+        if any("{timeout}" in str(a) for a in t.get("base_args", [])):
+            properties["timeout_seconds"] = {
+                "type": "integer",
+                "description": "Optional timeout in seconds for this command execution (default 60)",
+                "default": 60
+            }
+
         tools.append(Tool(
             name=t["name"],
             description=t.get("description", f"Run {t['name']}"),
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "args": {"type": "string", "description": "Arguments to pass to the tool"}
-                }
+                "properties": properties
             }
         ))
     existing_tool_names = {t.name for t in tools}
@@ -1461,14 +1470,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         cmd = [tool_config["command"]]
         base_args = tool_config.get("base_args", [])
         user_args = arguments.get("args", "")
+        timeout_val = str(arguments.get("timeout_seconds", 60))
+        
         if name == "msf_run":
             user_args = _prepare_msf_run_args(user_args)
         
         if base_args:
-            # If we have base_args, check for {args} placeholder or just extend
-            has_placeholder = any("{args}" in a for a in base_args)
-            if has_placeholder:
-                cmd.extend([a.replace("{args}", user_args) for a in base_args])
+            has_args_ph = any("{args}" in a for a in base_args)
+            has_timeout_ph = any("{timeout}" in a for a in base_args)
+            
+            if has_args_ph or has_timeout_ph:
+                cmd.extend([
+                    a.replace("{args}", user_args).replace("{timeout}", timeout_val) 
+                    for a in base_args
+                ])
             else:
                 cmd.extend(base_args)
                 if tool_config.get("allow_args", False) and user_args:

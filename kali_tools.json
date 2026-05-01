@@ -1,3 +1,49 @@
 {
-  "tools": []
+  "tools": [
+    {
+      "name": "tcpdump",
+      "command": "tcpdump",
+      "description": "Capture and analyze network traffic using tcpdump. CRITICAL: You MUST ALWAYS use either the '-c <count>' flag (e.g., -c 20) or the '-G <seconds> -W 1' flags to limit the capture. If you do not provide a limit, the command will hang indefinitely and break the session.",
+      "allow_args": true
+    },
+    {
+      "name": "tshark",
+      "command": "tshark",
+      "description": "Capture and analyze network traffic using tshark (Wireshark CLI). CRITICAL: You MUST ALWAYS use either the '-c <count>' flag (e.g., -c 20) or the '-a duration:<seconds>' flag to limit the capture. If you do not provide a limit, the command will hang indefinitely and break the session.",
+      "allow_args": true
+    },
+    {
+      "name": "netdiscover",
+      "command": "timeout",
+      "base_args": ["{timeout}", "netdiscover"],
+      "description": "Active/passive ARP reconnaissance tool to discover hosts on a network. Automatically terminates after 60 seconds to prevent hanging.",
+      "allow_args": true
+    },
+    {
+      "name": "arp_scan",
+      "command": "arp-scan",
+      "description": "Send ARP packets to local network to discover alive hosts. CRITICAL: Ensure you specify a strict target like '-l' (local network) or a specific CIDR so it terminates quickly without hanging.",
+      "allow_args": true
+    },
+    {
+      "name": "nmap",
+      "command": "nmap",
+      "description": "Network exploration tool and security / port scanner. CRITICAL: For broad or blind scans, you MUST use fast flags (e.g., '-F', '-T4') or strict timeouts (e.g., '--host-timeout 5m') to avoid the command taking too long and freezing the session.",
+      "allow_args": true
+    },
+    {
+      "name": "arpspoof",
+      "command": "timeout",
+      "base_args": ["{timeout}", "arpspoof"],
+      "description": "Intercept traffic on a switched LAN by forging ARP replies. Automatically runs for 60 seconds before terminating.",
+      "allow_args": true
+    },
+    {
+      "name": "ettercap",
+      "command": "timeout",
+      "base_args": ["{timeout}", "ettercap", "-T"],
+      "description": "Comprehensive suite for man-in-the-middle attacks on LAN. Automatically runs in Text-only mode (-T) and terminates after 60 seconds.",
+      "allow_args": true
+    }
+  ]
 }
