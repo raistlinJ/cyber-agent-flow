@@ -1529,7 +1529,45 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         cmd = [tool_config["command"]]
         base_args = tool_config.get("base_args", [])
         user_args = arguments.get("args", "")
-        timeout_val = str(arguments.get("timeout_seconds", 60))
+        has_timeout_ph = any("{timeout}" in str(a) for a in base_args)
+        
+        # For timeout-wrapped tools: extract duration hints the LLM may have
+        # embedded in args instead of using the timeout_seconds parameter.
+        explicit_timeout = arguments.get("timeout_seconds")
+        timeout_val = str(explicit_timeout if explicit_timeout is not None else 60)
+        
+        if has_timeout_ph and user_args and explicit_timeout is None:
+            import re
+            extracted = None
+            
+            # Pattern 1: bare trailing number (e.g., "-w /tmp/x.pcap 10")
+            m = re.search(r'\s+(\d+)\s*$', user_args)
+            if m:
+                extracted = int(m.group(1))
+                user_args = user_args[:m.start()].strip()
+            
+            # Pattern 2: -G <seconds> flag (tcpdump rotation timer)
+            if extracted is None:
+                m = re.search(r'-G\s+(\d+)', user_args)
+                if m:
+                    extracted = int(m.group(1))
+                    user_args = user_args[:m.start()] + user_args[m.end():]
+                    user_args = user_args.strip()
+                    # Also strip -W if present (rotation count paired with -G)
+                    user_args = re.sub(r'-W\s+\d+', '', user_args).strip()
+            
+            # Pattern 3: -a duration:<seconds> (tshark)
+            if extracted is None:
+                m = re.search(r'-a\s+duration:(\d+)', user_args)
+                if m:
+                    extracted = int(m.group(1))
+                    user_args = user_args[:m.start()] + user_args[m.end():]
+                    user_args = user_args.strip()
+            
+            # Pattern 4: -c <count> — leave it alone, it's packet count not time
+            
+            if extracted and extracted > 0:
+                timeout_val = str(extracted)
         
         # Sanitize: strip shell command-chaining that the LLM sometimes injects.
         # These tools run via subprocess (not a shell), so chained commands break.
@@ -1551,7 +1589,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         
         if base_args:
             has_args_ph = any("{args}" in a for a in base_args)
-            has_timeout_ph = any("{timeout}" in a for a in base_args)
             
             if has_args_ph or has_timeout_ph:
                 cmd.extend([
