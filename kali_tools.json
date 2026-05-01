@@ -4,21 +4,21 @@
       "name": "tcpdump",
       "command": "timeout",
       "base_args": ["{timeout}", "tcpdump"],
-      "description": "Capture and analyze network traffic using tcpdump. Automatically terminates after timeout_seconds (default 60). You can also pass '-c <count>' to limit by packet count.",
+      "description": "Capture and analyze network traffic using tcpdump. To control how long the capture runs, set the 'timeout_seconds' parameter (default 60). Do NOT use -G or -W flags for duration control — they will be ignored by the timeout wrapper. You may use '-c <count>' to limit by packet count, and '-n' to disable DNS resolution.",
       "allow_args": true
     },
     {
       "name": "tshark",
       "command": "timeout",
       "base_args": ["{timeout}", "tshark"],
-      "description": "Capture and analyze network traffic using tshark (Wireshark CLI). Automatically terminates after timeout_seconds (default 60). You can also pass '-c <count>' to limit by packet count.",
+      "description": "Capture and analyze network traffic using tshark (Wireshark CLI). To control how long the capture runs, set the 'timeout_seconds' parameter (default 60). Do NOT use '-a duration' for duration control. You may use '-c <count>' to limit by packet count.",
       "allow_args": true
     },
     {
       "name": "netdiscover",
       "command": "timeout",
       "base_args": ["{timeout}", "netdiscover"],
-      "description": "Active/passive ARP reconnaissance tool to discover hosts on a network. Automatically terminates after 60 seconds to prevent hanging.",
+      "description": "Active/passive ARP reconnaissance tool to discover hosts on a network. To control how long the scan runs, set the 'timeout_seconds' parameter (default 60). You may use '-r <range>' to specify a target subnet.",
       "allow_args": true
     },
     {
@@ -37,14 +37,14 @@
       "name": "arpspoof",
       "command": "timeout",
       "base_args": ["{timeout}", "arpspoof"],
-      "description": "Intercept traffic on a switched LAN by forging ARP replies. Automatically runs for 60 seconds before terminating.",
+      "description": "Intercept traffic on a switched LAN by forging ARP replies. To control how long the attack runs, set the 'timeout_seconds' parameter (default 60).",
       "allow_args": true
     },
     {
       "name": "ettercap",
       "command": "timeout",
       "base_args": ["{timeout}", "ettercap", "-T"],
-      "description": "Comprehensive suite for man-in-the-middle attacks on LAN. Automatically runs in Text-only mode (-T) and terminates after 60 seconds.",
+      "description": "Comprehensive suite for man-in-the-middle attacks on LAN. Runs in Text-only mode (-T). To control how long the attack runs, set the 'timeout_seconds' parameter (default 60).",
       "allow_args": true
     }
   ]
