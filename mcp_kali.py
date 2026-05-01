@@ -1498,6 +1498,33 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             user_args = re.sub(r'\$\([^)]*\)', '', user_args)
             user_args = user_args.strip()
         
+        # For timeout-wrapped tools: extract duration hints the LLM may have
+        # embedded in args (e.g., "timeout 10", "-G 15", "-a duration:30")
+        # and apply them as the actual timeout value instead.
+        has_timeout_ph = any("{timeout}" in str(a) for a in tool_config.get("base_args", []))
+        if has_timeout_ph and user_args:
+            import re
+            # Match "timeout N" literally embedded in args
+            m = re.search(r'\btimeout\s+(\d+)\b', user_args)
+            if m:
+                timeout_val = m.group(1)
+                user_args = user_args[:m.start()] + user_args[m.end():]
+                user_args = user_args.strip()
+            # Match tcpdump's "-G N" (rotate seconds — often misused as duration)
+            m = re.search(r'-G\s*(\d+)', user_args)
+            if m:
+                timeout_val = m.group(1)
+                user_args = user_args[:m.start()] + user_args[m.end():]
+                # Also strip -W if present (rotation count paired with -G)
+                user_args = re.sub(r'-W\s*\d+', '', user_args)
+                user_args = user_args.strip()
+            # Match tshark's "-a duration:N"
+            m = re.search(r'-a\s*duration:(\d+)', user_args)
+            if m:
+                timeout_val = m.group(1)
+                user_args = user_args[:m.start()] + user_args[m.end():]
+                user_args = user_args.strip()
+        
         if name == "msf_run":
             user_args = _prepare_msf_run_args(user_args)
         
