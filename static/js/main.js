@@ -2451,17 +2451,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Hidden clone used to measure desired textarea height without touching the DOM layout.
+    let _promptMeasureClone = null;
     function resizeChatPromptInput() {
         const minHeight = 52;
         const maxHeight = 250;
 
-        // Temporarily override overflow to get the true scrollHeight without
-        // collapsing the element first (avoids the height:auto → reflow jitter).
-        const prevOverflow = chatPromptInput.style.overflowY;
-        chatPromptInput.style.overflowY = 'hidden';
-        chatPromptInput.style.height = '0';
-        const nextHeight = Math.max(minHeight, Math.min(maxHeight, chatPromptInput.scrollHeight));
-        chatPromptInput.style.overflowY = prevOverflow || '';
+        // Create a hidden off-screen clone once, reuse it for all measurements.
+        if (!_promptMeasureClone) {
+            _promptMeasureClone = chatPromptInput.cloneNode(false);
+            _promptMeasureClone.setAttribute('aria-hidden', 'true');
+            _promptMeasureClone.setAttribute('tabindex', '-1');
+            Object.assign(_promptMeasureClone.style, {
+                position: 'absolute',
+                top: '-9999px',
+                left: '-9999px',
+                visibility: 'hidden',
+                height: 'auto',
+                overflow: 'hidden',
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word',
+            });
+            // Match the real element's sizing
+            const cs = getComputedStyle(chatPromptInput);
+            _promptMeasureClone.style.width = cs.width;
+            _promptMeasureClone.style.paddingTop = cs.paddingTop;
+            _promptMeasureClone.style.paddingBottom = cs.paddingBottom;
+            _promptMeasureClone.style.paddingLeft = cs.paddingLeft;
+            _promptMeasureClone.style.paddingRight = cs.paddingRight;
+            _promptMeasureClone.style.borderWidth = cs.borderWidth;
+            _promptMeasureClone.style.fontSize = cs.fontSize;
+            _promptMeasureClone.style.fontFamily = cs.fontFamily;
+            _promptMeasureClone.style.lineHeight = cs.lineHeight;
+            _promptMeasureClone.style.boxSizing = cs.boxSizing;
+            chatPromptInput.parentNode.appendChild(_promptMeasureClone);
+        }
+
+        // Sync clone width in case the layout changed (e.g. window resize).
+        _promptMeasureClone.style.width = getComputedStyle(chatPromptInput).width;
+        _promptMeasureClone.value = chatPromptInput.value;
+
+        const nextHeight = Math.max(minHeight, Math.min(maxHeight, _promptMeasureClone.scrollHeight));
         chatPromptInput.style.height = `${nextHeight}px`;
     }
 
