@@ -1484,6 +1484,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     a.replace("{args}", user_args).replace("{timeout}", timeout_val) 
                     for a in base_args
                 ])
+                # If there was a {timeout} but no {args} placeholder, we still
+                # need to append user arguments after the substituted base_args.
+                if not has_args_ph and tool_config.get("allow_args", False) and user_args:
+                    cmd.extend(shlex.split(user_args))
             else:
                 cmd.extend(base_args)
                 if tool_config.get("allow_args", False) and user_args:
