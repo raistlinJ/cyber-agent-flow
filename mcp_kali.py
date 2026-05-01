@@ -1483,6 +1483,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         user_args = arguments.get("args", "")
         timeout_val = str(arguments.get("timeout_seconds", 60))
         
+        # Sanitize: strip shell metacharacters that the LLM sometimes injects.
+        # These tools run via subprocess (not a shell), so ; & | ` $() break them.
+        if user_args and name not in {"shell", "shell_extended", "shell_dangerous"}:
+            import re
+            # Remove shell chaining/backgrounding constructs
+            user_args = re.split(r'\s*[;&|]\s*', user_args)[0].strip()
+            # Remove backtick and $() subshell patterns
+            user_args = re.sub(r'`[^`]*`', '', user_args)
+            user_args = re.sub(r'\$\([^)]*\)', '', user_args)
+            user_args = user_args.strip()
+        
         if name == "msf_run":
             user_args = _prepare_msf_run_args(user_args)
         
@@ -1505,6 +1516,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     cmd.extend(shlex.split(user_args))
         elif tool_config.get("allow_args", False) and user_args:
             cmd.extend(shlex.split(user_args))
+        
+        _logger.log_tool_call(
+            name=f"{name}:cmd_debug",
+            args={"constructed_cmd": cmd},
+            result="(pre-execution debug)",
+            duration_ms=0,
+            exit_code=None,
+        )
 
     interactive_capable = _tool_supports_interactive_sessions(name, tool_config)
         
