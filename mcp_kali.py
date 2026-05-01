@@ -1092,22 +1092,35 @@ def _resolve_shell_delegation(config: dict, current_tool_name: str, arguments: d
     if not shell_parts:
         return None
 
-    tools_by_name = {
-        str(tool.get("name", "")).strip(): tool
-        for tool in config.get("tools", [])
-        if isinstance(tool, dict)
-    }
+    tools_by_name = {}
+    # Build a lookup: map tool name, command binary, and base_args binaries → tool
+    for tool in config.get("tools", []):
+        if not isinstance(tool, dict):
+            continue
+        tname = str(tool.get("name", "")).strip()
+        if not tname:
+            continue
+        tools_by_name[tname] = tool
+        # Also index by the command binary (e.g., "arp-scan" → arp_scan tool)
+        cmd_bin = str(tool.get("command", "")).rsplit('/', 1)[-1].strip()
+        if cmd_bin and cmd_bin not in ("timeout", "sudo", "env") and cmd_bin not in tools_by_name:
+            tools_by_name[cmd_bin] = tool
+        # Also index by binary names found in base_args (for timeout-wrapped tools)
+        for ba in tool.get("base_args", []):
+            ba_str = str(ba).strip()
+            if ba_str and not ba_str.startswith("{") and ba_str not in tools_by_name:
+                tools_by_name[ba_str] = tool
 
     # Try to find a matching tool name in the first few tokens of the command.
     # This handles patterns like: "tcpdump -i eth0", "timeout 20 tcpdump -i eth0",
-    # "sudo tcpdump ...", etc.
+    # "sudo tcpdump ...", "arp-scan -l", "/usr/bin/nmap ...", etc.
     matched_tool_name = None
     matched_index = None
     for i, part in enumerate(shell_parts[:5]):
         # Strip path prefixes (e.g. /usr/bin/tcpdump → tcpdump)
         basename = part.rsplit('/', 1)[-1]
         if basename in tools_by_name and basename != current_tool_name:
-            matched_tool_name = basename
+            matched_tool_name = tools_by_name[basename].get("name", basename)
             matched_index = i
             break
 
