@@ -1483,12 +1483,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         user_args = arguments.get("args", "")
         timeout_val = str(arguments.get("timeout_seconds", 60))
         
-        # Sanitize: strip shell metacharacters that the LLM sometimes injects.
-        # These tools run via subprocess (not a shell), so ; & | ` $() break them.
+        # Sanitize: strip shell command-chaining that the LLM sometimes injects.
+        # These tools run via subprocess (not a shell), so chained commands break.
+        # We preserve && and || since they are valid BPF filter operators for
+        # tcpdump/tshark (e.g., "host 10.0.0.1 && port 80").
         if user_args and name not in {"shell", "shell_extended", "shell_dangerous"}:
             import re
-            # Remove shell chaining/backgrounding constructs
-            user_args = re.split(r'\s*[;&|]\s*', user_args)[0].strip()
+            # Strip everything after a semicolon (always shell chaining)
+            user_args = user_args.split(';')[0].strip()
+            # Strip backgrounding: " & <command>" pattern (space-ampersand-space-word)
+            user_args = re.sub(r'\s+&\s+\S.*$', '', user_args).strip()
             # Remove backtick and $() subshell patterns
             user_args = re.sub(r'`[^`]*`', '', user_args)
             user_args = re.sub(r'\$\([^)]*\)', '', user_args)
