@@ -1225,6 +1225,18 @@ class MCPSession:
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
         self.extended_msf_prompt = bool(extended_msf_prompt)
+
+        # Internals
+        self._exit_stack: AsyncExitStack | None = None
+        self._session: ClientSession | None = None
+        self._client = None
+        self._logger: SessionLogger | None = None
+        self._started = False
+        self._chat_lock = asyncio.Lock()
+        self._pending_post_tool_reply = None
+        self._pending_dangerous_tool_approval = None
+        self._pending_tool_timeout_decision = None
+        self._active_interactive_sessions = set()
         
         # Initialize with a strong system prompt to ensure tools aren't sent to the background
         allow_text = ", ".join(self.network_policy['allow'])
@@ -1242,18 +1254,6 @@ class MCPSession:
         self._anthropic_tools: list[dict] = []
         self._anthropic_tools_minimal: list[dict] = []
         self._model_max_ctx: int = context_window
-
-        # Internals
-        self._exit_stack: AsyncExitStack | None = None
-        self._session: ClientSession | None = None
-        self._client = None
-        self._logger: SessionLogger | None = None
-        self._started = False
-        self._chat_lock = asyncio.Lock()
-        self._pending_post_tool_reply = None
-        self._pending_dangerous_tool_approval = None
-        self._pending_tool_timeout_decision = None
-        self._active_interactive_sessions = set()
 
     def _build_initial_system_prompt(self, allow_text: str, disallow_text: str) -> str:
         prompt = (
