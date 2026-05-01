@@ -1369,19 +1369,30 @@ async def list_tools() -> list[Tool]:
             "args": {"type": "string", "description": "Arguments to pass to the tool"}
         }
         
-        if any("{timeout}" in str(a) for a in t.get("base_args", [])):
+        has_timeout = any("{timeout}" in str(a) for a in t.get("base_args", []))
+        if has_timeout:
             properties["timeout_seconds"] = {
                 "type": "integer",
-                "description": "Optional timeout in seconds for this command execution (default 60)",
+                "description": (
+                    "REQUIRED: How many seconds this command should run before being terminated. "
+                    "If the user says 'run for 15 seconds', set this to 15. Default is 60. "
+                    "Do NOT put duration or time limits in the 'args' field — use this parameter instead."
+                ),
                 "default": 60
             }
+            properties["args"]["description"] = (
+                "Arguments to pass to the tool (e.g., filters, interfaces, flags). "
+                "Do NOT include any duration, timeout, or time-limit flags here (e.g., no -G, -W, -c, -a duration). "
+                "Use the timeout_seconds parameter to control execution time."
+            )
 
         tools.append(Tool(
             name=t["name"],
             description=t.get("description", f"Run {t['name']}"),
             inputSchema={
                 "type": "object",
-                "properties": properties
+                "properties": properties,
+                "required": ["timeout_seconds"] if has_timeout else []
             }
         ))
     existing_tool_names = {t.name for t in tools}
