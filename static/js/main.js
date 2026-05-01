@@ -1884,6 +1884,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="log-tool-call-meta">args: <code>${escapeHtml(argsJson)}</code></div>
             ${note ? `<div class="log-tool-call-note">${escapeHtml(note)}</div>` : ''}
         `;
+
+        // Keep the active tool entry fully visible in the log viewer
+        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
     }
 
     function finalizeActiveToolEntry(note, phaseClass = 'is-complete', phaseLabel = 'Completed', durationMs = null) {
@@ -1906,6 +1909,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="log-tool-call-meta">args: <code>${escapeHtml(argsJson)}</code></div>
             <div class="log-tool-call-note">${escapeHtml(note)}</div>
         `;
+
+        // Scroll to show the finalized tool entry fully
+        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
         
         // Update timeline sidebar
         if (_activeToolState.callId) {
