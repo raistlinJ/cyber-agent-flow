@@ -481,17 +481,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 _toolGuideSelections[toolName] = false;
             }
 
-            let row = baseLabel.closest('.tool-option-row');
-            if (!row) {
-                row = document.createElement('div');
-                row.className = 'tool-option-row';
-                baseLabel.parentNode.insertBefore(row, baseLabel);
-                row.appendChild(baseLabel);
-            }
-
-            let guideLabel = row.querySelector(`label.tool-guide-inline[data-tool-guide-for="${toolName}"]`);
+            let guideLabel = baseLabel.querySelector(`span.tool-guide-inline[data-tool-guide-for="${toolName}"]`);
             if (!guideLabel) {
-                guideLabel = document.createElement('label');
+                guideLabel = document.createElement('span');
                 guideLabel.className = 'tool-guide-inline';
                 guideLabel.setAttribute('data-tool-guide-for', toolName);
                 guideLabel.title = TOOL_GUIDE_LABELS[toolName];
@@ -500,6 +492,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 checkbox.type = 'checkbox';
                 checkbox.className = 'tool-guide-checkbox';
                 checkbox.value = toolName;
+                checkbox.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                });
                 checkbox.addEventListener('change', () => {
                     _toolGuideSelections[toolName] = checkbox.checked;
                     persistLastSettings();
@@ -510,7 +505,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 guideLabel.appendChild(checkbox);
                 guideLabel.appendChild(icon);
-                row.appendChild(guideLabel);
+                baseLabel.appendChild(guideLabel);
             }
 
             const guideCheckbox = guideLabel.querySelector('input.tool-guide-checkbox');
