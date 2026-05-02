@@ -80,6 +80,7 @@ _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
 _TOOL_DOC_MAP = {
+    "msf_run": "docs/tools/msf_run.md",
     "RIPv2": "docs/tools/RIPv2.md",
     "ospf_sniff": "docs/tools/ospf_sniff.md",
     "shell": "docs/tools/shell.md",
@@ -1280,7 +1281,6 @@ class MCPSession:
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         max_turns: int = DEFAULT_MAX_TURNS,
         network_policy: dict | None = None,
-        extended_msf_prompt: bool = False,
         enabled_tool_guides: list[str] | None = None,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
@@ -1294,7 +1294,6 @@ class MCPSession:
         self.event_callback = event_callback
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
-        self.extended_msf_prompt = bool(extended_msf_prompt)
         self.enabled_tool_guides = list(enabled_tool_guides) if isinstance(enabled_tool_guides, list) else None
 
         # Internals
@@ -1339,13 +1338,6 @@ class MCPSession:
             "interactive_session_read, interactive_session_write, and interactive_session_close tools instead of rerunning the exploit."
         )
         
-        if self.extended_msf_prompt:
-            prompt += (
-                " IMPORTANT: If you are interacting with Metasploit (msfconsole) or Meterpreter, ALWAYS run the `help` "
-                "command first to enumerate available commands. Standard Linux commands like `grep` or `cat` may not work "
-                "natively in Meterpreter unless you drop into a system shell."
-            )
-
         prompt += f" You must obey the target access policy without exception. Allowed targets: {allow_text}. Disallowed targets: {disallow_text}. If a target is out of scope, do not attempt the action."
 
         if self._enabled_tool_guidance:

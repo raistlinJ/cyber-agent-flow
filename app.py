@@ -1211,7 +1211,6 @@ def session_start():
     max_turns = int(data.get('max_turns', 20))
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
-    extended_msf_prompt = bool(data.get('extended_msf_prompt'))
     enabled_tool_guides = data.get('enabled_tool_guides')
     if isinstance(enabled_tool_guides, list):
         enabled_tool_guides = [str(item).strip() for item in enabled_tool_guides if str(item).strip()]
@@ -1302,7 +1301,6 @@ def session_start():
             context_window=context_window,
             max_turns=max_turns,
             network_policy=network_policy,
-            extended_msf_prompt=extended_msf_prompt,
             enabled_tool_guides=enabled_tool_guides,
         )
 

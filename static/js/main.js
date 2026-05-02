@@ -51,7 +51,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Keylogger references
     const keyloggerEnableToggle = document.getElementById('keylogger-enable-toggle');
-    const extendedMsfPromptToggle = document.getElementById('extended-msf-prompt-toggle');
     const configSubtabBtns = document.querySelectorAll('.config-subtab-btn');
     const configSubtabPanels = document.querySelectorAll('.config-subtab-panel');
 
@@ -437,6 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolGuidesSection = document.getElementById('tool-guides-section');
     const toolGuidesGrid = document.getElementById('tool-guides-grid');
     const TOOL_GUIDE_LABELS = {
+        msf_run: 'msf_run guide',
         RIPv2: 'RIPv2 guide',
         ospf_sniff: 'ospf_sniff guide',
         shell: 'shell guide',
@@ -687,7 +687,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 toolCheckboxStates,
                 toolGuideSelections: _toolGuideSelections,
                 toolsJson: toolsJsonArea?.value || '',
-                extendedMsfPrompt: Boolean(extendedMsfPromptToggle?.checked),
                 activeConfigSubtab: document.querySelector('.config-subtab-btn.active')?.dataset.configTarget || 'config-runtime-panel',
                 savedAt: Date.now(),
             };
@@ -746,10 +745,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (kaliCommandType && payload.kaliCommandType) {
                 kaliCommandType.value = payload.kaliCommandType === 'apt' ? 'apt' : 'python';
                 kaliCommandType.dispatchEvent(new Event('change'));
-            }
-
-            if (extendedMsfPromptToggle && typeof payload.extendedMsfPrompt === 'boolean') {
-                extendedMsfPromptToggle.checked = payload.extendedMsfPrompt;
             }
 
             const toolCheckboxStates = payload.toolCheckboxStates;
@@ -2422,7 +2417,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, extended_msf_prompt: Boolean(extendedMsfPromptToggle?.checked), enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 
