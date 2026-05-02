@@ -2886,8 +2886,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             }
             case 'tool_result': {
-                const label = event.graceful_stop ? 'Stopped' : (event.exit_code === 0 ? 'Completed' : 'Failed');
-                const chipClass = event.graceful_stop ? 'is-waiting' : (event.exit_code === 0 ? 'is-complete' : 'is-error');
+                const label = event.cancelled ? 'Cancelled' : (event.graceful_stop ? 'Stopped' : (event.exit_code === 0 ? 'Completed' : 'Failed'));
+                const chipClass = event.cancelled ? 'is-error' : (event.graceful_stop ? 'is-waiting' : (event.exit_code === 0 ? 'is-complete' : 'is-error'));
                 finalizeActiveToolEntry(
                     `Finished in ${formatElapsedDuration(event.duration_ms || 0)}.`,
                     chipClass,

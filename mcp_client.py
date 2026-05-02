@@ -2234,6 +2234,7 @@ class MCPSession:
                     exit_code = -1 if is_error else 0
 
                     graceful_stop = result_text.startswith("[GRACEFUL STOP]")
+                    is_cancelled = bool(cancel_event and cancel_event.is_set())
                     self._logger.log_tool_call(
                         name=tool_name,
                         args=tool_args,
@@ -2241,6 +2242,7 @@ class MCPSession:
                         duration_ms=duration_ms,
                         exit_code=exit_code,
                         graceful_stop=graceful_stop,
+                        cancelled=is_cancelled,
                     )
 
                     if "Interactive session preserved as" in result_text:
@@ -2284,6 +2286,10 @@ class MCPSession:
                         "exit_code": exit_code,
                         "duration_ms": duration_ms,
                     })
+
+                    if is_cancelled:
+                        _emit_chat_cancelled(self.event_callback)
+                        return
 
                 except Exception as exc:
                     duration_ms = int((time.time() - t0) * 1000)

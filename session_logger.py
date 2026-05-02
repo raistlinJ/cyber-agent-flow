@@ -114,7 +114,7 @@ class SessionLogger:
 
     def log_tool_call(self, name: str, args: dict, result: str,
                       duration_ms: int = 0, exit_code: int = 0, stderr: str = "",
-                      graceful_stop: bool = False):
+                      graceful_stop: bool = False, cancelled: bool = False):
         """
         Write a timestamped JSON file for a single tool invocation.
 
@@ -143,6 +143,7 @@ class SessionLogger:
             "result": result if len(result) <= 4096 else result[:4096] + "\n...[truncated, see artifacts]",
             "stderr": stderr,
             "graceful_stop": graceful_stop,
+            "cancelled": cancelled,
         }
 
         with open(path, "w") as f:
@@ -162,6 +163,8 @@ class SessionLogger:
             f.write(f"**Exit code:** {exit_code}  \n")
             if graceful_stop:
                 f.write(f"**Status:** `Manually Stopped`  \n")
+            elif cancelled:
+                f.write(f"**Status:** `Cancelled`  \n")
             f.write(f"\n")
             preview = result[:512] + ("..." if len(result) > 512 else "")
             f.write(f"```\n{preview}\n```\n\n")
@@ -173,6 +176,7 @@ class SessionLogger:
             "duration_ms": duration_ms,
             "exit_code": exit_code,
             "graceful_stop": graceful_stop,
+            "cancelled": cancelled,
         })
 
         return filename
