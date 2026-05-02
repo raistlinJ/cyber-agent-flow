@@ -26,6 +26,24 @@ Options:
   --timeout SECS       Seconds to listen for responses (default: 10)
   --send-only          Only send the Request; skip response capture
 
+Route entry options (RIP Request body):
+  By default a single "wildcard" entry (AFI=0, metric=16) is sent, asking
+  the router to return its full routing table (RFC 2453 §3.9.1).
+  Use the options below to query specific prefixes instead.
+
+  --entry NET/MASK[:NEXTHOP[:TAG[:METRIC]]]
+                       Add a specific route entry. Repeatable.
+                       NEXTHOP defaults to 0.0.0.0, TAG to 0, METRIC to 16.
+                       Example: --entry 10.0.0.0/255.255.255.0
+                                --entry 10.0.0.0/255.255.0.0:192.168.1.1:0:1
+
+  Single-entry convenience flags (used when --entry is absent):
+  --entry-network IP   Route network address (default: 0.0.0.0)
+  --entry-mask    IP   Subnet mask           (default: 0.0.0.0)
+  --entry-nexthop IP   Next-hop address      (default: 0.0.0.0)
+  --entry-tag     N    Route tag             (default: 0)
+  --entry-metric  N    Metric 1-16; 16=wildcard full-table request (default: 16)
+
 Examples:
   # Enumerate routes from all RIPv2 neighbours on eth0
   python3 rip_request.py --iface eth0
@@ -35,6 +53,14 @@ Examples:
 
   # Send 3 requests, listen 30 s, custom source IP
   python3 rip_request.py --iface eth0 --src-ip 10.0.0.5 --count 3 --timeout 30
+
+  # Ask for a specific prefix (unicast to router)
+  python3 rip_request.py --iface eth0 --target 10.0.0.1 \
+      --entry 192.168.10.0/255.255.255.0:0.0.0.0:0:16
+
+  # Multiple specific prefixes
+  python3 rip_request.py --iface eth0 --target 10.0.0.1 \
+      --entry 10.1.0.0/255.255.0.0 --entry 172.16.0.0/255.240.0.0
 """
 
 import argparse
@@ -77,32 +103,97 @@ def parse_args():
                    help="Seconds to listen for responses (default: 10)")
     p.add_argument("--send-only", action="store_true",
                    help="Only send the Request packet; skip response capture")
+
+    # --- Route entry arguments ---
+    ent = p.add_argument_group(
+        "Route entry options",
+        "Control the RIP route entry/entries in the Request body. "
+        "Default: single wildcard entry (AFI=0, metric=16) asking for the "
+        "full routing table (RFC 2453 §3.9.1)."
+    )
+    ent.add_argument(
+        "--entry", metavar="NET/MASK[:NEXTHOP[:TAG[:METRIC]]]",
+        action="append", dest="entries", default=None,
+        help="Add a specific route entry (repeatable). "
+             "Example: --entry 10.0.0.0/255.255.255.0:192.168.1.1:0:1"
+    )
+    ent.add_argument("--entry-network", default="0.0.0.0",
+                     help="Single-entry network address (default: 0.0.0.0)")
+    ent.add_argument("--entry-mask",    default="0.0.0.0",
+                     help="Single-entry subnet mask (default: 0.0.0.0)")
+    ent.add_argument("--entry-nexthop", default="0.0.0.0",
+                     help="Single-entry next-hop address (default: 0.0.0.0)")
+    ent.add_argument("--entry-tag",     type=int, default=0,
+                     help="Single-entry route tag (default: 0)")
+    ent.add_argument("--entry-metric",  type=int, default=16,
+                     help="Single-entry metric 1-16; 16 = wildcard full-table "
+                          "request (default: 16)")
     return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
-# RIP packet construction
+# RIP packet construction helpers
 # ---------------------------------------------------------------------------
-def build_rip_request(version: int) -> bytes:
+def _build_entry(afi: int, tag: int, network: str, mask: str,
+                 nexthop: str, metric: int) -> bytes:
     """
-    Build a minimal RIP Request asking for the full routing table.
+    Build one 20-byte RIP route entry (RFC 2453 §4).
+    AFI 0  = wildcard (no address family); used in full-table Requests.
+    AFI 2  = AF_INET; used for specific-prefix Requests and all Responses.
+    """
+    return struct.pack("!HH4s4s4sI",
+                       afi, tag,
+                       socket.inet_aton(network),
+                       socket.inet_aton(mask),
+                       socket.inet_aton(nexthop),
+                       metric)
 
-    Per RFC 2453 §3.9.1 a single entry with AFI=0 and metric=16 means
-    "please send me your entire routing table".
 
-    Wire layout
-    -----------
-    Header (4 bytes):  cmd=1, version, reserved=0
-    Entry  (20 bytes): AFI=0, tag=0, addr=0, mask=0, nexthop=0, metric=16
+def _parse_entry_arg(raw: str):
+    """
+    Parse one --entry value: NET/MASK[:NEXTHOP[:TAG[:METRIC]]]
+    Returns (network, mask, nexthop, tag, metric).
+    Raises ValueError or OSError on bad input.
+    """
+    parts = raw.split(":")
+    nm = parts[0].split("/")
+    if len(nm) != 2:
+        raise ValueError(f"Expected NET/MASK, got: {parts[0]!r}")
+    network = nm[0].strip()
+    mask    = nm[1].strip()
+    nexthop = parts[1].strip() if len(parts) > 1 else "0.0.0.0"
+    tag     = int(parts[2])    if len(parts) > 2 else 0
+    metric  = int(parts[3])    if len(parts) > 3 else 16
+    # validate IPs (raises OSError on bad address)
+    for val in (network, mask, nexthop):
+        socket.inet_aton(val)
+    return network, mask, nexthop, tag, metric
+
+
+def build_rip_request(version: int, entries=None) -> bytes:
+    """
+    Build a RIP Request packet.
+
+    entries : list of dicts with keys: network, mask, nexthop, tag, metric.
+              If None/empty → defaults to the RFC 2453 §3.9.1 wildcard
+              (single AFI=0, metric=16 entry = "send me your full table").
     """
     header = struct.pack("!BBH", 1, version, 0)
-    entry  = struct.pack("!HH4s4s4sI",
-                         0, 0,
-                         b"\x00\x00\x00\x00",
-                         b"\x00\x00\x00\x00",
-                         b"\x00\x00\x00\x00",
-                         16)
-    return header + entry
+    if not entries:
+        # Wildcard: ask for the entire routing table
+        body = _build_entry(0, 0, "0.0.0.0", "0.0.0.0", "0.0.0.0", 16)
+    else:
+        body = b""
+        for e in entries:
+            body += _build_entry(
+                2,                       # AF_INET
+                e.get("tag",     0),
+                e.get("network", "0.0.0.0"),
+                e.get("mask",    "0.0.0.0"),
+                e.get("nexthop", "0.0.0.0"),
+                e.get("metric",  16),
+            )
+    return header + body
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +301,43 @@ def main():
     print(f"    timeout : {args.timeout}s")
     print()
 
-    rip_data = build_rip_request(version)
+    # --- Build route entry list from CLI ---
+    route_entries = None
+    if args.entries:
+        route_entries = []
+        for raw in args.entries:
+            try:
+                net, mask, nh, tag, metric = _parse_entry_arg(raw)
+            except (ValueError, OSError) as exc:
+                print(f"[!] Bad --entry value {raw!r}: {exc}", file=sys.stderr)
+                sys.exit(1)
+            route_entries.append(
+                {"network": net, "mask": mask, "nexthop": nh,
+                 "tag": tag, "metric": metric}
+            )
+    elif (args.entry_network != "0.0.0.0"
+          or args.entry_mask    != "0.0.0.0"
+          or args.entry_nexthop != "0.0.0.0"
+          or args.entry_tag     != 0
+          or args.entry_metric  != 16):
+        route_entries = [{
+            "network": args.entry_network,
+            "mask":    args.entry_mask,
+            "nexthop": args.entry_nexthop,
+            "tag":     args.entry_tag,
+            "metric":  args.entry_metric,
+        }]
+
+    if route_entries:
+        print(f"[*] Request entries ({len(route_entries)}):")
+        for e in route_entries:
+            print(f"    {e['network']}/{e['mask']}  nexthop={e['nexthop']}  "
+                  f"tag={e['tag']}  metric={e['metric']}")
+    else:
+        print("[*] Request entry: wildcard (AFI=0, metric=16) — full routing table")
+    print()
+
+    rip_data = build_rip_request(version, route_entries)
 
     # Build the packet.
     # Key points:
