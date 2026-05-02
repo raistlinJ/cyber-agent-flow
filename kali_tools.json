@@ -48,10 +48,10 @@
       "allow_args": true
     },
     {
-      "name": "rip_request",
+      "name": "RIPv2",
       "command": "timeout",
       "base_args": ["{timeout}", "python3", "-u", "routing_tools/rip_request.py"],
-      "description": "Send RIPv1/v2 Request packets (Scapy) to enumerate the full routing table from RIP-enabled routers, then capture and parse RIP Responses. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s. Use timeout_seconds to cap the overall runtime.",
+      "description": "Send RIP Requests to enumerate routes and inject native-socket RIPv2 Response packets over UDP/520. Request mode uses Scapy for packet send/capture; inject mode binds UDP source port 520 and sends a standards-formatted RIPv2 Response payload. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only] [--inject] [--entry ...]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s. Use timeout_seconds to cap the overall runtime.",
       "allow_args": true,
       "timeout_seconds": 60
     },

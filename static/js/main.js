@@ -547,10 +547,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     command: "builtin",
                     allow_args: true
                 };
-            } else if (name === 'rip_request') {
+            } else if (name === 'RIPv2') {
                 toolDefinition = {
-                    name: 'rip_request',
-                    description: 'Send RIPv1/v2 Request packets (Scapy) to enumerate the full routing table from RIP-enabled routers, then capture and parse RIP Responses. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s.',
+                    name: 'RIPv2',
+                    description: 'Send RIP Requests to enumerate routes and inject native-socket RIPv2 Response packets over UDP/520. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only] [--inject] [--entry ...]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s.',
                     command: 'timeout',
                     base_args: ['{timeout}', 'python3', '-u', 'routing_tools/rip_request.py'],
                     allow_args: true,

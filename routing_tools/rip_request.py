@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-RIPv2 packet sender using Scapy.
+RIPv2 packet sender and listener.
 
-Sends a properly formed RIP Request over UDP with source and destination
-port 520, asking for the full routing table, then captures and parses RIP
-Response packets.
+Sends properly formed RIP Request packets over UDP/520, captures and parses
+RIP Response packets, and can inject RIPv2 Response packets using a native
+Python UDP socket bound to source port 520.
 
-Requires root/CAP_NET_RAW and scapy (pip3 install scapy).
+Requests and capture require root/CAP_NET_RAW and scapy (pip3 install scapy).
+Inject mode uses the standard Python socket API for the UDP payload and still
+requires root to bind to UDP/520.
 
 Usage:
   python3 rip_request.py [options]
@@ -87,8 +89,8 @@ import sys
 # ---------------------------------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Send properly formed RIPv1/v2 Request packets (UDP/520) "
-                    "and capture route responses"
+        description="Send RIP Requests over UDP/520 and capture replies, or "
+                    "inject native-socket RIPv2 Response packets"
     )
     p.add_argument("--iface",   default=None,
                    help="Network interface (default: scapy auto-detect)")
@@ -111,7 +113,7 @@ def parse_args():
     p.add_argument("--ttl",     type=int, default=1,
                    help="IP TTL (default: 1; RFC 2453 mandates TTL=1 for multicast)")
     p.add_argument("--count",   type=int, default=1,
-                   help="Number of Request packets to send (default: 1)")
+                   help="Number of packets to send (default: 1)")
     p.add_argument("--timeout", type=float, default=10.0,
                    help="Seconds to listen for responses (default: 10)")
     p.add_argument("--send-only", action="store_true",
@@ -125,7 +127,7 @@ def parse_args():
     # --- Route entry arguments ---
     ent = p.add_argument_group(
         "Route entry options",
-        "Control the RIP route entry/entries in the Request body. "
+        "Control the RIP route entry/entries in the Request or Response body. "
         "Default: single wildcard entry (AFI=0, metric=16) asking for the "
         "full routing table (RFC 2453 §3.9.1)."
     )
@@ -232,6 +234,47 @@ def build_rip_response(version: int, entries: list) -> bytes:
             e.get("metric",  1),
         )
     return header + body
+
+
+def send_rip_response_socket(target_ip: str, payload: bytes, src_ip: str | None,
+                             count: int) -> None:
+    """Send a RIPv2 Response payload via a native UDP socket bound to port 520."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        if target_ip == "224.0.0.9":
+            ttl = struct.pack("b", 1)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
+            if src_ip and src_ip != "0.0.0.0":
+                sock.setsockopt(
+                    socket.IPPROTO_IP,
+                    socket.IP_MULTICAST_IF,
+                    socket.inet_aton(src_ip),
+                )
+        if src_ip:
+            sock.bind((src_ip, 520))
+        else:
+            sock.bind(("0.0.0.0", 520))
+    except PermissionError:
+        print("[!] Binding to UDP/520 requires sudo/root", file=sys.stderr)
+        sys.exit(1)
+    except OSError as exc:
+        print(f"[!] Failed to bind UDP/520: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        for i in range(count):
+            sock.sendto(payload, (target_ip, 520))
+            if count > 1:
+                print(f"[+] RIPv2 Response sent ({i + 1}/{count})")
+        if count == 1:
+            print(f"[+] RIPv2 Response sent to {target_ip}:520")
+    except Exception as exc:
+        print(f"[!] Send failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        sock.close()
 # ---------------------------------------------------------------------------
 def parse_rip_response(payload: bytes, src: str, routes: list):
     """Parse raw UDP payload of a RIP Response (cmd=2) and print routes."""
@@ -292,22 +335,39 @@ def _get_iface_ip(iface):
 def main():
     args = parse_args()
 
-    try:
-        from scapy.all import conf, sendp, sniff, Ether, IP, UDP, Raw, get_if_hwaddr
-    except ImportError:
-        print("Error: scapy is not installed. Install with: pip3 install scapy",
-              file=sys.stderr)
-        sys.exit(1)
-
     version = args.version
-    iface   = args.iface or conf.iface
+    conf = None
+    sniff = None
+    sendp = None
+    Ether = None
+    IP = None
+    UDP = None
+    Raw = None
+    iface = args.iface
+    src_mac = args.src_mac
+    src_ip = args.src_ip
 
-    # --- Source addresses ---
-    src_ip = args.src_ip or _get_iface_ip(iface) or conf.route.route("0.0.0.0")[1]
-    try:
-        src_mac = args.src_mac or get_if_hwaddr(iface)
-    except Exception:
-        src_mac = None  # Scapy will fill in
+    if args.inject:
+        if not src_ip and args.iface:
+            src_ip = _get_iface_ip(args.iface)
+        if not src_ip:
+            src_ip = "0.0.0.0"
+    else:
+        try:
+            from scapy.all import conf, sendp, sniff, Ether, IP, UDP, Raw, get_if_hwaddr
+        except ImportError:
+            print("Error: scapy is not installed. Install with: pip3 install scapy",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        iface = args.iface or conf.iface
+
+        # --- Source addresses ---
+        src_ip = args.src_ip or _get_iface_ip(iface) or conf.route.route("0.0.0.0")[1]
+        try:
+            src_mac = args.src_mac or get_if_hwaddr(iface)
+        except Exception:
+            src_mac = None  # Scapy will fill in
 
     # --- Destination addresses ---
     if args.target:
@@ -327,10 +387,11 @@ def main():
             dst_mac = args.dst_mac or "ff:ff:ff:ff:ff:ff"
 
     print(f"[*] RIPv{version} {'Inject (Response)' if args.inject else 'Request'}")
-    print(f"    iface   : {iface}")
-    print(f"    src     : {src_ip}:{args.sport}  ({src_mac or 'auto'})")
+    print(f"    iface   : {iface or 'socket'}")
+    print(f"    src     : {src_ip}:{args.sport}  ({src_mac or 'socket auto'})")
     print(f"    dst     : {dst_ip}:{args.dport}  ({dst_mac})")
-    print(f"    ttl     : {args.ttl}")
+    if not args.inject:
+        print(f"    ttl     : {args.ttl}")
     print(f"    count   : {args.count}")
     if not args.inject:
         print(f"    timeout : {args.timeout}s")
@@ -380,6 +441,18 @@ def main():
                 if args.inject
                 else build_rip_request(version, route_entries))
 
+    if args.inject:
+        if version != 2:
+            print("[!] Inject mode only supports RIPv2 response packets.", file=sys.stderr)
+            sys.exit(1)
+        send_rip_response_socket(
+            dst_ip,
+            rip_data,
+            None if src_ip == "0.0.0.0" else src_ip,
+            args.count,
+        )
+        return
+
     # Build the packet.
     # Key points:
     #   - IP(proto=17) is set EXPLICITLY so Scapy never guesses ICMP (proto=1)
@@ -402,11 +475,9 @@ def main():
         for i in range(args.count):
             sendp(pkt, iface=iface, verbose=False)
             if args.count > 1:
-                label = "Response" if args.inject else "Request"
-                print(f"[+] RIP {label} sent ({i + 1}/{args.count})")
+                print(f"[+] RIP Request sent ({i + 1}/{args.count})")
         if args.count == 1:
-            label = "Response (inject)" if args.inject else "Request"
-            print(f"[+] RIP {label} sent")
+            print("[+] RIP Request sent")
     except PermissionError:
         print("[!] Permission denied — re-run with sudo/root", file=sys.stderr)
         sys.exit(1)
@@ -414,7 +485,7 @@ def main():
         print(f"[!] Send failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.send_only or args.inject:
+    if args.send_only:
         return
 
     print(f"[*] Listening for RIP Responses on UDP/520 for {args.timeout}s ...")
