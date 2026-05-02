@@ -2970,6 +2970,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 toolTimeoutModalOverlay.style.display = 'flex';
                 break;
             case 'chat_done':
+                if (_activeToolState) {
+                    finalizeActiveToolEntry(
+                        'Turn ended before a result event was received.',
+                        'is-error',
+                        'Interrupted'
+                    );
+                    clearActiveToolStatus();
+                }
                 appendLog(`<span class="log-label">✅ Turn Complete</span> ${escapeHtml(event.message || 'Ready for next prompt.')}`, 'log-done');
                 setChatReady(); break;
             case 'error':

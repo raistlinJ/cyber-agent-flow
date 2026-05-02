@@ -2293,7 +2293,7 @@ class MCPSession:
 
                 except Exception as exc:
                     duration_ms = int((time.time() - t0) * 1000)
-                    err_msg = "Tool execution failed before a result was returned."
+                    err_msg = f"Tool execution failed before a result was returned: {exc}"
                     self._logger.log_tool_call(
                         name=tool_name,
                         args=tool_args,
@@ -2313,6 +2313,14 @@ class MCPSession:
                         "result": err_msg,
                         "exit_code": -1,
                         "duration_ms": duration_ms,
+                    })
+                    _emit(self.event_callback, "tool_result", {
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "result": err_msg,
+                        "exit_code": -1,
+                        "duration_ms": duration_ms,
+                        "error": True,
                     })
 
         # Hit iteration limit for this turn

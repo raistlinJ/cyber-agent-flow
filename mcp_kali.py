@@ -66,6 +66,9 @@ _DISALLOWED_CURL_FLAGS = {
     "--request",
 }
 _DISALLOWED_CURL_SCHEMES = ("file://", "ftp://", "ftps://", "scp://", "sftp://", "ldap://", "dict://", "gopher://")
+_DEFAULT_CURL_CONNECT_TIMEOUT_SECONDS = 5
+_DEFAULT_CURL_MAX_TIME_SECONDS = 30
+_MAX_ALLOWED_CURL_MAX_TIME_SECONDS = 90
 _DISALLOWED_OPENSSL_FLAGS = {
     "-key",
     "-cert",
@@ -98,6 +101,7 @@ _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
 _TIMEOUT_DECISION_POLL_SECONDS = 0.25
+_TIMEOUT_DECISION_MAX_WAIT_SECONDS = int(os.environ.get("MCP_TIMEOUT_DECISION_MAX_WAIT_SECONDS", "30") or 30)
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
 _TOOL_STOP_REQUEST_FILENAME = "tool_graceful_stop.json"
 _PROCESS_CANCEL_POLL_SECONDS = 0.25
@@ -629,6 +633,8 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
     shell_command = shell_parts[0]
 
     if shell_command == "curl":
+        has_connect_timeout = False
+        has_max_time = False
         for token in shell_parts[1:]:
             if token in _DISALLOWED_CURL_FLAGS:
                 blocked = ", ".join(sorted(_DISALLOWED_CURL_FLAGS))
@@ -637,7 +643,53 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
             if lowered.startswith(_DISALLOWED_CURL_SCHEMES):
                 blocked_schemes = ", ".join(_DISALLOWED_CURL_SCHEMES)
                 return None, f"Error: curl in shell_extended only allows HTTP(S) targets. Disallowed schemes: {blocked_schemes}"
-        return shell_parts, None
+            if token in {"--connect-timeout"}:
+                has_connect_timeout = True
+            if token in {"-m", "--max-time"}:
+                has_max_time = True
+            if lowered.startswith("--connect-timeout="):
+                has_connect_timeout = True
+            if lowered.startswith("--max-time="):
+                has_max_time = True
+
+        normalized = list(shell_parts)
+
+        if not has_connect_timeout:
+            normalized.extend(["--connect-timeout", str(_DEFAULT_CURL_CONNECT_TIMEOUT_SECONDS)])
+        if not has_max_time:
+            normalized.extend(["--max-time", str(_DEFAULT_CURL_MAX_TIME_SECONDS)])
+
+        # Validate explicit max-time values so a single call cannot run indefinitely.
+        for index, token in enumerate(normalized[:-1]):
+            if token in {"-m", "--max-time"}:
+                value = _next_shell_token(normalized, index)
+                if value is None:
+                    return None, "Error: curl max-time flag requires a numeric value"
+                try:
+                    max_time = int(float(value))
+                except ValueError:
+                    return None, "Error: curl max-time flag requires a numeric value"
+                if max_time <= 0 or max_time > _MAX_ALLOWED_CURL_MAX_TIME_SECONDS:
+                    return None, (
+                        "Error: curl --max-time in shell_extended must be between 1 and "
+                        f"{_MAX_ALLOWED_CURL_MAX_TIME_SECONDS} seconds"
+                    )
+
+        for token in normalized:
+            lowered = token.lower()
+            if lowered.startswith("--max-time="):
+                value = lowered.split("=", 1)[1]
+                try:
+                    max_time = int(float(value))
+                except ValueError:
+                    return None, "Error: curl max-time flag requires a numeric value"
+                if max_time <= 0 or max_time > _MAX_ALLOWED_CURL_MAX_TIME_SECONDS:
+                    return None, (
+                        "Error: curl --max-time in shell_extended must be between 1 and "
+                        f"{_MAX_ALLOWED_CURL_MAX_TIME_SECONDS} seconds"
+                    )
+
+        return normalized, None
 
     if shell_command == "openssl":
         if len(shell_parts) < 2 or shell_parts[1] != "s_client":
@@ -807,11 +859,15 @@ def _await_timeout_decision(proc: subprocess.Popen, tool_name: str, arguments: d
 
     response_path = _timeout_response_path()
     request_path = _timeout_request_path()
+    wait_started_at = time.time()
 
     try:
         while True:
             if proc.poll() is not None:
                 return "finished"
+
+            if time.time() - wait_started_at >= max(1, _TIMEOUT_DECISION_MAX_WAIT_SECONDS):
+                return "kill_no_decision"
 
             if _cancel_requested():
                 return "kill"
@@ -953,8 +1009,10 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
                 "stderr": stderr or "",
                 "returncode": -1,
                 "duration_ms": int((time.time() - t0) * 1000),
-                "timed_out_kill": action == "kill",
+                "timed_out_kill": action in {"kill", "kill_no_decision"},
                 "cancelled": False,
+                "timeout_kill_reason": "no_timeout_decision"
+                if action == "kill_no_decision" else "user_kill_decision",
                 "checkpoint_index": checkpoint_index,
             }
 
@@ -1249,10 +1307,16 @@ def _run_shell_sequence(arguments: dict, timeout_seconds: int, config: dict | No
 
         if execution.get("timed_out_kill"):
             elapsed_seconds = max(int(execution.get("duration_ms", 0) / 1000), int(timeout_seconds))
-            step_output = (
-                f"Execution stopped after {elapsed_seconds} seconds because the user chose kill "
-                f"at timeout checkpoint {execution.get('checkpoint_index', 1)}."
-            )
+            if execution.get("timeout_kill_reason") == "no_timeout_decision":
+                step_output = (
+                    f"Execution stopped after {elapsed_seconds} seconds because no timeout checkpoint "
+                    f"decision was provided for checkpoint {execution.get('checkpoint_index', 1)}."
+                )
+            else:
+                step_output = (
+                    f"Execution stopped after {elapsed_seconds} seconds because the user chose kill "
+                    f"at timeout checkpoint {execution.get('checkpoint_index', 1)}."
+                )
             partial_stdout = _strip_ansi(execution.get("stdout") or "")
             partial_stderr = _strip_ansi(execution.get("stderr") or "")
             if partial_stdout:
@@ -1541,7 +1605,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         else:
             cmd, error_text = _build_shell_command(name, arguments)
             if error_text:
-                # Auto-delegate to shell_dangerous if it's available in the config
                 dangerous_config = next(
                     (t for t in config.get("tools", []) if t.get("name") == "shell_dangerous"),
                     None,
@@ -1709,10 +1772,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 output += f"\n\nPartial STDERR:\n{stderr}"
         elif execution.get("timed_out_kill"):
             elapsed_seconds = max(int(duration_ms / 1000), int(timeout_seconds))
-            output = (
-                f"Execution stopped after {elapsed_seconds} seconds because the user chose kill "
-                f"at timeout checkpoint {execution.get('checkpoint_index', 1)} instead of waiting longer."
-            )
+            if execution.get("timeout_kill_reason") == "no_timeout_decision":
+                output = (
+                    f"Execution stopped after {elapsed_seconds} seconds because no timeout checkpoint decision "
+                    f"was provided for checkpoint {execution.get('checkpoint_index', 1)}."
+                )
+            else:
+                output = (
+                    f"Execution stopped after {elapsed_seconds} seconds because the user chose kill "
+                    f"at timeout checkpoint {execution.get('checkpoint_index', 1)} instead of waiting longer."
+                )
             if execution.get("stdout"):
                 output += f"\n\nPartial STDOUT:\n{_strip_ansi(execution.get('stdout') or '')}"
             if stderr:
