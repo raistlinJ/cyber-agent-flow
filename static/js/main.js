@@ -434,6 +434,78 @@ document.addEventListener('DOMContentLoaded', () => {
     const shellExtendedCheckbox = document.querySelector('.tool-checkbox[value="shell_extended"]');
     const shellSequenceCheckbox = document.querySelector('.tool-checkbox[value="shell_sequence"]');
     const toolsJsonArea = document.getElementById('kali-tools-json');
+    const toolGuidesSection = document.getElementById('tool-guides-section');
+    const toolGuidesGrid = document.getElementById('tool-guides-grid');
+    const TOOL_GUIDE_LABELS = {
+        RIPv2: 'RIPv2 guide',
+        ospf_sniff: 'ospf_sniff guide',
+        shell: 'shell guide',
+        shell_extended: 'shell_extended guide',
+        shell_sequence: 'shell_sequence guide',
+        shell_dangerous: 'shell_dangerous guide',
+        interactive_session_list: 'interactive sessions guide',
+        interactive_session_read: 'interactive sessions guide',
+        interactive_session_write: 'interactive sessions guide',
+        interactive_session_close: 'interactive sessions guide',
+    };
+    let _toolGuideSelections = {};
+
+    function getEnabledToolNames() {
+        const names = [];
+        toolCheckboxes.forEach(cb => {
+            if (cb.checked) {
+                names.push(cb.value);
+            }
+        });
+        return names;
+    }
+
+    function selectedToolGuides() {
+        const enabled = new Set(getEnabledToolNames());
+        return Object.keys(_toolGuideSelections)
+            .filter(name => _toolGuideSelections[name] && enabled.has(name));
+    }
+
+    function renderToolGuidesPanel() {
+        if (!toolGuidesSection || !toolGuidesGrid) {
+            return;
+        }
+
+        const enabledGuideTools = getEnabledToolNames()
+            .filter(name => Object.prototype.hasOwnProperty.call(TOOL_GUIDE_LABELS, name));
+
+        toolGuidesGrid.innerHTML = '';
+
+        if (!enabledGuideTools.length) {
+            toolGuidesSection.style.display = 'none';
+            return;
+        }
+
+        toolGuidesSection.style.display = 'flex';
+
+        enabledGuideTools.forEach(name => {
+            if (!Object.prototype.hasOwnProperty.call(_toolGuideSelections, name)) {
+                _toolGuideSelections[name] = false;
+            }
+
+            const label = document.createElement('label');
+            label.className = 'checkbox-container';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = name;
+            checkbox.className = 'tool-guide-checkbox';
+            checkbox.checked = Boolean(_toolGuideSelections[name]);
+            checkbox.addEventListener('change', () => {
+                _toolGuideSelections[name] = checkbox.checked;
+                persistLastSettings();
+            });
+
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(` ${TOOL_GUIDE_LABELS[name]}`));
+            toolGuidesGrid.appendChild(label);
+        });
+    }
 
     function buildSelectedToolsConfig() {
         const selectedTools = [];
@@ -613,6 +685,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 policyEntryType: getSelectedPolicyEntryType(),
                 policyDraft: normalizePolicy(_policyDraft),
                 toolCheckboxStates,
+                toolGuideSelections: _toolGuideSelections,
                 toolsJson: toolsJsonArea?.value || '',
                 extendedMsfPrompt: Boolean(extendedMsfPromptToggle?.checked),
                 activeConfigSubtab: document.querySelector('.config-subtab-btn.active')?.dataset.configTarget || 'config-runtime-panel',
@@ -688,7 +761,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
 
+            if (payload.toolGuideSelections && typeof payload.toolGuideSelections === 'object') {
+                _toolGuideSelections = Object.fromEntries(
+                    Object.entries(payload.toolGuideSelections).map(([name, enabled]) => [name, Boolean(enabled)])
+                );
+            }
+
             updateShellSequenceDependency();
+            renderToolGuidesPanel();
 
             if (toolsJsonArea) {
                 if (typeof payload.toolsJson === 'string' && payload.toolsJson.trim()) {
@@ -758,14 +838,17 @@ document.addEventListener('DOMContentLoaded', () => {
     shellExtendedCheckbox?.addEventListener('change', () => {
         updateShellSequenceDependency();
         updateToolsJson();
+        renderToolGuidesPanel();
         persistLastSettings();
     });
     toolCheckboxes.forEach(cb => cb.addEventListener('change', () => {
         updateToolsJson();
+        renderToolGuidesPanel();
         persistLastSettings();
     }));
     updateShellSequenceDependency();
     updateToolsJson();
+    renderToolGuidesPanel();
 
     function parsePolicyList(rawValue, defaultValue = []) {
         const lines = String(rawValue || '')
@@ -2311,6 +2394,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         let toolsConfig = null;
+        let enabledToolGuides = [];
         if (cmdType !== 'apt') {
             updateToolsJson();
             try { toolsConfig = JSON.parse(toolsJsonArea.value); }
@@ -2319,6 +2403,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 showAlert('Select at least one Kali tool before starting a native session.', 'error');
                 return;
             }
+            enabledToolGuides = selectedToolGuides();
         }
 
         if (!model || !command) return;
@@ -2337,7 +2422,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, extended_msf_prompt: Boolean(extendedMsfPromptToggle?.checked) })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, extended_msf_prompt: Boolean(extendedMsfPromptToggle?.checked), enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 

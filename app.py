@@ -1212,6 +1212,11 @@ def session_start():
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
     extended_msf_prompt = bool(data.get('extended_msf_prompt'))
+    enabled_tool_guides = data.get('enabled_tool_guides')
+    if isinstance(enabled_tool_guides, list):
+        enabled_tool_guides = [str(item).strip() for item in enabled_tool_guides if str(item).strip()]
+    else:
+        enabled_tool_guides = None
 
     app.logger.info(
         'Session start requested provider=%s model=%s url=%s ssl_verify=%s context_window=%s max_turns=%s',
@@ -1298,6 +1303,7 @@ def session_start():
             max_turns=max_turns,
             network_policy=network_policy,
             extended_msf_prompt=extended_msf_prompt,
+            enabled_tool_guides=enabled_tool_guides,
         )
 
         async def _start():

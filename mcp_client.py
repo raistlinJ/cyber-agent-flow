@@ -1281,6 +1281,7 @@ class MCPSession:
         max_turns: int = DEFAULT_MAX_TURNS,
         network_policy: dict | None = None,
         extended_msf_prompt: bool = False,
+        enabled_tool_guides: list[str] | None = None,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
         self.ollama_url = _normalize_provider_base_url(self.llm_provider, ollama_url)
@@ -1294,6 +1295,7 @@ class MCPSession:
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
         self.extended_msf_prompt = bool(extended_msf_prompt)
+        self.enabled_tool_guides = list(enabled_tool_guides) if isinstance(enabled_tool_guides, list) else None
 
         # Internals
         self._exit_stack: AsyncExitStack | None = None
@@ -1940,7 +1942,13 @@ class MCPSession:
         self._anthropic_tools = [_mcp_tool_to_anthropic(t) for t in mcp_tools]
         self._anthropic_tools_minimal = [_mcp_tool_to_anthropic_minimal(t) for t in mcp_tools]
         self.tool_names = [t.name for t in mcp_tools]
-        self._enabled_tool_guidance = _load_enabled_tool_guidance(self.tool_names)
+        if self.enabled_tool_guides is None:
+            guidance_tools = list(self.tool_names)
+        else:
+            enabled_set = {str(name).strip() for name in self.enabled_tool_guides if str(name).strip()}
+            guidance_tools = [name for name in self.tool_names if name in enabled_set]
+
+        self._enabled_tool_guidance = _load_enabled_tool_guidance(guidance_tools)
 
         allow_text = ", ".join(self.network_policy["allow"])
         disallow_text = ", ".join(self.network_policy["disallow"]) if self.network_policy["disallow"] else "(none)"
