@@ -2095,7 +2095,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    chatStopBtn.addEventListener('click', () => askToStopSession(null));
+    chatStopBtn.addEventListener('click', () => {
+        if (_serviceRunning) {
+            askToStopSession(null);
+            return;
+        }
+        setChatSessionToggleButton('starting');
+        startBtn.click();
+    });
 
     function closePostToolReplyModal() {
         _awaitingPostToolReplyDecision = false;
@@ -2319,6 +2326,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setConfigEnabled(false);
         startBtn.innerHTML = ICON_SVG.SPINNER + '<span>Starting service…</span>';
         startBtn.disabled = true;
+        setChatSessionToggleButton('starting');
         updateStatus('running', 'Starting service…');
 
         clearLog();
@@ -2369,7 +2377,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatPromptInput.placeholder = "Type your prompt and press Enter to run...";
                 sendPromptBtn.disabled = false;
                 annotateBtn.disabled = false;
-                chatStopBtn.disabled = false;
+                setChatSessionToggleButton('stop');
                 chatDownloadBtn.style.display = 'inline-block';
 
                 openSseStream();
@@ -2403,6 +2411,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setConfigEnabled(true);
             updateStatus('error', 'Error');
             resetStartBtn();
+            setChatSessionToggleButton('start');
         }
     });
 
@@ -2412,6 +2421,43 @@ document.addEventListener('DOMContentLoaded', () => {
         startBtn.innerHTML = ICON_SVG.POWER + '<span>Start Service</span>';
         startBtn.disabled = false;
         startBtn.style.display = 'inline-flex';
+    }
+
+    function setChatSessionToggleButton(mode) {
+        chatStopBtn.classList.remove('btn-danger', 'btn-secondary', 'btn-primary');
+
+        if (mode === 'stop') {
+            chatStopBtn.classList.add('btn-secondary');
+            chatStopBtn.title = 'Stop Session';
+            chatStopBtn.setAttribute('aria-label', 'Stop session');
+            chatStopBtn.innerHTML = ICON_SVG.STOP;
+            chatStopBtn.disabled = false;
+            return;
+        }
+
+        if (mode === 'start') {
+            chatStopBtn.classList.add('btn-primary');
+            chatStopBtn.title = 'Start new session with previous configuration';
+            chatStopBtn.setAttribute('aria-label', 'Start new session with previous configuration');
+            chatStopBtn.innerHTML = ICON_SVG.POWER;
+            chatStopBtn.disabled = false;
+            return;
+        }
+
+        if (mode === 'starting') {
+            chatStopBtn.classList.add('btn-primary');
+            chatStopBtn.title = 'Starting session...';
+            chatStopBtn.setAttribute('aria-label', 'Starting session');
+            chatStopBtn.innerHTML = ICON_SVG.SPINNER;
+            chatStopBtn.disabled = true;
+            return;
+        }
+
+        chatStopBtn.classList.add('btn-secondary');
+        chatStopBtn.title = 'Stopping session...';
+        chatStopBtn.setAttribute('aria-label', 'Stopping session');
+        chatStopBtn.innerHTML = ICON_SVG.SPINNER;
+        chatStopBtn.disabled = true;
     }
 
     function setConfigEnabled(enabled) {
@@ -2884,7 +2930,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sendPromptBtn.disabled = true;
         
         annotateBtn.disabled = true;
-        chatStopBtn.disabled = true;
+        setChatSessionToggleButton('start');
         chatDownloadBtn.style.display = 'none';
 
         // We DON'T force a tab switch to config here anymore to prevent jarring jumps.
@@ -3453,7 +3499,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatPromptInput.placeholder = "Type your prompt and press Enter to run...";
                 sendPromptBtn.disabled = false;
                 annotateBtn.disabled = false;
-                chatStopBtn.disabled = false;
+                setChatSessionToggleButton('stop');
                 chatDownloadBtn.style.display = 'inline-block';
 
                 // Re-open log stream
@@ -3464,6 +3510,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 setLiveToolsBadge([]);
                 setLivePolicyBadge(null);
+                setChatSessionToggleButton('start');
                 const lastRunId = localStorage.getItem(LAST_ACTIVE_RUN_STORAGE_KEY);
                 if (lastRunId) {
                     restoreLiveLog(lastRunId);

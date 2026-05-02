@@ -30,6 +30,7 @@ import requests
 import shlex
 import time
 import traceback
+from pathlib import Path
 from urllib.parse import urlparse
 from contextlib import AsyncExitStack
 
@@ -78,6 +79,20 @@ _HOSTNAME_RE = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,
 _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
+_TOOL_DOC_MAP = {
+    "RIPv2": "docs/tools/RIPv2.md",
+    "ospf_sniff": "docs/tools/ospf_sniff.md",
+    "shell": "docs/tools/shell.md",
+    "shell_extended": "docs/tools/shell_extended.md",
+    "shell_sequence": "docs/tools/shell_sequence.md",
+    "shell_dangerous": "docs/tools/shell_dangerous.md",
+    "interactive_session_list": "docs/tools/interactive_sessions.md",
+    "interactive_session_read": "docs/tools/interactive_sessions.md",
+    "interactive_session_write": "docs/tools/interactive_sessions.md",
+    "interactive_session_close": "docs/tools/interactive_sessions.md",
+}
+_TOOL_DOC_MAX_CHARS_PER_DOC = 3500
+_TOOL_DOC_MAX_TOTAL_CHARS = 14000
 
 
 # ---------------------------------------------------------------------------
@@ -1167,6 +1182,60 @@ def _tool_timeout_response_path(run_id: str) -> str:
     return os.path.join(_tool_timeout_control_dir(run_id), _TIMEOUT_RESPONSE_FILENAME)
 
 
+def _load_enabled_tool_guidance(tool_names: list[str]) -> str:
+    root_dir = Path(__file__).resolve().parent
+    selected_docs: list[tuple[str, Path]] = []
+    seen_paths = set()
+
+    for name in tool_names or []:
+        rel_path = _TOOL_DOC_MAP.get(str(name))
+        if not rel_path:
+            continue
+        path = (root_dir / rel_path).resolve()
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        selected_docs.append((str(name), path))
+
+    if not selected_docs:
+        return ""
+
+    sections: list[str] = []
+    total = 0
+    for tool_name, path in selected_docs:
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        snippet = text.strip()
+        if not snippet:
+            continue
+        if len(snippet) > _TOOL_DOC_MAX_CHARS_PER_DOC:
+            snippet = snippet[:_TOOL_DOC_MAX_CHARS_PER_DOC].rstrip() + "\n\n[truncated]"
+
+        block = (
+            f"### Tool: {tool_name}\n"
+            f"Source: {path.relative_to(root_dir)}\n\n"
+            f"{snippet}\n"
+        )
+        if total + len(block) > _TOOL_DOC_MAX_TOTAL_CHARS:
+            break
+        sections.append(block)
+        total += len(block)
+
+    if not sections:
+        return ""
+
+    return (
+        "Tool usage guides for enabled tools are provided below. "
+        "Treat them as operational constraints and preferred usage patterns.\n\n"
+        + "\n\n".join(sections)
+    )
+
+
 def _load_tool_timeout_request(run_id: str) -> dict | None:
     path = _tool_timeout_request_path(run_id)
     if not os.path.isfile(path):
@@ -1254,6 +1323,7 @@ class MCPSession:
         self._anthropic_tools: list[dict] = []
         self._anthropic_tools_minimal: list[dict] = []
         self._model_max_ctx: int = context_window
+        self._enabled_tool_guidance: str = ""
 
     def _build_initial_system_prompt(self, allow_text: str, disallow_text: str) -> str:
         prompt = (
@@ -1275,6 +1345,9 @@ class MCPSession:
             )
 
         prompt += f" You must obey the target access policy without exception. Allowed targets: {allow_text}. Disallowed targets: {disallow_text}. If a target is out of scope, do not attempt the action."
+
+        if self._enabled_tool_guidance:
+            prompt += "\n\n" + self._enabled_tool_guidance
         
         if self._active_interactive_sessions:
             active_sessions_str = ", ".join(sorted(self._active_interactive_sessions))
@@ -1867,6 +1940,12 @@ class MCPSession:
         self._anthropic_tools = [_mcp_tool_to_anthropic(t) for t in mcp_tools]
         self._anthropic_tools_minimal = [_mcp_tool_to_anthropic_minimal(t) for t in mcp_tools]
         self.tool_names = [t.name for t in mcp_tools]
+        self._enabled_tool_guidance = _load_enabled_tool_guidance(self.tool_names)
+
+        allow_text = ", ".join(self.network_policy["allow"])
+        disallow_text = ", ".join(self.network_policy["disallow"]) if self.network_policy["disallow"] else "(none)"
+        if self.messages and self.messages[0].get("role") == "system":
+            self.messages[0]["content"] = self._build_initial_system_prompt(allow_text, disallow_text)
 
         if self._logger:
             self._logger.update_metadata({
