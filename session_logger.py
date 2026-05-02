@@ -174,7 +174,7 @@ class SessionLogger:
         self._emit_event("tool_result", {
             "tool": name,
             "args": args,
-            "result": result[:1024],
+            "result": result if len(result) <= 4096 else result[:4096] + "...(truncated)",
             "duration_ms": duration_ms,
             "exit_code": exit_code,
             "graceful_stop": graceful_stop,

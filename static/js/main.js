@@ -65,8 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const liveLogViewer = document.getElementById('live-log-viewer');
     const toolsBadge = document.getElementById('service-tools-badge');
     const policyBadge = document.getElementById('service-policy-badge');
-    const networkCaptureStatusBadge = document.getElementById('network-capture-status-badge');
-    const syscallStatusBadge = document.getElementById('syscall-status-badge');
+    const loggerStatusWrapper = document.getElementById('logger-status-wrapper');
+    const loggerStatusBadge = document.getElementById('logger-status-badge');
+    const loggerStatusPopover = document.getElementById('logger-status-popover');
 
     // Chat Console UI
     const chatConsoleBar = document.getElementById('chat-console-bar');
@@ -1753,39 +1754,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function hideAuxLoggerBadges() {
-        if (networkCaptureStatusBadge) {
-            networkCaptureStatusBadge.style.display = 'none';
-            networkCaptureStatusBadge.textContent = 'NetCap';
+        if (loggerStatusWrapper) {
+            loggerStatusWrapper.style.display = 'none';
         }
-        if (syscallStatusBadge) {
-            syscallStatusBadge.style.display = 'none';
-            syscallStatusBadge.textContent = 'Syscall';
+        if (loggerStatusBadge) {
+            loggerStatusBadge.textContent = '0 loggers active';
+        }
+        if (loggerStatusPopover) {
+            loggerStatusPopover.innerHTML = '';
         }
     }
 
     function renderAuxLoggerBadges(status) {
-        const netStatus = status?.network_capture || {};
-        const sysStatus = status?.syscall_logger || {};
-
-        if (networkCaptureStatusBadge) {
-            if (netStatus.running) {
-                const ifaceCount = Number(netStatus.active_interface_count || 0);
-                networkCaptureStatusBadge.textContent = ifaceCount > 0 ? `NetCap ${ifaceCount}` : 'NetCap';
-                networkCaptureStatusBadge.title = 'Network capture logger active';
-                networkCaptureStatusBadge.style.display = 'inline-flex';
-            } else {
-                networkCaptureStatusBadge.style.display = 'none';
-            }
+        const loggerRows = Array.isArray(status?.loggers) ? status.loggers : [];
+        if (!loggerRows.length) {
+            hideAuxLoggerBadges();
+            return;
         }
 
-        if (syscallStatusBadge) {
-            if (sysStatus.running) {
-                syscallStatusBadge.textContent = 'Syscall';
-                syscallStatusBadge.title = 'System call logger active';
-                syscallStatusBadge.style.display = 'inline-flex';
-            } else {
-                syscallStatusBadge.style.display = 'none';
-            }
+        const activeCount = Number(status?.active_count || 0);
+        if (loggerStatusWrapper) {
+            loggerStatusWrapper.style.display = 'inline-flex';
+        }
+        if (loggerStatusBadge) {
+            const noun = activeCount === 1 ? 'logger' : 'loggers';
+            loggerStatusBadge.textContent = `${activeCount} ${noun} active`;
+        }
+
+        if (loggerStatusPopover) {
+            loggerStatusPopover.innerHTML = loggerRows.map(row => {
+                const state = String(row?.state || 'inactive').toLowerCase();
+                const label = escapeHtml(String(row?.label || row?.id || 'Logger'));
+                const detail = state === 'active' ? 'active' : (state === 'broken' ? 'broken' : 'inactive');
+                return `<div class="logger-status-item ${state}"><span>${label}</span><span>${detail}</span></div>`;
+            }).join('');
         }
     }
 

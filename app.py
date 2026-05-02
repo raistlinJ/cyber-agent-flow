@@ -1419,12 +1419,21 @@ def session_start():
                                 res = await session.call_tool_direct("interactive_session_read", {"session_id": sid})
                                 if res.get("success") and res.get("content"):
                                     output = res["content"].strip()
-                                    # Filter out status messages — only forward actual output
-                                    if output and "has no new output" not in output and "is closed and no new output" not in output:
-                                        _event_callback({"type": "isess_output", "data": {"session_id": sid, "output": output}})
-                                    # Track closed sessions for removal
-                                    if "is closed" in (output or ""):
+                                    normalized = output.lower()
+                                    closed_marker = f"interactive session {sid} is closed and no new output is pending.".lower()
+                                    no_output_marker = f"interactive session {sid} has no new output yet.".lower()
+
+                                    # Track closed sessions only on the explicit close-status response.
+                                    if normalized == closed_marker:
                                         closed_ids.append(sid)
+                                        continue
+
+                                    # Suppress explicit poll status noise; forward only real session output.
+                                    if normalized == no_output_marker:
+                                        continue
+
+                                    if output:
+                                        _event_callback({"type": "isess_output", "data": {"session_id": sid, "output": output}})
                             except Exception as e:
                                 app.logger.error(f"Error polling isess {sid}: {e}")
                         # Stop polling sessions that are closed, and notify the frontend
@@ -2015,11 +2024,25 @@ def session_status():
 
 @app.route('/api/loggers/status', methods=['GET'])
 def auxiliary_loggers_status():
-    """Return minimal status for optional auxiliary loggers."""
+    """Return status for optional loggers with active/inactive/broken state."""
     with _session_lock:
         run_id = _session_state.get("run_id")
         network_logger = _session_state.get("network_capture_logger")
         syscall_logger = _session_state.get("syscall_logger")
+
+    metadata = _load_run_metadata(run_id) or {}
+    logging_settings = ((metadata.get("logging_settings") or {}) if isinstance(metadata, dict) else {})
+
+    keylogger_enabled = bool(logging_settings.get("keylogger_enabled"))
+    network_enabled = bool(logging_settings.get("network_capture_enabled"))
+    syscall_enabled = bool(logging_settings.get("syscall_logger_enabled"))
+
+    keylogger_running = False
+    if get_keylogger_status:
+        try:
+            keylogger_running = bool((get_keylogger_status() or {}).get("running"))
+        except Exception:
+            keylogger_running = False
 
     network_running = bool(network_logger and getattr(network_logger, "is_running", False))
     syscall_running = bool(syscall_logger and getattr(syscall_logger, "is_running", False))
@@ -2030,8 +2053,44 @@ def auxiliary_loggers_status():
         except Exception:
             active_ifaces = []
 
+    def _logger_state(enabled: bool, running: bool) -> str:
+        if running:
+            return "active"
+        if enabled:
+            return "broken"
+        return "inactive"
+
+    logger_rows = [
+        {
+            "id": "keylogger",
+            "label": "Keylogger",
+            "enabled": keylogger_enabled,
+            "running": keylogger_running,
+            "state": _logger_state(keylogger_enabled, keylogger_running),
+        },
+        {
+            "id": "network_capture",
+            "label": "Network Capture",
+            "enabled": network_enabled,
+            "running": network_running,
+            "state": _logger_state(network_enabled, network_running),
+            "active_interfaces": active_ifaces,
+            "active_interface_count": len(active_ifaces),
+        },
+        {
+            "id": "syscall_logger",
+            "label": "Syscall Logger",
+            "enabled": syscall_enabled,
+            "running": syscall_running,
+            "state": _logger_state(syscall_enabled, syscall_running),
+        },
+    ]
+    active_count = sum(1 for row in logger_rows if row.get("state") == "active")
+
     return jsonify({
         "run_id": run_id,
+        "active_count": active_count,
+        "loggers": logger_rows,
         "network_capture": {
             "running": network_running,
             "active_interfaces": active_ifaces,

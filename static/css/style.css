@@ -2298,6 +2298,55 @@ option {
     border-color: rgba(245, 158, 11, 0.3);
 }
 
+.logger-status-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.logger-status-badge {
+    background: rgba(147, 197, 253, 0.12);
+    color: #bfdbfe;
+    border-color: rgba(96, 165, 250, 0.26);
+    cursor: default;
+}
+
+.logger-status-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 210px;
+    padding: 0.45rem;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: rgba(15, 23, 42, 0.95);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+    z-index: 40;
+}
+
+.logger-status-wrapper:hover .logger-status-popover {
+    display: block;
+}
+
+.logger-status-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.7rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    padding: 0.2rem 0.1rem;
+}
+
+.logger-status-item.active {
+    color: #86efac;
+}
+
+.logger-status-item.inactive,
+.logger-status-item.broken {
+    color: #fca5a5;
+}
+
 .live-log-header-actions {
     display: flex;
     align-items: center;
