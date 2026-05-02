@@ -1739,6 +1739,53 @@ option {
     background: rgba(239, 68, 68, 0.12);
 }
 
+.log-tool-runtime-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.log-tool-stop-btn {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    border-radius: 4px;
+    padding: 0;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.2rem;
+    width: 1.2rem;
+}
+
+.log-tool-stop-btn:hover {
+    background: rgba(239, 68, 68, 0.4);
+    border-color: #ef4444;
+    color: #fff;
+    transform: scale(1.1);
+}
+
+.log-tool-stop-btn:active {
+    transform: scale(0.95);
+}
+
+.log-tool-stop-loading {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    animation: log-stop-pulse 1.5s infinite;
+}
+
+@keyframes log-stop-pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+}
+
 .log-tool-call-meta {
     margin-top: 0.24rem;
     font-size: 0.72rem;

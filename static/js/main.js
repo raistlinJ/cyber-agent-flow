@@ -1879,7 +1879,12 @@ document.addEventListener('DOMContentLoaded', () => {
         _activeToolEntry.innerHTML = `
             <div class="log-tool-call-row">
                 <span><span class="log-label">🔧 Tool Call</span> <strong>${escapeHtml(_activeToolState.tool || 'Running tool')}</strong></span>
-                <span class="log-tool-runtime-chip ${chipClass}">${phaseLabel} ${runtime}</span>
+                <span class="log-tool-runtime-group">
+                    <span class="log-tool-runtime-chip ${chipClass}">${phaseLabel} ${runtime}</span>
+                    ${(_activeToolState.phase === 'running' && !_activeToolState.stopping) ? `
+                        <button class="log-tool-stop-btn" onclick="stopCurrentTool(event)" title="Stop tool and continue analysis from partial output">⏹</button>
+                    ` : (_activeToolState.stopping ? `<span class="log-tool-stop-loading">Stopping...</span>` : '')}
+                </span>
             </div>
             <div class="log-tool-call-meta">args: <code>${escapeHtml(argsJson)}</code></div>
             ${note ? `<div class="log-tool-call-note">${escapeHtml(note)}</div>` : ''}
@@ -1925,6 +1930,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
+
     }
 
     function stopActiveToolTicker() {
@@ -2565,7 +2571,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Morph the send button into a stop button
         sendPromptBtn.classList.remove('btn-primary');
         sendPromptBtn.classList.add('btn-danger');
-        sendPromptBtn.title = "Cancel/Abort";
+        sendPromptBtn.title = 'Stop agent turn';
+        sendPromptBtn.setAttribute('aria-label', 'Stop agent turn');
         sendPromptBtn.innerHTML = ICON_SVG.STOP;
 
         appendLog(`<span class="log-label">👤 You</span> ${escapeHtml(prompt)}`, 'log-prompt');
@@ -2601,7 +2608,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Restore the send button
         sendPromptBtn.classList.remove('btn-danger', 'btn-secondary');
         sendPromptBtn.classList.add('btn-primary');
-        sendPromptBtn.title = "Send";
+        sendPromptBtn.title = 'Send prompt';
+        sendPromptBtn.setAttribute('aria-label', 'Send prompt');
         sendPromptBtn.disabled = false;
         sendPromptBtn.innerHTML = ICON_SVG.SEND;
 
@@ -2624,9 +2632,39 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             appendLog(`<span class="log-label">❌ Error</span> ${escapeHtml('Failed to send cancel signal.')}`, 'log-error');
             sendPromptBtn.disabled = false;
+            sendPromptBtn.title = 'Stop agent turn';
+            sendPromptBtn.setAttribute('aria-label', 'Stop agent turn');
             sendPromptBtn.innerHTML = ICON_SVG.STOP;
         }
     }
+
+    window.stopCurrentTool = async function(event) {
+        if (event) event.preventDefault();
+        if (_activeToolState) {
+            _activeToolState.stopping = true;
+            renderActiveToolEntry();
+        }
+        
+        try {
+            const resp = await fetch('/api/session/stop_tool', { method: 'POST' });
+            const data = await resp.json();
+            if (data.success) {
+                appendLog(`<span class="log-label">⏹ Info</span> Stop signal sent to tool. Waiting for final output...`, 'log-info');
+            } else {
+                appendLog(`<span class="log-label">❌ Error</span> ${escapeHtml(data.error || 'Failed to stop tool.')}`, 'log-error');
+                if (_activeToolState) {
+                    _activeToolState.stopping = false;
+                    renderActiveToolEntry();
+                }
+            }
+        } catch (err) {
+            appendLog(`<span class="log-label">❌ Error</span> Failed to contact server: ${escapeHtml(err.message)}`, 'log-error');
+            if (_activeToolState) {
+                _activeToolState.stopping = false;
+                renderActiveToolEntry();
+            }
+        }
+    };
 
     // ---------------------------------------------------------------
     // Annotations & Live Analysis
@@ -2805,7 +2843,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         sendPromptBtn.classList.remove('btn-danger', 'btn-secondary');
         sendPromptBtn.classList.add('btn-primary');
-        sendPromptBtn.title = "Send";
+        sendPromptBtn.title = 'Send prompt';
+        sendPromptBtn.setAttribute('aria-label', 'Send prompt');
         sendPromptBtn.innerHTML = ICON_SVG.SEND;
         sendPromptBtn.disabled = true;
         
@@ -2847,10 +2886,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             }
             case 'tool_result': {
+                const label = event.graceful_stop ? 'Stopped' : (event.exit_code === 0 ? 'Completed' : 'Failed');
+                const chipClass = event.graceful_stop ? 'is-waiting' : (event.exit_code === 0 ? 'is-complete' : 'is-error');
                 finalizeActiveToolEntry(
                     `Finished in ${formatElapsedDuration(event.duration_ms || 0)}.`,
-                    event.exit_code === 0 ? 'is-complete' : 'is-error',
-                    event.exit_code === 0 ? 'Completed' : 'Failed',
+                    chipClass,
+                    label,
                     event.duration_ms,
                 );
                 clearActiveToolStatus();

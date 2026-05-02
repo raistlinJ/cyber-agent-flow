@@ -99,6 +99,7 @@ _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
 _TIMEOUT_DECISION_POLL_SECONDS = 0.25
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
+_TOOL_STOP_REQUEST_FILENAME = "tool_graceful_stop.json"
 _PROCESS_CANCEL_POLL_SECONDS = 0.25
 _DEFAULT_INTERACTIVE_SESSION_START_TOOLS = {"msf_run", "shell", "shell_sequence", "shell_extended"}
 _INTERACTIVE_SESSION_HISTORY_LIMIT = 200000
@@ -745,13 +746,25 @@ def _cancel_request_path() -> str | None:
     return os.path.join(control_dir, _CANCEL_REQUEST_FILENAME)
 
 
+def _tool_stop_request_path() -> str | None:
+    control_dir = _timeout_control_dir()
+    if not control_dir:
+        return None
+    return os.path.join(control_dir, _TOOL_STOP_REQUEST_FILENAME)
+
+
 def _cancel_requested() -> bool:
     path = _cancel_request_path()
     return bool(path and os.path.exists(path))
 
 
+def _tool_stop_requested() -> bool:
+    path = _tool_stop_request_path()
+    return bool(path and os.path.exists(path))
+
+
 def _clear_timeout_control_files():
-    for path in (_timeout_request_path(), _timeout_response_path(), _cancel_request_path()):
+    for path in (_timeout_request_path(), _timeout_response_path(), _cancel_request_path(), _tool_stop_request_path()):
         if path and os.path.exists(path):
             try:
                 os.remove(path)
@@ -908,6 +921,21 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
                     "checkpoint_index": checkpoint_index,
                 }
 
+            if _tool_stop_requested():
+                final_stdout, final_stderr, returncode = _terminate_process_with_output(proc)
+                merged_stdout = _merge_process_stream_text(partial_stdout, final_stdout)
+                merged_stderr = _merge_process_stream_text(partial_stderr, final_stderr)
+                return {
+                    "stdout": merged_stdout,
+                    "stderr": merged_stderr,
+                    "returncode": returncode,
+                    "duration_ms": int((time.time() - t0) * 1000),
+                    "timed_out_kill": False,
+                    "cancelled": False,
+                    "graceful_stop": True,
+                    "checkpoint_index": checkpoint_index,
+                }
+
             if time.time() < next_checkpoint_at:
                 continue
 
@@ -1003,6 +1031,22 @@ def _run_interactive_subprocess_with_timeout_prompt(cmd: list[str], timeout_seco
                 "duration_ms": int((time.time() - t0) * 1000),
                 "timed_out_kill": False,
                 "cancelled": True,
+                "checkpoint_index": checkpoint_index,
+            }
+
+        if _tool_stop_requested():
+            _terminate_process_group(proc)
+            trailing = _read_pty_available(master_fd, 0.1)
+            transcript = _merge_process_stream_text(transcript, trailing)
+            _close_master_fd_value(master_fd)
+            return {
+                "stdout": transcript,
+                "stderr": "",
+                "returncode": int(proc.returncode or 0),
+                "duration_ms": int((time.time() - t0) * 1000),
+                "timed_out_kill": False,
+                "cancelled": False,
+                "graceful_stop": True,
                 "checkpoint_index": checkpoint_index,
             }
 
@@ -1657,6 +1701,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 output += f"\n\nPartial STDOUT:\n{_strip_ansi(execution.get('stdout') or '')}"
             if stderr:
                 output += f"\n\nPartial STDERR:\n{stderr}"
+        elif execution.get("graceful_stop"):
+            output = "[GRACEFUL STOP] Tool was manually stopped by the user. The output below is partial but should be analyzed."
+            if execution.get("stdout"):
+                output += f"\n\nPartial STDOUT:\n{_strip_ansi(execution.get('stdout') or '')}"
+            if stderr:
+                output += f"\n\nPartial STDERR:\n{stderr}"
         elif execution.get("timed_out_kill"):
             elapsed_seconds = max(int(duration_ms / 1000), int(timeout_seconds))
             output = (
@@ -1676,8 +1726,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             args=arguments,
             result=output or "Command executed successfully (no output)",
             duration_ms=duration_ms,
-            exit_code=0 if execution.get("interactive_handoff") or execution.get("interactive_preserved") else int(execution.get("returncode") or 0),
+            exit_code=0 if execution.get("interactive_handoff") or execution.get("interactive_preserved") or execution.get("graceful_stop") else int(execution.get("returncode") or 0),
             stderr=stderr,
+            graceful_stop=execution.get("graceful_stop", False),
         )
 
         return [TextContent(type="text", text=output or "Command executed successfully (no output)")]

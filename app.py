@@ -1720,6 +1720,33 @@ def session_cancel_prompt():
         return jsonify({'success': False, 'error': 'No prompt currently running to cancel.'}), 400
 
 
+@app.route('/api/session/stop_tool', methods=['POST'])
+def session_stop_tool():
+    """Gracefully stop the currently running tool without cancelling the prompt."""
+    with _session_lock:
+        if _session_state["status"] != "running":
+            return jsonify({
+                'success': False,
+                'error': 'No tool currently running.',
+            }), 409
+        run_id = _session_state.get('run_id')
+
+    if run_id:
+        control_dir = os.path.join(RUNS_DIR, run_id, 'control')
+        try:
+            os.makedirs(control_dir, exist_ok=True)
+            # Use the filename defined in mcp_kali.py: tool_graceful_stop.json
+            with open(os.path.join(control_dir, 'tool_graceful_stop.json'), 'w') as f:
+                json.dump({'run_id': run_id, 'timestamp': time.time(), 'action': 'stop'}, f, indent=2)
+            app.logger.info('Graceful tool stop requested run_id=%s', run_id)
+            return jsonify({'success': True, 'message': 'Stop signal sent to tool.'})
+        except Exception as exc:
+            app.logger.error('Failed to write tool stop request for run_id=%s: %s', run_id, exc)
+            return jsonify({'success': False, 'error': str(exc)}), 500
+    else:
+        return jsonify({'success': False, 'error': 'No active run to stop tool.'}), 400
+
+
 @app.route('/api/session/post_tool_reply_action', methods=['POST'])
 def session_post_tool_reply_action():
     """Resolve a paused post-tool empty-reply incident with retry or cancel."""

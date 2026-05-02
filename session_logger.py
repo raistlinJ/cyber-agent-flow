@@ -113,17 +113,19 @@ class SessionLogger:
         self._emit_event("response", {"text": text})
 
     def log_tool_call(self, name: str, args: dict, result: str,
-                      duration_ms: int = 0, exit_code: int = 0, stderr: str = ""):
+                      duration_ms: int = 0, exit_code: int = 0, stderr: str = "",
+                      graceful_stop: bool = False):
         """
         Write a timestamped JSON file for a single tool invocation.
 
         Args:
-            name:        Tool name (e.g. "nmap")
-            args:        Dict of arguments passed to the tool
-            result:      stdout / main result text
-            duration_ms: How long the tool took in milliseconds
-            exit_code:   Process exit code (0 = success)
-            stderr:      stderr output if any
+            name:          Tool name (e.g. "nmap")
+            args:          Dict of arguments passed to the tool
+            result:        stdout / main result text
+            duration_ms:   How long the tool took in milliseconds
+            exit_code:     Process exit code (0 = success)
+            stderr:        stderr output if any
+            graceful_stop: Whether the tool was stopped manually by the user
         """
         self._tool_counter += 1
         safe_name = _sanitize(name)
@@ -140,6 +142,7 @@ class SessionLogger:
             "result_length": len(result),
             "result": result if len(result) <= 4096 else result[:4096] + "\n...[truncated, see artifacts]",
             "stderr": stderr,
+            "graceful_stop": graceful_stop,
         }
 
         with open(path, "w") as f:
@@ -156,7 +159,10 @@ class SessionLogger:
             f.write(f"#### 🔧 Tool Call [{ts}]: `{name}`\n\n")
             f.write(f"**Args:** `{args_str}`  \n")
             f.write(f"**Duration:** {duration_ms}ms  \n")
-            f.write(f"**Exit code:** {exit_code}  \n\n")
+            f.write(f"**Exit code:** {exit_code}  \n")
+            if graceful_stop:
+                f.write(f"**Status:** `Manually Stopped`  \n")
+            f.write(f"\n")
             preview = result[:512] + ("..." if len(result) > 512 else "")
             f.write(f"```\n{preview}\n```\n\n")
 
@@ -166,6 +172,7 @@ class SessionLogger:
             "result": result[:1024],
             "duration_ms": duration_ms,
             "exit_code": exit_code,
+            "graceful_stop": graceful_stop,
         })
 
         return filename

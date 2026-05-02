@@ -2233,12 +2233,14 @@ class MCPSession:
                     is_error = getattr(result, "isError", False)
                     exit_code = -1 if is_error else 0
 
+                    graceful_stop = result_text.startswith("[GRACEFUL STOP]")
                     self._logger.log_tool_call(
                         name=tool_name,
                         args=tool_args,
                         result=result_text,
                         duration_ms=duration_ms,
                         exit_code=exit_code,
+                        graceful_stop=graceful_stop,
                     )
 
                     if "Interactive session preserved as" in result_text:
