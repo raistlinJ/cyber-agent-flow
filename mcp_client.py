@@ -1307,6 +1307,7 @@ class MCPSession:
         self._pending_dangerous_tool_approval = None
         self._pending_tool_timeout_decision = None
         self._active_interactive_sessions = set()
+        self._enabled_tool_guidance: str = ""
         
         # Initialize with a strong system prompt to ensure tools aren't sent to the background
         allow_text = ", ".join(self.network_policy['allow'])
@@ -1324,7 +1325,6 @@ class MCPSession:
         self._anthropic_tools: list[dict] = []
         self._anthropic_tools_minimal: list[dict] = []
         self._model_max_ctx: int = context_window
-        self._enabled_tool_guidance: str = ""
 
     def _build_initial_system_prompt(self, allow_text: str, disallow_text: str) -> str:
         prompt = (
