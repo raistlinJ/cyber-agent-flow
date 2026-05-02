@@ -437,8 +437,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const shellExtendedCheckbox = document.querySelector('.tool-checkbox[value="shell_extended"]');
     const shellSequenceCheckbox = document.querySelector('.tool-checkbox[value="shell_sequence"]');
     const toolsJsonArea = document.getElementById('kali-tools-json');
-    const toolGuidesSection = document.getElementById('tool-guides-section');
-    const toolGuidesGrid = document.getElementById('tool-guides-grid');
     const TOOL_GUIDE_LABELS = {
         msf_run: 'msf_run guide',
         RIPv2: 'RIPv2 guide',
@@ -470,44 +468,58 @@ document.addEventListener('DOMContentLoaded', () => {
             .filter(name => _toolGuideSelections[name] && enabled.has(name));
     }
 
-    function renderToolGuidesPanel() {
-        if (!toolGuidesSection || !toolGuidesGrid) {
-            return;
-        }
-
-        const enabledGuideTools = getEnabledToolNames()
-            .filter(name => Object.prototype.hasOwnProperty.call(TOOL_GUIDE_LABELS, name));
-
-        toolGuidesGrid.innerHTML = '';
-
-        if (!enabledGuideTools.length) {
-            toolGuidesSection.style.display = 'none';
-            return;
-        }
-
-        toolGuidesSection.style.display = 'flex';
-
-        enabledGuideTools.forEach(name => {
-            if (!Object.prototype.hasOwnProperty.call(_toolGuideSelections, name)) {
-                _toolGuideSelections[name] = false;
+    function renderInlineToolGuideControls() {
+        toolCheckboxes.forEach(cb => {
+            const toolName = cb.value;
+            const supportsGuide = Object.prototype.hasOwnProperty.call(TOOL_GUIDE_LABELS, toolName);
+            const baseLabel = cb.closest('label.checkbox-container');
+            if (!baseLabel || !supportsGuide) {
+                return;
             }
 
-            const label = document.createElement('label');
-            label.className = 'checkbox-container';
+            if (!Object.prototype.hasOwnProperty.call(_toolGuideSelections, toolName)) {
+                _toolGuideSelections[toolName] = false;
+            }
 
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.value = name;
-            checkbox.className = 'tool-guide-checkbox';
-            checkbox.checked = Boolean(_toolGuideSelections[name]);
-            checkbox.addEventListener('change', () => {
-                _toolGuideSelections[name] = checkbox.checked;
-                persistLastSettings();
-            });
+            let row = baseLabel.closest('.tool-option-row');
+            if (!row) {
+                row = document.createElement('div');
+                row.className = 'tool-option-row';
+                baseLabel.parentNode.insertBefore(row, baseLabel);
+                row.appendChild(baseLabel);
+            }
 
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${TOOL_GUIDE_LABELS[name]}`));
-            toolGuidesGrid.appendChild(label);
+            let guideLabel = row.querySelector(`label.tool-guide-inline[data-tool-guide-for="${toolName}"]`);
+            if (!guideLabel) {
+                guideLabel = document.createElement('label');
+                guideLabel.className = 'tool-guide-inline';
+                guideLabel.setAttribute('data-tool-guide-for', toolName);
+                guideLabel.title = TOOL_GUIDE_LABELS[toolName];
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'tool-guide-checkbox';
+                checkbox.value = toolName;
+                checkbox.addEventListener('change', () => {
+                    _toolGuideSelections[toolName] = checkbox.checked;
+                    persistLastSettings();
+                });
+
+                const icon = document.createElement('i');
+                icon.className = 'ph ph-file-text';
+
+                guideLabel.appendChild(checkbox);
+                guideLabel.appendChild(icon);
+                row.appendChild(guideLabel);
+            }
+
+            const guideCheckbox = guideLabel.querySelector('input.tool-guide-checkbox');
+            if (guideCheckbox) {
+                guideCheckbox.checked = Boolean(_toolGuideSelections[toolName]);
+                guideCheckbox.disabled = !cb.checked;
+            }
+
+            guideLabel.classList.toggle('is-disabled', !cb.checked);
         });
     }
 
@@ -767,7 +779,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             updateShellSequenceDependency();
-            renderToolGuidesPanel();
+            renderInlineToolGuideControls();
 
             if (toolsJsonArea) {
                 if (typeof payload.toolsJson === 'string' && payload.toolsJson.trim()) {
@@ -837,17 +849,17 @@ document.addEventListener('DOMContentLoaded', () => {
     shellExtendedCheckbox?.addEventListener('change', () => {
         updateShellSequenceDependency();
         updateToolsJson();
-        renderToolGuidesPanel();
+        renderInlineToolGuideControls();
         persistLastSettings();
     });
     toolCheckboxes.forEach(cb => cb.addEventListener('change', () => {
         updateToolsJson();
-        renderToolGuidesPanel();
+        renderInlineToolGuideControls();
         persistLastSettings();
     }));
     updateShellSequenceDependency();
     updateToolsJson();
-    renderToolGuidesPanel();
+    renderInlineToolGuideControls();
 
     function parsePolicyList(rawValue, defaultValue = []) {
         const lines = String(rawValue || '')

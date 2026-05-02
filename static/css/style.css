@@ -450,6 +450,44 @@ body {
     cursor: pointer;
 }
 
+.tool-option-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.tool-option-row .checkbox-container {
+    flex: 1;
+}
+
+.tool-guide-inline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.28rem;
+    min-width: 2.2rem;
+    padding: 0.35rem 0.45rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+}
+
+.tool-guide-inline i {
+    font-size: 0.86rem;
+    color: var(--text-muted);
+}
+
+.tool-guide-inline input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+    accent-color: var(--primary-color);
+}
+
+.tool-guide-inline.is-disabled {
+    opacity: 0.55;
+}
+
 .policy-entry-toggle {
     display: inline-flex;
     align-items: center;
