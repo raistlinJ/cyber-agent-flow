@@ -547,10 +547,45 @@ document.addEventListener('DOMContentLoaded', () => {
                     command: "builtin",
                     allow_args: true
                 };
+            } else if (name === 'rip_request') {
+                toolDefinition = {
+                    name: 'rip_request',
+                    description: 'Send RIPv1/v2 Request packets (Scapy) to enumerate the full routing table from RIP-enabled routers, then capture and parse RIP Responses. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s.',
+                    command: 'timeout',
+                    base_args: ['{timeout}', 'python3', '-u', 'routing_tools/rip_request.py'],
+                    allow_args: true,
+                    timeout_seconds: 60
+                };
+            } else if (name === 'ospf_sniff') {
+                toolDefinition = {
+                    name: 'ospf_sniff',
+                    description: 'OSPF discovery via tshark (passive) with optional active Hello injection (Scapy) to elicit immediate neighbour responses. Args: [--iface IFACE] [--timeout SECS] [--verbose] [--active] [--router-id ID] [--area AREA] [--src-ip IP] [--netmask MASK]. Requires root and tshark.',
+                    command: 'timeout',
+                    base_args: ['{timeout}', 'python3', '-u', 'routing_tools/ospf_sniff.py'],
+                    allow_args: true,
+                    timeout_seconds: 120
+                };
+            } else if (name === 'vtysh') {
+                toolDefinition = {
+                    name: 'vtysh',
+                    description: "Query Quagga/FRRouting routing daemons interactively via vtysh. Common args: -c 'show ip bgp', -c 'show bgp summary', -c 'show ip ospf neighbor', -c 'show ip rip', -c 'show ip route'. Requires vtysh and local daemon access.",
+                    command: 'timeout',
+                    base_args: ['{timeout}', 'vtysh'],
+                    allow_args: true,
+                    timeout_seconds: 15
+                };
+            } else if (name === 'exabgp') {
+                toolDefinition = {
+                    name: 'exabgp',
+                    description: 'BGP peer manipulation and route injection tool (ExaBGP). Used to establish BGP sessions, announce/withdraw prefixes, and probe BGP implementations. Typically invoked with a config file: exabgp <config.conf>. Requires exabgp (apt install exabgp).',
+                    command: 'timeout',
+                    base_args: ['{timeout}', 'exabgp'],
+                    allow_args: true,
+                    timeout_seconds: 60
+                };
             } else {
                 toolDefinition = { name: name, command: cmd, args: ["{args}"], allow_args: true };
             }
-
             selectedTools.push(toolDefinition);
         });
 
