@@ -15,6 +15,14 @@ import pty
 import subprocess
 import fcntl
 from datetime import datetime
+from timestamp_utils import now_timestamp
+
+try:
+    from system_loggers import NetworkCaptureLogger, SyscallLogger
+except Exception as _system_loggers_import_err:
+    print(f"[app] Auxiliary system loggers unavailable: {_system_loggers_import_err}", flush=True)
+    NetworkCaptureLogger = None
+    SyscallLogger = None
 
 app = Flask(__name__)
 
@@ -80,6 +88,8 @@ _session_state = {
     "api_key": None,
     "ssl_verify": True,
     "isess_sessions": set(), # Set of active isess-XXX IDs
+    "network_capture_logger": None,
+    "syscall_logger": None,
 }
 _local_terminals = {}
 _local_terminal_counter = 0
@@ -100,7 +110,8 @@ def _configure_logging():
 
     logging.basicConfig(
         level=level,
-        format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+        format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s',
+        datefmt='%m-%d-%Y %H:%M:%S',
         stream=sys.stdout,
         force=True,
     )
@@ -113,6 +124,26 @@ def _configure_logging():
 
 
 _configure_logging()
+
+
+def _stop_auxiliary_loggers():
+    logger_pairs = (
+        ("network_capture_logger", "Network capture logger"),
+        ("syscall_logger", "Syscall logger"),
+    )
+    for state_key, display_name in logger_pairs:
+        logger_obj = None
+        with _session_lock:
+            logger_obj = _session_state.get(state_key)
+            _session_state[state_key] = None
+
+        if not logger_obj:
+            continue
+
+        try:
+            logger_obj.stop()
+        except Exception as exc:
+            app.logger.warning('%s stop failed: %s', display_name, exc)
 
 
 def _static_asset_version() -> str:
@@ -820,7 +851,7 @@ def _update_analysis_job_state(run_id: str, job_id: str, **updates):
     if not updates:
         return
 
-    updates["last_update_time"] = datetime.now().isoformat()
+    updates["last_update_time"] = now_timestamp()
 
     with _analysis_lock:
         current = dict(_analysis_jobs.get(job_id, {}))
@@ -884,16 +915,24 @@ def _prepare_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
                 filtered_lines = []
                 include_line = False
                 import re
-                time_pattern = re.compile(r'\[(\d{2}:\d{2}:\d{2})\]')
+                time_pattern = re.compile(r'\[([^\]]+)\]')
                 for line in transcript.split('\n'):
                     match = time_pattern.search(line)
                     if match:
-                        time_str = match.group(1)
-                        now = datetime.now()
-                        marker_time = datetime.strptime(time_str, "%H:%M:%S").replace(
-                            year=now.year, month=now.month, day=now.day
-                        )
-                        include_line = marker_time >= cutoff_time
+                        marker_str = match.group(1).strip()
+                        marker_time = None
+                        for fmt in ("%m-%d-%Y %H:%M:%S.%f", "%H:%M:%S"):
+                            try:
+                                parsed = datetime.strptime(marker_str, fmt)
+                                if fmt == "%H:%M:%S":
+                                    now = datetime.now()
+                                    parsed = parsed.replace(year=now.year, month=now.month, day=now.day)
+                                marker_time = parsed
+                                break
+                            except ValueError:
+                                continue
+                        if marker_time is not None:
+                            include_line = marker_time >= cutoff_time
                     if include_line:
                         filtered_lines.append(line)
                 if filtered_lines:
@@ -1211,6 +1250,8 @@ def session_start():
     max_turns = int(data.get('max_turns', 20))
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
+    network_capture_enabled = bool(data.get('network_capture_enabled'))
+    syscall_logger_enabled = bool(data.get('syscall_logger_enabled'))
     enabled_tool_guides = data.get('enabled_tool_guides')
     if isinstance(enabled_tool_guides, list):
         enabled_tool_guides = [str(item).strip() for item in enabled_tool_guides if str(item).strip()]
@@ -1227,12 +1268,14 @@ def session_start():
         max_turns,
     )
     app.logger.debug(
-        'Session start details server_command=%s tools_enabled=%s network_policy=%s auth=%s keylogger_enabled=%s',
+        'Session start details server_command=%s tools_enabled=%s network_policy=%s auth=%s keylogger_enabled=%s network_capture_enabled=%s syscall_logger_enabled=%s',
         _redact_sensitive_text(server_command),
         len((tools_config or {}).get('tools', []) or []) if isinstance(tools_config, dict) else 0,
         _redacted_payload_snapshot(network_policy),
         bool(api_key),
         keylogger_enabled,
+        network_capture_enabled,
+        syscall_logger_enabled,
     )
 
     if max_turns < 1 or max_turns > 100:
@@ -1307,12 +1350,41 @@ def session_start():
         async def _start():
             try:
                 tools = await session.start()
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+
                 if keylogger_enabled and start_keylogger:
                     try:
-                        base_dir = os.path.dirname(os.path.abspath(__file__))
                         start_keylogger(run_id=run_id, base_dir=base_dir)
                     except Exception as keylogger_exc:
                         app.logger.warning('System keylogger start failed for run_id=%s: %s', run_id, keylogger_exc)
+
+                if network_capture_enabled and NetworkCaptureLogger:
+                    try:
+                        network_logger = NetworkCaptureLogger(base_dir=base_dir, event_callback=_event_callback)
+                        network_logger.start(run_id=run_id)
+                        with _session_lock:
+                            _session_state["network_capture_logger"] = network_logger
+                    except Exception as network_exc:
+                        app.logger.warning('Network capture logger start failed for run_id=%s: %s', run_id, network_exc)
+
+                if syscall_logger_enabled and SyscallLogger:
+                    try:
+                        syscall_logger = SyscallLogger(base_dir=base_dir, event_callback=_event_callback)
+                        syscall_logger.start(run_id=run_id, target_pid=os.getpid())
+                        with _session_lock:
+                            _session_state["syscall_logger"] = syscall_logger
+                    except Exception as syscall_exc:
+                        app.logger.warning('Syscall logger start failed for run_id=%s: %s', run_id, syscall_exc)
+
+                if getattr(session, '_logger', None):
+                    session._logger.update_metadata({
+                        "logging_settings": {
+                            "keylogger_enabled": keylogger_enabled,
+                            "network_capture_enabled": network_capture_enabled,
+                            "syscall_logger_enabled": syscall_logger_enabled,
+                        }
+                    })
+
                 with _session_lock:
                     _session_state["session"] = session
                     _session_state["status"] = "running"
@@ -1398,6 +1470,7 @@ def session_start():
                 _session_state["status"] = "stopped"
                 _session_state["session"] = None
                 _session_state["loop"] = None
+            _stop_auxiliary_loggers()
             app.logger.info('Session stopped run_id=%s', run_id)
 
     thread = threading.Thread(target=run_session_loop, daemon=True)
@@ -1923,6 +1996,8 @@ def session_stop():
         except Exception as keylogger_exc:
             app.logger.warning('System keylogger stop failed: %s', keylogger_exc)
 
+    _stop_auxiliary_loggers()
+
     return jsonify({'success': True, 'message': 'Stop signal sent and state reset.'})
 
 
@@ -1936,6 +2011,36 @@ def session_status():
             'run_id': run_id,
             'metadata': _load_run_metadata(run_id),
         })
+
+
+@app.route('/api/loggers/status', methods=['GET'])
+def auxiliary_loggers_status():
+    """Return minimal status for optional auxiliary loggers."""
+    with _session_lock:
+        run_id = _session_state.get("run_id")
+        network_logger = _session_state.get("network_capture_logger")
+        syscall_logger = _session_state.get("syscall_logger")
+
+    network_running = bool(network_logger and getattr(network_logger, "is_running", False))
+    syscall_running = bool(syscall_logger and getattr(syscall_logger, "is_running", False))
+    active_ifaces = []
+    if network_running and network_logger:
+        try:
+            active_ifaces = list(getattr(network_logger, "active_interfaces", []) or [])
+        except Exception:
+            active_ifaces = []
+
+    return jsonify({
+        "run_id": run_id,
+        "network_capture": {
+            "running": network_running,
+            "active_interfaces": active_ifaces,
+            "active_interface_count": len(active_ifaces),
+        },
+        "syscall_logger": {
+            "running": syscall_running,
+        },
+    })
 
 
 @app.route('/api/watcher/start', methods=['POST'])

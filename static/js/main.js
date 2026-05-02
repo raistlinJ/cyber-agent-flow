@@ -51,6 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Keylogger references
     const keyloggerEnableToggle = document.getElementById('keylogger-enable-toggle');
+    const logNetworkCaptureToggle = document.getElementById('log-network-capture-toggle');
+    const logSyscallsToggle = document.getElementById('log-syscalls-toggle');
     const configSubtabBtns = document.querySelectorAll('.config-subtab-btn');
     const configSubtabPanels = document.querySelectorAll('.config-subtab-panel');
 
@@ -63,6 +65,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const liveLogViewer = document.getElementById('live-log-viewer');
     const toolsBadge = document.getElementById('service-tools-badge');
     const policyBadge = document.getElementById('service-policy-badge');
+    const networkCaptureStatusBadge = document.getElementById('network-capture-status-badge');
+    const syscallStatusBadge = document.getElementById('syscall-status-badge');
 
     // Chat Console UI
     const chatConsoleBar = document.getElementById('chat-console-bar');
@@ -1067,6 +1071,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    logNetworkCaptureToggle?.addEventListener('change', () => {
+        const enabled = logNetworkCaptureToggle.checked;
+        localStorage.setItem('logger:network_capture:enabled', String(enabled));
+        if (enabled) {
+            showAlert('Network capture enabled. This may increase CPU, memory, and disk usage.', 'success');
+        }
+    });
+
+    logSyscallsToggle?.addEventListener('change', () => {
+        const enabled = logSyscallsToggle.checked;
+        localStorage.setItem('logger:syscalls:enabled', String(enabled));
+        if (enabled) {
+            showAlert('System call logger enabled. strace must be available on the host.', 'success');
+        }
+    });
+
     chatScopeSlider?.addEventListener('input', () => {
         updateChatScopeUi();
         localStorage.setItem('chat:scope', getChatScopeConfig().id);
@@ -1092,6 +1112,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const keyloggerEnabled = localStorage.getItem('keylogger:enabled');
         if (keyloggerEnabled === 'true') {
             keyloggerEnableToggle.checked = true;
+        }
+        const networkCaptureEnabled = localStorage.getItem('logger:network_capture:enabled');
+        if (networkCaptureEnabled === 'true' && logNetworkCaptureToggle) {
+            logNetworkCaptureToggle.checked = true;
+        }
+        const syscallsEnabled = localStorage.getItem('logger:syscalls:enabled');
+        if (syscallsEnabled === 'true' && logSyscallsToggle) {
+            logSyscallsToggle.checked = true;
         }
         const savedChatScope = localStorage.getItem('chat:scope');
         const savedScopeIndex = CHAT_SCOPE_LEVELS.findIndex(scope => scope.id === savedChatScope);
@@ -1715,6 +1743,61 @@ document.addEventListener('DOMContentLoaded', () => {
         policyBadge.textContent = formatPolicyBadge(policy);
         policyBadge.title = formatPolicyTooltip(policy);
         policyBadge.style.display = 'inline-block';
+    }
+
+    function hideAuxLoggerBadges() {
+        if (networkCaptureStatusBadge) {
+            networkCaptureStatusBadge.style.display = 'none';
+            networkCaptureStatusBadge.textContent = 'NetCap';
+        }
+        if (syscallStatusBadge) {
+            syscallStatusBadge.style.display = 'none';
+            syscallStatusBadge.textContent = 'Syscall';
+        }
+    }
+
+    function renderAuxLoggerBadges(status) {
+        const netStatus = status?.network_capture || {};
+        const sysStatus = status?.syscall_logger || {};
+
+        if (networkCaptureStatusBadge) {
+            if (netStatus.running) {
+                const ifaceCount = Number(netStatus.active_interface_count || 0);
+                networkCaptureStatusBadge.textContent = ifaceCount > 0 ? `NetCap ${ifaceCount}` : 'NetCap';
+                networkCaptureStatusBadge.title = 'Network capture logger active';
+                networkCaptureStatusBadge.style.display = 'inline-flex';
+            } else {
+                networkCaptureStatusBadge.style.display = 'none';
+            }
+        }
+
+        if (syscallStatusBadge) {
+            if (sysStatus.running) {
+                syscallStatusBadge.textContent = 'Syscall';
+                syscallStatusBadge.title = 'System call logger active';
+                syscallStatusBadge.style.display = 'inline-flex';
+            } else {
+                syscallStatusBadge.style.display = 'none';
+            }
+        }
+    }
+
+    async function refreshAuxLoggerStatus() {
+        if (!_serviceRunning) {
+            hideAuxLoggerBadges();
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/loggers/status');
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            renderAuxLoggerBadges(data);
+        } catch (err) {
+            // Optional UI signal only.
+        }
     }
 
     // ---------------------------------------------------------------
@@ -2370,6 +2453,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const contextWindow = parseInt(document.getElementById('context-window').value, 10);
         const maxTurns = parseInt(maxTurnsInput.value, 10);
         const keyloggerEnabled = Boolean(keyloggerEnableToggle?.checked);
+        const networkCaptureEnabled = Boolean(logNetworkCaptureToggle?.checked);
+        const syscallLoggerEnabled = Boolean(logSyscallsToggle?.checked);
         syncPolicyDraftFromEditor();
         const networkPolicy = {
             allow: Array.isArray(_policyDraft.allow) && _policyDraft.allow.length ? [..._policyDraft.allow] : ['*'],
@@ -2417,7 +2502,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 
@@ -2444,6 +2529,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     setLiveToolsBadge(data.tools);
                 }
                 setLivePolicyBadge(data.network_policy || networkPolicy);
+                refreshAuxLoggerStatus();
                 
                 updateStatus('running', 'Service Running - Chat Active');
                 
@@ -2989,6 +3075,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setConfigEnabled(true);
         setLiveToolsBadge([]);
         setLivePolicyBadge(null);
+        hideAuxLoggerBadges();
         
         // Clear isess tabs
         const isessTabs = chatTabBar.querySelectorAll('.chat-tab:not([data-tab-id="main"])');
@@ -3161,6 +3248,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             case 'watcher_analysis_note':
                 if (typeof window.watcherAddAnalysisNote === 'function') window.watcherAddAnalysisNote(event);
+                break;
+            case 'network_capture_logger_started':
+            case 'network_capture_logger_stopped':
+            case 'network_capture_started':
+            case 'network_capture_stopped':
+            case 'syscall_logger_started':
+            case 'syscall_logger_stopped':
+                refreshAuxLoggerStatus();
                 break;
         }
     }
@@ -3567,6 +3662,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     setLiveToolsBadge(data.metadata.available_tools);
                 }
                 setLivePolicyBadge(data.metadata?.network_policy || null);
+                refreshAuxLoggerStatus();
 
                 if (!restoreLiveLog(_currentRunId)) {
                     _logInitialCleared = liveLogViewer.children.length > 0;
@@ -3590,6 +3686,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 setLiveToolsBadge([]);
                 setLivePolicyBadge(null);
+                hideAuxLoggerBadges();
                 setChatSessionToggleButton('start');
                 const lastRunId = localStorage.getItem(LAST_ACTIVE_RUN_STORAGE_KEY);
                 if (lastRunId) {

@@ -16,13 +16,14 @@ import os
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
 from typing import Optional, Callable
+
+from timestamp_utils import now_timestamp
 
 
 def _now_iso() -> str:
-    """Return current UTC time in ISO format."""
-    return datetime.now(timezone.utc).isoformat()
+    """Return current timestamp with millisecond precision."""
+    return now_timestamp()
 
 
 def _check_xdotool_available() -> bool:

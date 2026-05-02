@@ -8,11 +8,13 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+
+from timestamp_utils import now_timestamp
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _now_formatted() -> str:
+    return now_timestamp()
 
 
 def _sanitize(name: str) -> str:
@@ -63,7 +65,7 @@ class SessionLogger:
         # Write initial metadata
         self._metadata = {
             "run_id": run_id,
-            "start_time": _now_iso(),
+            "start_time": _now_formatted(),
             "end_time": None,
             "status": "running",
             **metadata
@@ -74,7 +76,7 @@ class SessionLogger:
         is_new = not os.path.exists(self._transcript_path)
         with open(self._transcript_path, "a") as f:
             if is_new:
-                started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                started = _now_formatted()
                 f.write(f"# MCP Session Transcript\n\n")
                 f.write(f"**Run ID:** `{run_id}`  \n")
                 f.write(f"**Started:** {started}  \n")
@@ -100,14 +102,14 @@ class SessionLogger:
 
     def log_prompt(self, text: str):
         """Append a USER prompt turn to the transcript."""
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"### 👤 User [{ts}]\n\n{text}\n\n")
         self._emit_event("prompt", {"text": text})
 
     def log_response(self, text: str):
         """Append an ASSISTANT response turn to the transcript."""
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"### 🤖 Assistant [{ts}]\n\n{text}\n\n")
         self._emit_event("response", {"text": text})
@@ -134,7 +136,7 @@ class SessionLogger:
 
         record = {
             "seq": self._tool_counter,
-            "timestamp": _now_iso(),
+            "timestamp": _now_formatted(),
             "tool": name,
             "args": args,
             "exit_code": exit_code,
@@ -154,7 +156,7 @@ class SessionLogger:
             self.log_artifact(f"{self._tool_counter:03d}_{safe_name}_output.txt", result)
 
         # Append a brief tool call note to the transcript
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         args_str = json.dumps(args) if args else "(no args)"
         with open(self._transcript_path, "a") as f:
             f.write(f"#### 🔧 Tool Call [{ts}]: `{name}`\n\n")
@@ -192,7 +194,7 @@ class SessionLogger:
     def log_annotation(self, text: str, span: str):
         """Append a user annotation (observation) to annotations.jsonl."""
         record = {
-            "timestamp": _now_iso(),
+            "timestamp": _now_formatted(),
             "span_relevance": span,
             "note": text
         }
@@ -200,7 +202,7 @@ class SessionLogger:
             f.write(json.dumps(record) + "\n")
             
         # Also put a visual marker into the transcript
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"### 📝 Human Annotation [{ts}] (Relevance: {span})\n\n> {text}\n\n")
         
@@ -209,14 +211,14 @@ class SessionLogger:
     def log_human_decision(self, text: str, category: str = "decision"):
         """Append an explicit human approval/denial decision to the transcript."""
         record = {
-            "timestamp": _now_iso(),
+            "timestamp": _now_formatted(),
             "category": category,
             "decision": text,
         }
         with open(self._annotations_path, "a") as f:
             f.write(json.dumps(record) + "\n")
 
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"### 👤 Human Decision [{ts}] ({category})\n\n> {text}\n\n")
 
@@ -231,12 +233,12 @@ class SessionLogger:
 
     def finalize(self, status: str = "completed"):
         """Mark the session as finished and write end time to metadata."""
-        self._metadata["end_time"] = _now_iso()
+        self._metadata["end_time"] = _now_formatted()
         self._metadata["status"] = status
         self._metadata["total_tool_calls"] = self._tool_counter
         self._write_metadata()
 
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"---\n\n**Session ended** [{ts}] — {self._tool_counter} tool call(s)\n")
 

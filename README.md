@@ -202,6 +202,19 @@ Keystrokes are stored in `runs/<run_id>/keystrokes/`:
 - `browser_log.jsonl` - Browser keystrokes with URL and page context
 - `system_log.jsonl` - System keystrokes with application and window title
 
+## Additional Logging Options
+
+The **Logging** subtab also includes optional runtime loggers:
+
+- **Network Capture (High Resource)**: Continuously captures packets on all interfaces currently marked `UP`. If an interface goes down and later comes back up, capture resumes automatically. Each interface is persisted to separate `.pcap` files under `runs/<run_id>/network_capture/`.
+- **System Call Logger**: Captures syscall activity with `strace` (when available) and stores logs under `runs/<run_id>/syscalls/`.
+
+## Timestamp Format
+
+Session and logger timestamps now use a single format with millisecond precision:
+
+- `MM-DD-YYYY HH:MM:SS.mmm`
+
 ### Privacy Notes
 
 - Password fields and API key fields are automatically excluded

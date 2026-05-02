@@ -513,6 +513,29 @@
                                 </div>
 
                                 <div class="input-group config-card-lite">
+                                    <label><i class="ph ph-wifi-high"></i>&nbsp; Network Capture</label>
+                                    <label class="checkbox-container" for="log-network-capture-toggle">
+                                        <input type="checkbox" id="log-network-capture-toggle">
+                                        <span>
+                                            <strong>Capture Network Traffic by Interface</strong>
+                                            <span class="config-warning-chip">High Resource</span>
+                                            <p class="input-hint" style="margin-top: 0.3rem;">Continuously captures packets on all interfaces currently marked UP. If interfaces go down and come back up, capture resumes automatically. Each interface is written to its own capture file.</p>
+                                        </span>
+                                    </label>
+                                </div>
+
+                                <div class="input-group config-card-lite">
+                                    <label><i class="ph ph-terminal-window"></i>&nbsp; System Calls</label>
+                                    <label class="checkbox-container" for="log-syscalls-toggle">
+                                        <input type="checkbox" id="log-syscalls-toggle">
+                                        <span>
+                                            <strong>Log System Calls</strong>
+                                            <p class="input-hint" style="margin-top: 0.3rem;">Captures low-level syscall activity for the running process using strace when available and stores it under each run.</p>
+                                        </span>
+                                    </label>
+                                </div>
+
+                                <div class="input-group config-card-lite">
                                     <label><i class="ph ph-chat-text"></i>&nbsp; Prompts &amp; Responses</label>
                                     <label class="checkbox-container" for="log-prompts-toggle">
                                         <input type="checkbox" id="log-prompts-toggle" checked>
@@ -689,6 +712,10 @@
                                 style="display:none; font-size: 0.75rem;"></span>
                             <span id="service-policy-badge" class="tools-badge tools-badge-policy"
                                 style="display:none; font-size: 0.75rem;"></span>
+                            <span id="network-capture-status-badge" class="tools-badge"
+                                style="display:none; font-size: 0.7rem; opacity: 0.85;">NetCap</span>
+                            <span id="syscall-status-badge" class="tools-badge"
+                                style="display:none; font-size: 0.7rem; opacity: 0.85;">Syscall</span>
                             <button type="button" id="btn-zen-mode" class="btn btn-secondary"
                                 style="padding: 0.3rem 0.6rem; font-size: 0.82rem;" title="Toggle Fullscreen">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 256 256" style="margin-right: 2px;">
