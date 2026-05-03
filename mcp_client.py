@@ -218,48 +218,76 @@ def _is_malformed_ollama_tool_json_error(exc: Exception) -> bool:
 
 
 def _extract_valid_json_from_response(raw_output: str) -> str | None:
-    """Extract the first valid JSON object from output with trailing garbage tokens.
+    """Extract the best valid JSON object from output with interleaved garbage tokens.
     
-    Ollama sometimes appends control tokens like <|call|>, <|message|> after JSON.
-    This function strips everything after the closing brace of the first complete JSON object.
+    Ollama sometimes generates output like:
+      {"args":"..."}<|call|>commentary<|message|>{"name":...}
     
-    Example:
-        Input:  {"args":"-A -T5 192.168.1.10"}<|call|>commentary<|message|>Wait for output.
-        Output: {"args":"-A -T5 192.168.1.10"}
+    This tries to find all valid JSON objects and returns the most complete one
+    (preferring larger/more structured objects with nested properties).
     """
     if not raw_output:
         return None
     
     raw_output = raw_output.strip()
-    brace_count = 0
-    in_string = False
-    escape_next = False
+    candidates = []
     
-    for i, char in enumerate(raw_output):
-        if escape_next:
-            escape_next = False
+    # Find all potential JSON substrings by looking for { and }
+    for start_idx, char in enumerate(raw_output):
+        if char != '{':
             continue
         
-        if char == '\\':
-            escape_next = True
-            continue
+        brace_count = 0
+        in_string = False
+        escape_next = False
         
-        if char == '"':
-            in_string = not in_string
-            continue
-        
-        if in_string:
-            continue
-        
-        if char == '{':
-            brace_count += 1
-        elif char == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                # Found the closing brace of a complete JSON object
-                return raw_output[:i + 1]
+        for end_idx in range(start_idx, len(raw_output)):
+            c = raw_output[end_idx]
+            
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if c == '\\':
+                escape_next = True
+                continue
+            
+            if c == '"':
+                in_string = not in_string
+                continue
+            
+            if in_string:
+                continue
+            
+            if c == '{':
+                brace_count += 1
+            elif c == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    # Found a complete JSON object
+                    candidate = raw_output[start_idx:end_idx + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            candidates.append((candidate, len(candidate), parsed))
+                    except json.JSONDecodeError:
+                        pass
+                    break
     
-    return None
+    if not candidates:
+        return None
+    
+    # Prefer larger objects (more complete) and objects with tool names
+    # Sort by: (has 'function' or tool name, size descending)
+    def score_candidate(item):
+        json_str, length, parsed_obj = item
+        # Check if it looks like a tool call (has 'function' key or known top-level tool name)
+        has_function_key = "function" in parsed_obj
+        # Return tuple for sorting: prioritize objects with structure, then by size
+        return (has_function_key, length)
+    
+    candidates.sort(key=score_candidate, reverse=True)
+    return candidates[0][0] if candidates else None
 
 
 def _normalize_provider_name(provider: str | None) -> str:
@@ -2108,19 +2136,75 @@ class MCPSession:
                     options={"num_ctx": self.context_window},
                 )
             except Exception as exc:
-                if _is_malformed_ollama_tool_json_error(exc) and self._ollama_tools and self._ollama_tools_minimal:
-                    # Ollama returned malformed JSON with extra tokens appended
-                    # Retry with simplified tool metadata that may be easier for the model to format correctly
-                    _emit(self.event_callback, "status", {
-                        "message": "Model generated malformed JSON response; retrying with simplified tool metadata …"
-                    })
-                    response = await asyncio.to_thread(
-                        self._client.chat,
-                        model=self.model,
-                        messages=turn_messages,
-                        tools=self._ollama_tools_minimal,
-                        options={"num_ctx": self.context_window},
-                    )
+                # First attempt to recover from malformed JSON by extracting valid JSON from error message
+                if _is_malformed_ollama_tool_json_error(exc):
+                    error_msg = str(exc)
+                    raw_match = re.search(r"raw='([^']*)'", error_msg)
+                    if raw_match:
+                        raw_output = raw_match.group(1)
+                        sanitized_json = _extract_valid_json_from_response(raw_output)
+                        if sanitized_json:
+                            try:
+                                parsed_json = json.loads(sanitized_json)
+                                _emit(self.event_callback, "status", {
+                                    "message": "Recovered tool call from malformed JSON response …"
+                                })
+                                # Construct a valid response object from the extracted JSON
+                                response = {
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "",
+                                        "tool_calls": [parsed_json] if not isinstance(parsed_json, list) else parsed_json
+                                    }
+                                }
+                            except (json.JSONDecodeError, KeyError, TypeError):
+                                # If we can't parse even after extraction, retry with minimal tools
+                                if self._ollama_tools and self._ollama_tools_minimal:
+                                    _emit(self.event_callback, "status", {
+                                        "message": "Could not recover from malformed JSON; retrying with simplified tool metadata …"
+                                    })
+                                    try:
+                                        response = await asyncio.to_thread(
+                                            self._client.chat,
+                                            model=self.model,
+                                            messages=turn_messages,
+                                            tools=self._ollama_tools_minimal,
+                                            options={"num_ctx": self.context_window},
+                                        )
+                                    except Exception as retry_exc:
+                                        # If retry also fails with malformed JSON, try extraction again
+                                        if _is_malformed_ollama_tool_json_error(retry_exc):
+                                            retry_raw_match = re.search(r"raw='([^']*)'", str(retry_exc))
+                                            if retry_raw_match:
+                                                retry_raw = retry_raw_match.group(1)
+                                                retry_json = _extract_valid_json_from_response(retry_raw)
+                                                if retry_json:
+                                                    try:
+                                                        retry_parsed = json.loads(retry_json)
+                                                        _emit(self.event_callback, "status", {
+                                                            "message": "Recovered tool call from retry response …"
+                                                        })
+                                                        response = {
+                                                            "message": {
+                                                                "role": "assistant",
+                                                                "content": "",
+                                                                "tool_calls": [retry_parsed] if not isinstance(retry_parsed, list) else retry_parsed
+                                                            }
+                                                        }
+                                                    except (json.JSONDecodeError, KeyError, TypeError):
+                                                        raise retry_exc
+                                                else:
+                                                    raise retry_exc
+                                            else:
+                                                raise retry_exc
+                                        else:
+                                            raise retry_exc
+                                else:
+                                    raise exc
+                        else:
+                            raise exc
+                    else:
+                        raise exc
                 elif self._ollama_tools and self._ollama_tools_minimal and _is_xml_schema_error(exc):
                     _emit(self.event_callback, "status", {
                         "message": "Model hit Ollama XML tool-schema bug; retrying with simplified tool metadata …"
