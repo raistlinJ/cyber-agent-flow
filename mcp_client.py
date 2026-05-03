@@ -290,6 +290,79 @@ def _extract_valid_json_from_response(raw_output: str) -> str | None:
     return candidates[0][0] if candidates else None
 
 
+def _normalize_extracted_tool_json(extracted_json: dict) -> dict | None:
+    """Normalize extracted JSON to proper tool_calls format.
+    
+    Handles various formats:
+    1. {"args":"..."} → {"function":{"name":"unknown","arguments":{"args":"..."}}}
+    2. {"nmap":{"args":"..."}} → {"function":{"name":"nmap","arguments":{"args":"..."}}}
+    3. {"function":{"name":"nmap","arguments":{...}}} → as-is
+    4. {"name":"nmap","arguments":{...}} → {"function":{"name":"nmap","arguments":{...}}}
+    """
+    if not isinstance(extracted_json, dict):
+        return None
+    
+    # Already in proper format
+    if "function" in extracted_json and isinstance(extracted_json["function"], dict):
+        func = extracted_json["function"]
+        if "name" in func:
+            return extracted_json
+    
+    # Format: {"name":"...", "arguments":{...}}
+    if "name" in extracted_json and isinstance(extracted_json.get("arguments"), dict):
+        return {
+            "id": extracted_json.get("id", "call_1"),
+            "function": {
+                "name": extracted_json["name"],
+                "arguments": extracted_json["arguments"]
+            }
+        }
+    
+    # Format: {"toolname": {...}} - detect tool name as parent key
+    # Known tool names from Kali
+    known_tools = {
+        "nmap", "masscan", "rustscan", "gobuster", "nikto", "sqlmap", "wpscan",
+        "whatweb", "searchsploit", "msfconsole", "msf_search", "msf_run",
+        "john", "hashcat", "hydra", "medusa", "crowbar", "amass", "subfinder",
+        "curl", "wget", "dirb", "ffuf", "wfuzz", "ospf_sniff", "rip_request",
+        "shell", "shell_extended", "shell_dangerous", "keylogger_toggle",
+        "interactive_session_list", "interactive_session_read", "interactive_session_write",
+        "interactive_session_close", "oscap"
+    }
+    
+    for key in extracted_json.keys():
+        if key in known_tools:
+            value = extracted_json[key]
+            if isinstance(value, dict):
+                # This is likely a tool call with tool name as key
+                return {
+                    "id": "call_1",
+                    "function": {
+                        "name": key,
+                        "arguments": value
+                    }
+                }
+    
+    # Format: {"args":"..."} - just arguments, no tool name
+    if "args" in extracted_json or "arguments" in extracted_json:
+        return {
+            "id": "call_1",
+            "function": {
+                "name": "unknown",
+                "arguments": extracted_json
+            }
+        }
+    
+    # Fallback: wrap everything as arguments
+    return {
+        "id": "call_1",
+        "function": {
+            "name": "unknown",
+            "arguments": extracted_json
+        }
+    }
+
+
 def _normalize_provider_name(provider: str | None) -> str:
     normalized = str(provider or "").strip().lower()
     if normalized in {"litellm", "lite-llm", "lite_llm"}:
@@ -2149,12 +2222,13 @@ class MCPSession:
                                 _emit(self.event_callback, "status", {
                                     "message": "Recovered tool call from malformed JSON response …"
                                 })
-                                # Construct a valid response object from the extracted JSON
+                                # Normalize extracted JSON to proper tool_calls format
+                                normalized = _normalize_extracted_tool_json(parsed_json)
                                 response = {
                                     "message": {
                                         "role": "assistant",
                                         "content": "",
-                                        "tool_calls": [parsed_json] if not isinstance(parsed_json, list) else parsed_json
+                                        "tool_calls": [normalized] if normalized else []
                                     }
                                 }
                             except (json.JSONDecodeError, KeyError, TypeError):
@@ -2184,11 +2258,13 @@ class MCPSession:
                                                         _emit(self.event_callback, "status", {
                                                             "message": "Recovered tool call from retry response …"
                                                         })
+                                                        # Normalize extracted JSON to proper tool_calls format
+                                                        retry_normalized = _normalize_extracted_tool_json(retry_parsed)
                                                         response = {
                                                             "message": {
                                                                 "role": "assistant",
                                                                 "content": "",
-                                                                "tool_calls": [retry_parsed] if not isinstance(retry_parsed, list) else retry_parsed
+                                                                "tool_calls": [retry_normalized] if retry_normalized else []
                                                             }
                                                         }
                                                     except (json.JSONDecodeError, KeyError, TypeError):
