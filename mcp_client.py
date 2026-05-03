@@ -207,6 +207,61 @@ def _is_litellm_retryable_tool_error(exc: Exception) -> bool:
     return any(marker in response_text for marker in retry_markers)
 
 
+def _is_malformed_ollama_tool_json_error(exc: Exception) -> bool:
+    """Detect ResponseError where Ollama appends extra tokens after valid JSON."""
+    error_message = str(exc or "").lower()
+    return (
+        "error parsing tool call" in error_message
+        and "invalid character" in error_message
+        and "status code: 500" in error_message
+    )
+
+
+def _extract_valid_json_from_response(raw_output: str) -> str | None:
+    """Extract the first valid JSON object from output with trailing garbage tokens.
+    
+    Ollama sometimes appends control tokens like <|call|>, <|message|> after JSON.
+    This function strips everything after the closing brace of the first complete JSON object.
+    
+    Example:
+        Input:  {"args":"-A -T5 192.168.1.10"}<|call|>commentary<|message|>Wait for output.
+        Output: {"args":"-A -T5 192.168.1.10"}
+    """
+    if not raw_output:
+        return None
+    
+    raw_output = raw_output.strip()
+    brace_count = 0
+    in_string = False
+    escape_next = False
+    
+    for i, char in enumerate(raw_output):
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if char == '\\':
+            escape_next = True
+            continue
+        
+        if char == '"':
+            in_string = not in_string
+            continue
+        
+        if in_string:
+            continue
+        
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                # Found the closing brace of a complete JSON object
+                return raw_output[:i + 1]
+    
+    return None
+
+
 def _normalize_provider_name(provider: str | None) -> str:
     normalized = str(provider or "").strip().lower()
     if normalized in {"litellm", "lite-llm", "lite_llm"}:
@@ -1335,7 +1390,9 @@ class MCPSession:
             "with less privileged tools like `shell_extended` if you need to run complex, write-enabled, or blocked commands. "
             "Use `shell_dangerous` when necessary and expect an approval gate. If a tool reports that an interactive session "
             "was preserved with an id such as `isess-001`, continue through the dedicated interactive_session_list, "
-            "interactive_session_read, interactive_session_write, and interactive_session_close tools instead of rerunning the exploit."
+            "interactive_session_read, interactive_session_write, and interactive_session_close tools instead of rerunning the exploit. "
+            "When using tools, return ONLY the JSON tool call without any explanatory text, comments, or extra tokens. "
+            "Do not append anything after the closing brace of the JSON object."
         )
         
         prompt += f" You must obey the target access policy without exception. Allowed targets: {allow_text}. Disallowed targets: {disallow_text}. If a target is out of scope, do not attempt the action."
@@ -2051,7 +2108,20 @@ class MCPSession:
                     options={"num_ctx": self.context_window},
                 )
             except Exception as exc:
-                if self._ollama_tools and self._ollama_tools_minimal and _is_xml_schema_error(exc):
+                if _is_malformed_ollama_tool_json_error(exc) and self._ollama_tools and self._ollama_tools_minimal:
+                    # Ollama returned malformed JSON with extra tokens appended
+                    # Retry with simplified tool metadata that may be easier for the model to format correctly
+                    _emit(self.event_callback, "status", {
+                        "message": "Model generated malformed JSON response; retrying with simplified tool metadata …"
+                    })
+                    response = await asyncio.to_thread(
+                        self._client.chat,
+                        model=self.model,
+                        messages=turn_messages,
+                        tools=self._ollama_tools_minimal,
+                        options={"num_ctx": self.context_window},
+                    )
+                elif self._ollama_tools and self._ollama_tools_minimal and _is_xml_schema_error(exc):
                     _emit(self.event_callback, "status", {
                         "message": "Model hit Ollama XML tool-schema bug; retrying with simplified tool metadata …"
                     })
