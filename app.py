@@ -352,6 +352,12 @@ def _detect_mcp_compatibility(model_name: str, model_family: str = '') -> str:
     normalized_name = str(model_name or '').strip().lower()
     normalized_family = str(model_family or '').strip().lower()
 
+    # Explicitly incompatible models (checked before prefix matching)
+    explicitly_incompatible_models = (
+        'huihui_ai/gpt-oss-abliterated:20b',
+        'huihui_ai/gpt-oss-abliterated',
+    )
+
     explicitly_incompatible_prefixes = (
         'tts',
         'whisper',
@@ -373,6 +379,9 @@ def _detect_mcp_compatibility(model_name: str, model_family: str = '') -> str:
         'jamba',
         'samba',
     )
+
+    if normalized_name in (m.lower() for m in explicitly_incompatible_models):
+        return 'No'
 
     if normalized_name.startswith(explicitly_incompatible_prefixes):
         return 'No'
