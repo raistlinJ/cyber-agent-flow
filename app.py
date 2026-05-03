@@ -2033,9 +2033,10 @@ def session_status():
 
 @app.route('/api/loggers/status', methods=['GET'])
 def auxiliary_loggers_status():
-    """Return status for optional loggers with active/inactive/broken state."""
+    """Return status for session logging subsystems with active/inactive/broken state."""
     with _session_lock:
         run_id = _session_state.get("run_id")
+        session = _session_state.get("session")
         network_logger = _session_state.get("network_capture_logger")
         syscall_logger = _session_state.get("syscall_logger")
 
@@ -2069,7 +2070,47 @@ def auxiliary_loggers_status():
             return "broken"
         return "inactive"
 
-    logger_rows = [
+    core_logger_running = bool(session and getattr(session, "_logger", None))
+
+    core_logger_rows = [
+        {
+            "id": "prompt_response",
+            "label": "Prompts & Responses",
+            "enabled": True,
+            "running": core_logger_running,
+            "state": _logger_state(True, core_logger_running),
+        },
+        {
+            "id": "tool_calls",
+            "label": "Tool Calls & Results",
+            "enabled": True,
+            "running": core_logger_running,
+            "state": _logger_state(True, core_logger_running),
+        },
+        {
+            "id": "artifacts",
+            "label": "Artifacts",
+            "enabled": True,
+            "running": core_logger_running,
+            "state": _logger_state(True, core_logger_running),
+        },
+        {
+            "id": "session_metadata",
+            "label": "Session Metadata",
+            "enabled": True,
+            "running": core_logger_running,
+            "state": _logger_state(True, core_logger_running),
+        },
+        {
+            "id": "analysis_results",
+            "label": "Analysis Results",
+            "enabled": True,
+            "running": core_logger_running,
+            "state": _logger_state(True, core_logger_running),
+        },
+    ]
+
+    auxiliary_logger_rows = [
         {
             "id": "keylogger",
             "label": "Keylogger",
@@ -2094,6 +2135,7 @@ def auxiliary_loggers_status():
             "state": _logger_state(syscall_enabled, syscall_running),
         },
     ]
+    logger_rows = [*core_logger_rows, *auxiliary_logger_rows]
     active_count = sum(1 for row in logger_rows if row.get("state") == "active")
 
     return jsonify({

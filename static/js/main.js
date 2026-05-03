@@ -1753,22 +1753,22 @@ document.addEventListener('DOMContentLoaded', () => {
         policyBadge.style.display = 'inline-block';
     }
 
-    function hideAuxLoggerBadges() {
+    function hideLoggingChannelBadges() {
         if (loggerStatusWrapper) {
             loggerStatusWrapper.style.display = 'none';
         }
         if (loggerStatusBadge) {
-            loggerStatusBadge.textContent = '0 loggers active';
+            loggerStatusBadge.textContent = '0 logging channels active';
         }
         if (loggerStatusPopover) {
             loggerStatusPopover.innerHTML = '';
         }
     }
 
-    function renderAuxLoggerBadges(status) {
+    function renderLoggingChannelBadges(status) {
         const loggerRows = Array.isArray(status?.loggers) ? status.loggers : [];
         if (!loggerRows.length) {
-            hideAuxLoggerBadges();
+            hideLoggingChannelBadges();
             return;
         }
 
@@ -1777,7 +1777,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loggerStatusWrapper.style.display = 'inline-flex';
         }
         if (loggerStatusBadge) {
-            const noun = activeCount === 1 ? 'logger' : 'loggers';
+            const noun = activeCount === 1 ? 'logging channel' : 'logging channels';
             loggerStatusBadge.textContent = `${activeCount} ${noun} active`;
         }
 
@@ -1791,9 +1791,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function refreshAuxLoggerStatus() {
+    async function refreshLoggingChannelStatus() {
         if (!_serviceRunning) {
-            hideAuxLoggerBadges();
+            hideLoggingChannelBadges();
             return;
         }
 
@@ -1803,7 +1803,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const data = await response.json();
-            renderAuxLoggerBadges(data);
+            renderLoggingChannelBadges(data);
         } catch (err) {
             // Optional UI signal only.
         }
@@ -2538,7 +2538,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     setLiveToolsBadge(data.tools);
                 }
                 setLivePolicyBadge(data.network_policy || networkPolicy);
-                refreshAuxLoggerStatus();
+                refreshLoggingChannelStatus();
                 
                 updateStatus('running', 'Service Running - Chat Active');
                 
@@ -3084,7 +3084,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setConfigEnabled(true);
         setLiveToolsBadge([]);
         setLivePolicyBadge(null);
-        hideAuxLoggerBadges();
+        hideLoggingChannelBadges();
         
         // Clear isess tabs
         const isessTabs = chatTabBar.querySelectorAll('.chat-tab:not([data-tab-id="main"])');
@@ -3264,7 +3264,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'network_capture_stopped':
             case 'syscall_logger_started':
             case 'syscall_logger_stopped':
-                refreshAuxLoggerStatus();
+                refreshLoggingChannelStatus();
                 break;
         }
     }
@@ -3671,7 +3671,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     setLiveToolsBadge(data.metadata.available_tools);
                 }
                 setLivePolicyBadge(data.metadata?.network_policy || null);
-                refreshAuxLoggerStatus();
+                refreshLoggingChannelStatus();
 
                 if (!restoreLiveLog(_currentRunId)) {
                     _logInitialCleared = liveLogViewer.children.length > 0;
@@ -3695,7 +3695,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 setLiveToolsBadge([]);
                 setLivePolicyBadge(null);
-                hideAuxLoggerBadges();
+                hideLoggingChannelBadges();
                 setChatSessionToggleButton('start');
                 const lastRunId = localStorage.getItem(LAST_ACTIVE_RUN_STORAGE_KEY);
                 if (lastRunId) {
