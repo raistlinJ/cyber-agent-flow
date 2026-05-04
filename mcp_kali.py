@@ -542,16 +542,23 @@ def _interactive_session_tool_result(name: str, arguments: dict) -> tuple[str, i
         user_input = str((arguments or {}).get("input") or "")
         if not user_input:
             return "Error: input is required.", -1
-        payload = user_input if user_input.endswith("\n") else f"{user_input}\n"
+        normalized_input, normalization_note = _normalize_interactive_network_command(user_input)
+        payload = normalized_input if normalized_input.endswith("\n") else f"{normalized_input}\n"
         os.write(session["master_fd"], payload.encode())
         wait_seconds = _coerce_wait_seconds((arguments or {}).get("wait_seconds", _INTERACTIVE_SESSION_DEFAULT_WAIT_SECONDS), _INTERACTIVE_SESSION_DEFAULT_WAIT_SECONDS)
         _refresh_interactive_session(session, wait_seconds)
         pending_output = session.get("pending_output") or ""
         session["pending_output"] = ""
         if pending_output:
+            if normalization_note:
+                return f"{normalization_note}\n\n{pending_output}", 0
             return pending_output, 0
         if session.get("closed"):
+            if normalization_note:
+                return f"{normalization_note}\n\nInteractive session {session_id} closed after sending input.", 0
             return f"Interactive session {session_id} closed after sending input.", 0
+        if normalization_note:
+            return f"{normalization_note}\n\nInput sent to interactive session {session_id}; no output is available yet.", 0
         return f"Input sent to interactive session {session_id}; no output is available yet.", 0
 
     if name == "interactive_session_close":
@@ -1189,6 +1196,79 @@ def _requested_shell_parts(arguments: dict) -> list[str]:
         return raw_args.split()
 
 
+def _normalize_interactive_network_command(user_input: str) -> tuple[str, str | None]:
+    raw = str(user_input or "")
+    stripped = raw.strip()
+    if not stripped:
+        return raw, None
+
+    try:
+        parts = shlex.split(stripped)
+    except Exception:
+        return raw, None
+
+    if not parts:
+        return raw, None
+
+    # Keep complex shell expressions untouched; only normalize simple one-liners.
+    shell_operators = {"|", "||", "&&", ";", "&", ">", ">>", "<", "<<"}
+    if any(token in shell_operators for token in parts):
+        return raw, None
+
+    command = os.path.basename(parts[0]).strip().lower()
+    updated = list(parts)
+    added_flags: list[str] = []
+
+    if command == "curl":
+        has_connect_timeout = any(
+            token == "--connect-timeout" or token.lower().startswith("--connect-timeout=")
+            for token in updated
+        )
+        has_max_time = any(
+            token == "--max-time" or token.lower().startswith("--max-time=")
+            for token in updated
+        )
+        if not has_connect_timeout:
+            updated.extend(["--connect-timeout", "5"])
+            added_flags.append("--connect-timeout 5")
+        if not has_max_time:
+            updated.extend(["--max-time", "30"])
+            added_flags.append("--max-time 30")
+    elif command == "wget":
+        has_timeout = any(token.lower().startswith("--timeout") for token in updated)
+        has_dns_timeout = any(token.lower().startswith("--dns-timeout") for token in updated)
+        has_connect_timeout = any(token.lower().startswith("--connect-timeout") for token in updated)
+        has_read_timeout = any(token.lower().startswith("--read-timeout") for token in updated)
+        has_tries = any(token.lower().startswith("--tries") for token in updated)
+
+        if not has_timeout:
+            updated.append("--timeout=20")
+            added_flags.append("--timeout=20")
+        if not has_dns_timeout:
+            updated.append("--dns-timeout=10")
+            added_flags.append("--dns-timeout=10")
+        if not has_connect_timeout:
+            updated.append("--connect-timeout=10")
+            added_flags.append("--connect-timeout=10")
+        if not has_read_timeout:
+            updated.append("--read-timeout=20")
+            added_flags.append("--read-timeout=20")
+        if not has_tries:
+            updated.append("--tries=1")
+            added_flags.append("--tries=1")
+
+    if not added_flags:
+        return raw, None
+
+    normalized_command = shlex.join(updated)
+    note = (
+        "Applied safety flags to keep this interactive network command bounded: "
+        + ", ".join(added_flags)
+        + "."
+    )
+    return normalized_command, note
+
+
 def _resolve_shell_delegation(config: dict, current_tool_name: str, arguments: dict) -> tuple[str, dict, dict] | None:
     shell_parts = _requested_shell_parts(arguments)
     if not shell_parts:
@@ -1348,7 +1428,8 @@ def _build_dangerous_shell_command(arguments: dict) -> tuple[list[str] | None, s
         return None, "Error: shell_dangerous requires a command"
     if "\x00" in user_args:
         return None, "Error: shell_dangerous command contains a null byte"
-    return ["/bin/sh", "-lc", user_args], None
+    normalized_args, _ = _normalize_interactive_network_command(user_args)
+    return ["/bin/sh", "-lc", normalized_args], None
 
 
 def _collect_string_values(value) -> list[str]:
