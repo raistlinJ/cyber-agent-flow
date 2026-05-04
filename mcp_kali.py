@@ -69,6 +69,8 @@ _DISALLOWED_CURL_SCHEMES = ("file://", "ftp://", "ftps://", "scp://", "sftp://",
 _DEFAULT_CURL_CONNECT_TIMEOUT_SECONDS = 5
 _DEFAULT_CURL_MAX_TIME_SECONDS = 30
 _MAX_ALLOWED_CURL_MAX_TIME_SECONDS = 90
+_DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS = 30
+_DEFAULT_IDLE_TIMEOUT_SECONDS = 20
 _DISALLOWED_OPENSSL_FLAGS = {
     "-key",
     "-cert",
@@ -642,6 +644,8 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
     if shell_command == "curl":
         has_connect_timeout = False
         has_max_time = False
+        has_silent = False
+        has_show_error = False
         for token in shell_parts[1:]:
             if token in _DISALLOWED_CURL_FLAGS:
                 blocked = ", ".join(sorted(_DISALLOWED_CURL_FLAGS))
@@ -654,6 +658,15 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
                 has_connect_timeout = True
             if token in {"-m", "--max-time"}:
                 has_max_time = True
+            if token in {"-s", "--silent"}:
+                has_silent = True
+            if token in {"-S", "--show-error"}:
+                has_show_error = True
+            if token.startswith("-") and not token.startswith("--"):
+                if "s" in token[1:]:
+                    has_silent = True
+                if "S" in token[1:]:
+                    has_show_error = True
             if lowered.startswith("--connect-timeout="):
                 has_connect_timeout = True
             if lowered.startswith("--max-time="):
@@ -665,6 +678,8 @@ def _normalize_extended_shell_command(shell_parts: list[str]) -> tuple[list[str]
             normalized.extend(["--connect-timeout", str(_DEFAULT_CURL_CONNECT_TIMEOUT_SECONDS)])
         if not has_max_time:
             normalized.extend(["--max-time", str(_DEFAULT_CURL_MAX_TIME_SECONDS)])
+        if has_silent and not has_show_error:
+            normalized.append("--show-error")
 
         # Validate explicit max-time values so a single call cannot run indefinitely.
         for index, token in enumerate(normalized[:-1]):
@@ -831,7 +846,15 @@ def _clear_timeout_control_files():
                 pass
 
 
-def _write_timeout_request(tool_name: str, arguments: dict, cmd: list[str], timeout_seconds: int, checkpoint_index: int) -> str | None:
+def _write_timeout_request(
+    tool_name: str,
+    arguments: dict,
+    cmd: list[str],
+    timeout_seconds: int,
+    checkpoint_index: int,
+    trigger: str = "timeout",
+    elapsed_seconds: int = 0,
+) -> str | None:
     request_path = _timeout_request_path()
     response_path = _timeout_response_path()
     if not request_path or not response_path:
@@ -852,6 +875,8 @@ def _write_timeout_request(tool_name: str, arguments: dict, cmd: list[str], time
         "command": shlex.join(cmd),
         "timeout_seconds": int(timeout_seconds),
         "checkpoint_index": int(checkpoint_index),
+        "trigger": str(trigger or "timeout"),
+        "elapsed_seconds": max(0, int(elapsed_seconds or 0)),
         "timestamp": time.time(),
     }
     with open(request_path, "w") as f:
@@ -859,8 +884,25 @@ def _write_timeout_request(tool_name: str, arguments: dict, cmd: list[str], time
     return request_id
 
 
-def _await_timeout_decision(proc: subprocess.Popen, tool_name: str, arguments: dict, cmd: list[str], timeout_seconds: int, checkpoint_index: int) -> str:
-    request_id = _write_timeout_request(tool_name, arguments, cmd, timeout_seconds, checkpoint_index)
+def _await_timeout_decision(
+    proc: subprocess.Popen,
+    tool_name: str,
+    arguments: dict,
+    cmd: list[str],
+    timeout_seconds: int,
+    checkpoint_index: int,
+    trigger: str = "timeout",
+    elapsed_seconds: int = 0,
+) -> str:
+    request_id = _write_timeout_request(
+        tool_name,
+        arguments,
+        cmd,
+        timeout_seconds,
+        checkpoint_index,
+        trigger=trigger,
+        elapsed_seconds=elapsed_seconds,
+    )
     if not request_id:
         return "kill"
 
@@ -901,9 +943,24 @@ def _await_timeout_decision(proc: subprocess.Popen, tool_name: str, arguments: d
                     pass
 
 
-def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, tool_name: str, arguments: dict, preserve_interactive: bool = False) -> dict:
+def _run_subprocess_with_timeout_prompt(
+    cmd: list[str],
+    timeout_seconds: int,
+    tool_name: str,
+    arguments: dict,
+    preserve_interactive: bool = False,
+    first_checkpoint_seconds: int | None = None,
+    idle_timeout_seconds: int | None = None,
+) -> dict:
     if preserve_interactive:
-        return _run_interactive_subprocess_with_timeout_prompt(cmd, timeout_seconds, tool_name, arguments)
+        return _run_interactive_subprocess_with_timeout_prompt(
+            cmd,
+            timeout_seconds,
+            tool_name,
+            arguments,
+            first_checkpoint_seconds=first_checkpoint_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+        )
 
     run_dir = _run_dir_for_current_session()
     t0 = time.time()
@@ -934,7 +991,14 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
     )
     checkpoint_index = 0
     _clear_timeout_control_files()
-    next_checkpoint_at = t0 + timeout_seconds
+    checkpoint_interval = max(1, int(timeout_seconds))
+    first_checkpoint = int(first_checkpoint_seconds or _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS)
+    first_checkpoint = max(1, min(first_checkpoint, checkpoint_interval))
+    next_checkpoint_at = t0 + first_checkpoint
+    idle_limit = int(idle_timeout_seconds or _DEFAULT_IDLE_TIMEOUT_SECONDS)
+    idle_limit = max(0, idle_limit)
+    last_activity_at = t0
+    last_seen_sizes = (0, 0)
 
     while True:
         try:
@@ -953,6 +1017,10 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
         except subprocess.TimeoutExpired as exc:
             partial_stdout = str(getattr(exc, "output", "") or "")
             partial_stderr = str(getattr(exc, "stderr", "") or "")
+            current_sizes = (len(partial_stdout), len(partial_stderr))
+            if current_sizes != last_seen_sizes:
+                last_seen_sizes = current_sizes
+                last_activity_at = time.time()
 
             if _looks_like_interactive_session(tool_name, cmd, partial_stdout, partial_stderr):
                 final_stdout, final_stderr, returncode = _terminate_process_with_output(proc)
@@ -999,13 +1067,57 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
                     "checkpoint_index": checkpoint_index,
                 }
 
+            now = time.time()
+            if idle_limit > 0 and (now - last_activity_at) >= idle_limit:
+                checkpoint_index += 1
+                action = _await_timeout_decision(
+                    proc,
+                    tool_name,
+                    arguments,
+                    cmd,
+                    idle_limit,
+                    checkpoint_index,
+                    trigger="idle",
+                    elapsed_seconds=int(now - t0),
+                )
+                if action == "wait":
+                    last_activity_at = time.time()
+                    next_checkpoint_at = time.time() + checkpoint_interval
+                    continue
+
+                if action != "finished" and proc.poll() is None:
+                    proc.kill()
+                stdout, stderr = proc.communicate()
+                return {
+                    "stdout": stdout or "",
+                    "stderr": stderr or "",
+                    "returncode": -1,
+                    "duration_ms": int((time.time() - t0) * 1000),
+                    "timed_out_kill": action in {"kill", "kill_no_decision"},
+                    "cancelled": False,
+                    "timeout_trigger": "idle",
+                    "timeout_kill_reason": "no_timeout_decision"
+                    if action == "kill_no_decision" else "user_kill_decision",
+                    "checkpoint_index": checkpoint_index,
+                }
+
             if time.time() < next_checkpoint_at:
                 continue
 
             checkpoint_index += 1
-            action = _await_timeout_decision(proc, tool_name, arguments, cmd, timeout_seconds, checkpoint_index)
+            action = _await_timeout_decision(
+                proc,
+                tool_name,
+                arguments,
+                cmd,
+                checkpoint_interval,
+                checkpoint_index,
+                trigger="timeout",
+                elapsed_seconds=int(time.time() - t0),
+            )
             if action == "wait":
-                next_checkpoint_at = time.time() + timeout_seconds
+                next_checkpoint_at = time.time() + checkpoint_interval
+                last_activity_at = time.time()
                 continue
 
             if action != "finished" and proc.poll() is None:
@@ -1018,13 +1130,21 @@ def _run_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, to
                 "duration_ms": int((time.time() - t0) * 1000),
                 "timed_out_kill": action in {"kill", "kill_no_decision"},
                 "cancelled": False,
+                "timeout_trigger": "timeout",
                 "timeout_kill_reason": "no_timeout_decision"
                 if action == "kill_no_decision" else "user_kill_decision",
                 "checkpoint_index": checkpoint_index,
             }
 
 
-def _run_interactive_subprocess_with_timeout_prompt(cmd: list[str], timeout_seconds: int, tool_name: str, arguments: dict) -> dict:
+def _run_interactive_subprocess_with_timeout_prompt(
+    cmd: list[str],
+    timeout_seconds: int,
+    tool_name: str,
+    arguments: dict,
+    first_checkpoint_seconds: int | None = None,
+    idle_timeout_seconds: int | None = None,
+) -> dict:
     t0 = time.time()
     master_fd, slave_fd = pty.openpty()
     import tty
@@ -1048,13 +1168,20 @@ def _run_interactive_subprocess_with_timeout_prompt(cmd: list[str], timeout_seco
 
     checkpoint_index = 0
     _clear_timeout_control_files()
-    next_checkpoint_at = t0 + timeout_seconds
+    checkpoint_interval = max(1, int(timeout_seconds))
+    first_checkpoint = int(first_checkpoint_seconds or _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS)
+    first_checkpoint = max(1, min(first_checkpoint, checkpoint_interval))
+    next_checkpoint_at = t0 + first_checkpoint
+    idle_limit = int(idle_timeout_seconds or _DEFAULT_IDLE_TIMEOUT_SECONDS)
+    idle_limit = max(0, idle_limit)
     transcript = ""
+    last_activity_at = t0
 
     while True:
         chunk = _read_pty_available(master_fd, _PROCESS_CANCEL_POLL_SECONDS)
         if chunk:
             transcript = _merge_process_stream_text(transcript, chunk)
+            last_activity_at = time.time()
 
         if _looks_like_preservable_interactive_session(tool_name, transcript, ""):
             session_id = _preserve_interactive_session(proc, master_fd, tool_name, arguments, cmd, transcript)
@@ -1115,13 +1242,59 @@ def _run_interactive_subprocess_with_timeout_prompt(cmd: list[str], timeout_seco
                 "checkpoint_index": checkpoint_index,
             }
 
+        now = time.time()
+        if idle_limit > 0 and (now - last_activity_at) >= idle_limit:
+            checkpoint_index += 1
+            action = _await_timeout_decision(
+                proc,
+                tool_name,
+                arguments,
+                cmd,
+                idle_limit,
+                checkpoint_index,
+                trigger="idle",
+                elapsed_seconds=int(now - t0),
+            )
+            if action == "wait":
+                next_checkpoint_at = time.time() + checkpoint_interval
+                last_activity_at = time.time()
+                continue
+
+            if action != "finished":
+                _terminate_process_group(proc)
+            trailing = _read_pty_available(master_fd, 0.1)
+            transcript = _merge_process_stream_text(transcript, trailing)
+            _close_master_fd_value(master_fd)
+            return {
+                "stdout": transcript,
+                "stderr": "",
+                "returncode": -1 if action != "finished" else int(proc.returncode or 0),
+                "duration_ms": int((time.time() - t0) * 1000),
+                "timed_out_kill": action in {"kill", "kill_no_decision"},
+                "cancelled": False,
+                "timeout_trigger": "idle",
+                "timeout_kill_reason": "no_timeout_decision"
+                if action == "kill_no_decision" else "user_kill_decision",
+                "checkpoint_index": checkpoint_index,
+            }
+
         if time.time() < next_checkpoint_at:
             continue
 
         checkpoint_index += 1
-        action = _await_timeout_decision(proc, tool_name, arguments, cmd, timeout_seconds, checkpoint_index)
+        action = _await_timeout_decision(
+            proc,
+            tool_name,
+            arguments,
+            cmd,
+            checkpoint_interval,
+            checkpoint_index,
+            trigger="timeout",
+            elapsed_seconds=int(time.time() - t0),
+        )
         if action == "wait":
-            next_checkpoint_at = time.time() + timeout_seconds
+            next_checkpoint_at = time.time() + checkpoint_interval
+            last_activity_at = time.time()
             continue
 
         if action != "finished":
@@ -1134,8 +1307,11 @@ def _run_interactive_subprocess_with_timeout_prompt(cmd: list[str], timeout_seco
             "stderr": "",
             "returncode": -1 if action != "finished" else int(proc.returncode or 0),
             "duration_ms": int((time.time() - t0) * 1000),
-            "timed_out_kill": action == "kill",
+            "timed_out_kill": action in {"kill", "kill_no_decision"},
             "cancelled": False,
+            "timeout_trigger": "timeout",
+            "timeout_kill_reason": "no_timeout_decision"
+            if action == "kill_no_decision" else "user_kill_decision",
             "checkpoint_index": checkpoint_index,
         }
 
@@ -1228,12 +1404,32 @@ def _normalize_interactive_network_command(user_input: str) -> tuple[str, str | 
             token == "--max-time" or token.lower().startswith("--max-time=")
             for token in updated
         )
+        has_silent = False
+        has_show_error = False
+        for token in updated:
+            lowered = token.lower()
+            if token in {"-s", "--silent"}:
+                has_silent = True
+            if token in {"-S", "--show-error"}:
+                has_show_error = True
+            if token.startswith("-") and not token.startswith("--"):
+                if "s" in token[1:]:
+                    has_silent = True
+                if "S" in token[1:]:
+                    has_show_error = True
+            if lowered == "--silent":
+                has_silent = True
+            if lowered == "--show-error":
+                has_show_error = True
         if not has_connect_timeout:
             updated.extend(["--connect-timeout", "5"])
             added_flags.append("--connect-timeout 5")
         if not has_max_time:
             updated.extend(["--max-time", "30"])
             added_flags.append("--max-time 30")
+        if has_silent and not has_show_error:
+            updated.append("--show-error")
+            added_flags.append("--show-error")
     elif command == "wget":
         has_timeout = any(token.lower().startswith("--timeout") for token in updated)
         has_dns_timeout = any(token.lower().startswith("--dns-timeout") for token in updated)
@@ -1807,12 +2003,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         t0 = time.time()
         timeout_seconds = int(tool_config.get("timeout_seconds", 300) or 300)
+        first_checkpoint_seconds = int(
+            tool_config.get("first_checkpoint_seconds", _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS)
+            or _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS
+        )
+        idle_timeout_seconds = int(
+            tool_config.get("idle_timeout_seconds", _DEFAULT_IDLE_TIMEOUT_SECONDS)
+            or _DEFAULT_IDLE_TIMEOUT_SECONDS
+        )
         execution = _run_subprocess_with_timeout_prompt(
             cmd,
             timeout_seconds,
             name,
             arguments,
             preserve_interactive=interactive_capable,
+            first_checkpoint_seconds=first_checkpoint_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
         )
         duration_ms = int(execution.get("duration_ms") or int((time.time() - t0) * 1000))
 
@@ -1853,15 +2059,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 output += f"\n\nPartial STDERR:\n{stderr}"
         elif execution.get("timed_out_kill"):
             elapsed_seconds = max(int(duration_ms / 1000), int(timeout_seconds))
+            checkpoint_kind = "idle-output checkpoint" if execution.get("timeout_trigger") == "idle" else "timeout checkpoint"
             if execution.get("timeout_kill_reason") == "no_timeout_decision":
                 output = (
-                    f"Execution stopped after {elapsed_seconds} seconds because no timeout checkpoint decision "
+                    f"Execution stopped after {elapsed_seconds} seconds because no {checkpoint_kind} decision "
                     f"was provided for checkpoint {execution.get('checkpoint_index', 1)}."
                 )
             else:
                 output = (
                     f"Execution stopped after {elapsed_seconds} seconds because the user chose kill "
-                    f"at timeout checkpoint {execution.get('checkpoint_index', 1)} instead of waiting longer."
+                    f"at {checkpoint_kind} {execution.get('checkpoint_index', 1)} instead of waiting longer."
                 )
             if execution.get("stdout"):
                 output += f"\n\nPartial STDOUT:\n{_strip_ansi(execution.get('stdout') or '')}"

@@ -1789,23 +1789,49 @@ class MCPSession:
                     seen_request_id = request_id
                     checkpoint_index = int(request.get("checkpoint_index") or 1)
                     timeout_seconds = int(request.get("timeout_seconds") or 0)
+                    trigger = str(request.get("trigger") or "timeout").strip().lower()
+                    elapsed_seconds = int(request.get("elapsed_seconds") or 0)
                     tool_name = str(request.get("tool") or active_tool_name)
                     command = str(request.get("command") or (active_tool_args or {}).get("args") or "")
                     self._pending_tool_timeout_decision = dict(request)
 
+                    checkpoint_label = "idle-output checkpoint" if trigger == "idle" else "timeout checkpoint"
+                    if elapsed_seconds > 0:
+                        status_message = (
+                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
+                            f"after {elapsed_seconds} seconds. Waiting for user decision: wait or kill."
+                        )
+                    else:
+                        status_message = (
+                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
+                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: wait or kill."
+                        )
+
                     _emit(self.event_callback, "status", {
-                        "message": f"{tool_name} reached timeout checkpoint {checkpoint_index} after {timeout_seconds} seconds. Waiting for user decision: wait or kill."
+                        "message": status_message
                     })
+
+                    if trigger == "idle":
+                        detail_message = (
+                            f"{tool_name} has shown no new output for {timeout_seconds} seconds "
+                            f"(elapsed: {max(0, elapsed_seconds)} seconds). "
+                            "Wait keeps the process running. Kill terminates it and returns any partial output."
+                        )
+                    else:
+                        detail_message = (
+                            f"{tool_name} has been running for {timeout_seconds * checkpoint_index} seconds. "
+                            "Wait keeps the process running until the next timeout checkpoint. Kill terminates it and returns any partial output."
+                        )
+
                     _emit(self.event_callback, "tool_timeout_decision", {
                         "tool": tool_name,
                         "args": request.get("args") or active_tool_args,
                         "command": command,
                         "timeout_seconds": timeout_seconds,
                         "checkpoint_index": checkpoint_index,
-                        "message": (
-                            f"{tool_name} has been running for {timeout_seconds * checkpoint_index} seconds. "
-                            "Wait keeps the process running until the next timeout checkpoint. Kill terminates it and returns any partial output."
-                        ),
+                        "trigger": trigger,
+                        "elapsed_seconds": elapsed_seconds,
+                        "message": detail_message,
                         "options": ["wait", "kill"],
                     })
 
