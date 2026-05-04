@@ -207,6 +207,29 @@ def _is_litellm_retryable_tool_error(exc: Exception) -> bool:
     return any(marker in response_text for marker in retry_markers)
 
 
+def _is_transient_transport_error(exc: Exception) -> bool:
+    retry_markers = (
+        "connection reset by peer",
+        "readerror",
+        "remoteprotocolerror",
+        "server disconnected",
+        "connection aborted",
+        "broken pipe",
+        "temporarily unavailable",
+        "timed out",
+        "connection closed",
+    )
+
+    cur: Exception | None = exc
+    while cur is not None:
+        text = f"{type(cur).__name__}: {cur}".lower()
+        if any(marker in text for marker in retry_markers):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+
+    return False
+
+
 def _normalize_provider_name(provider: str | None) -> str:
     normalized = str(provider or "").strip().lower()
     if normalized in {"litellm", "lite-llm", "lite_llm"}:
@@ -1992,11 +2015,37 @@ class MCPSession:
                     cancel_event.set()
                 _emit_chat_cancelled(self.event_callback)
             except Exception as e:
-                _emit(self.event_callback, "error", {
-                    "message": "The session hit an internal runtime error. Check server logs for details."
-                })
+                if _is_transient_transport_error(e):
+                    _emit(self.event_callback, "error", {
+                        "message": "Connection to the LLM provider was reset mid-request. Please retry the prompt; if this repeats, verify the model server is healthy and reachable."
+                    })
+                else:
+                    _emit(self.event_callback, "error", {
+                        "message": "The session hit an internal runtime error. Check server logs for details."
+                    })
                 print(f"Crash in agent loop: {type(e).__name__}: {e}")
                 traceback.print_exc()
+
+    async def _chat_with_transient_retry(self, *, messages: list[dict], tools, options: dict, turn_label: str):
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await asyncio.to_thread(
+                    self._client.chat,
+                    model=self.model,
+                    messages=messages,
+                    tools=tools,
+                    options=options,
+                )
+            except Exception as exc:
+                if attempt >= max_attempts or not _is_transient_transport_error(exc):
+                    raise
+
+                delay_seconds = 0.8 * attempt
+                _emit(self.event_callback, "status", {
+                    "message": f"Transient LLM connection issue during {turn_label}; retrying in {delay_seconds:.1f}s (attempt {attempt + 1}/{max_attempts}) …"
+                })
+                await asyncio.sleep(delay_seconds)
 
     async def _run_agent_loop(self, prompt: str, cancel_event: asyncio.Event | None, scope: str | None = None, urgency: str | None = None):
         """Core agent loop for a single chat turn."""
@@ -2043,24 +2092,22 @@ class MCPSession:
                 "message": f"Calling {self.model} (turn {iteration + 1}) …"
             })
             try:
-                response = await asyncio.to_thread(
-                    self._client.chat,
-                    model=self.model,
+                response = await self._chat_with_transient_retry(
                     messages=turn_messages,
                     tools=(self._anthropic_tools if provider_name == "claude" else self._ollama_tools) or None,
                     options={"num_ctx": self.context_window},
+                    turn_label=f"turn {iteration + 1}",
                 )
             except Exception as exc:
                 if self._ollama_tools and self._ollama_tools_minimal and _is_xml_schema_error(exc):
                     _emit(self.event_callback, "status", {
                         "message": "Model hit Ollama XML tool-schema bug; retrying with simplified tool metadata …"
                     })
-                    response = await asyncio.to_thread(
-                        self._client.chat,
-                        model=self.model,
+                    response = await self._chat_with_transient_retry(
                         messages=turn_messages,
                         tools=self._ollama_tools_minimal,
                         options={"num_ctx": self.context_window},
+                        turn_label=f"turn {iteration + 1} (simplified tools)",
                     )
                 elif (
                     provider_name in {"litellm", "openai", "claude"}
@@ -2082,12 +2129,11 @@ class MCPSession:
                     _emit(self.event_callback, "status", {
                         "message": f"{_provider_display_name(self.llm_provider)} rejected the initial tool request; retrying with simplified tool metadata …"
                     })
-                    response = await asyncio.to_thread(
-                        self._client.chat,
-                        model=self.model,
+                    response = await self._chat_with_transient_retry(
                         messages=turn_messages,
                         tools=(self._anthropic_tools_minimal if provider_name == "claude" else self._ollama_tools_minimal),
                         options={"num_ctx": self.context_window, "tool_choice": False},
+                        turn_label=f"turn {iteration + 1} (provider fallback)",
                     )
                 else:
                     raise
