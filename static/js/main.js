@@ -334,6 +334,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const ICON_SVG = {
         POWER: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 256 256"><path d="M128,24a8,8,0,0,1,8,8v80a8,8,0,0,1-16,0V32A8,8,0,0,1,128,24ZM198.63,62.63a8,8,0,0,0-11.26,11.4c26.46,26.11,26.46,68.63,0,94.74a67,67,0,0,1-94.74,0c-26.46-26.11-26.46-68.63,0-94.74a8,8,0,0,0-11.26-11.4c-32.73,32.31-32.73,84.89,0,117.2a83,83,0,0,0,117.26,0C231.36,147.52,231.36,94.94,198.63,62.63Z"></path></svg>`,
         STOP: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216ZM160,104v48a8,8,0,0,1-8,8H104a8,8,0,0,1-8-8V104a8,8,0,0,1,8-8h48A8,8,0,0,1,160,104Z"></path></svg>`,
+        STOP_SQUARE: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="M80,72h96a8,8,0,0,1,8,8v96a8,8,0,0,1-8,8H80a8,8,0,0,1-8-8V80A8,8,0,0,1,80,72Z"></path></svg>`,
+        STOP_ANALYZE: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="8.5" width="5" height="5" rx="0.8"></rect><path d="M9.5 11h4.5"></path><path d="M12.5 8.5l3.5 2.5-3.5 2.5"></path><path d="M16 4.5h3.5l2 2v11a2 2 0 0 1-2 2H16a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2z"></path><path d="M19.5 4.5v2.5h2.5"></path></svg>`,
         SEND: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 256 256"><path d="M231.87,114l-168-104A16,16,0,0,0,40.92,37.32L71.55,112H136a8,8,0,0,1,0,16H71.55L40.92,202.68A16,16,0,0,0,63.87,222a15.88,15.88,0,0,0,10-3.51l168-104a16,16,0,0,0,0-27.18Z"></path></svg>`,
         SPINNER: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 256 256" class="spinning"><path d="M136,32v40a8,8,0,0,1-16,0V32a8,8,0,0,1,16,0Z"></path><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Z" opacity="0.3"></path></svg>`
     };
@@ -2328,8 +2330,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="log-tool-runtime-group">
                     <span class="log-tool-runtime-chip ${chipClass}">${phaseLabel} ${runtime}</span>
                     ${(_activeToolState.phase === 'running' && !_activeToolState.stopping) ? `
-                        <button class="log-tool-stop-btn" onclick="stopCurrentTool(event)" title="Stop tool and continue analysis from partial output">⏹</button>
-                        <button type="button" class="btn btn-secondary" style="margin-left:0.4rem;" onclick="stopCurrentToolAndAnalyze(event)" title="Stop tool and queue a follow-up analysis prompt">Stop & Analyze</button>
+                        <button type="button" class="log-tool-stop-btn" onclick="stopCurrentTool(event)" title="Stop tool without analysis" aria-label="Stop tool">${ICON_SVG.STOP_SQUARE}</button>
+                        <button type="button" class="log-tool-stop-analyze-btn" onclick="stopCurrentToolAndAnalyze(event)" title="Stop tool and queue a follow-up analysis prompt" aria-label="Stop tool and analyze">${ICON_SVG.STOP_ANALYZE}</button>
                     ` : (_activeToolState.stopping ? `<span class="log-tool-stop-loading">Stopping...</span>` : '')}
                 </span>
             </div>

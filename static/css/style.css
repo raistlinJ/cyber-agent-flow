@@ -1772,21 +1772,24 @@ option {
     gap: 0.5rem;
 }
 
-.log-tool-stop-btn {
-    background: rgba(239, 68, 68, 0.2);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-    border-radius: 4px;
+.log-tool-stop-btn,
+.log-tool-stop-analyze-btn {
+    border-radius: 6px;
     padding: 0;
-    font-size: 0.7rem;
     cursor: pointer;
     transition: all var(--transition-fast);
     line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 1.2rem;
-    width: 1.2rem;
+    height: 1.4rem;
+    width: 1.4rem;
+}
+
+.log-tool-stop-btn {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
 }
 
 .log-tool-stop-btn:hover {
@@ -1798,6 +1801,30 @@ option {
 
 .log-tool-stop-btn:active {
     transform: scale(0.95);
+}
+
+.log-tool-stop-analyze-btn {
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    color: #fde68a;
+}
+
+.log-tool-stop-analyze-btn:hover {
+    background: rgba(245, 158, 11, 0.34);
+    border-color: #f59e0b;
+    color: #fff7cc;
+    transform: scale(1.1);
+}
+
+.log-tool-stop-analyze-btn:active {
+    transform: scale(0.95);
+}
+
+.log-tool-stop-btn svg,
+.log-tool-stop-analyze-btn svg {
+    width: 0.82rem;
+    height: 0.82rem;
+    flex-shrink: 0;
 }
 
 .log-tool-stop-loading {

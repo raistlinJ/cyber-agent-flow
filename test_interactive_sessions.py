@@ -55,6 +55,21 @@ class TestInteractiveSessionDetection:
         stdout = "msf > "
         assert _looks_like_preservable_interactive_session("shell_dangerous", stdout, "") is True
 
+    def test_msf_prompt_with_stty_warning_is_treated_as_preservable_for_shell_dangerous(self):
+        from mcp_kali import _looks_like_preservable_interactive_session
+
+        stdout = """stty: 'standard input': Inappropriate ioctl for device
+stty: 'standard input': Inappropriate ioctl for device
+msf exploit(linux/http/webmin_backdoor) > stty: 'standard input': Inappropriate ioctl for device"""
+        assert _looks_like_preservable_interactive_session("shell_dangerous", stdout, "") is True
+
+    def test_msf_run_prompt_with_stty_warning_is_still_not_preservable_without_session(self):
+        from mcp_kali import _looks_like_preservable_interactive_session
+
+        stdout = """stty: 'standard input': Inappropriate ioctl for device
+msf exploit(linux/http/webmin_backdoor) > stty: 'standard input': Inappropriate ioctl for device"""
+        assert _looks_like_preservable_interactive_session("msf_run", stdout, "") is False
+
     def test_reverse_perl_session_open_is_detected(self):
         from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
 
@@ -237,3 +252,21 @@ class TestInteractiveSessionConfig:
 
         assert _tool_supports_interactive_sessions("shell_dangerous", {"interactive_capable": True}) is True
         assert _tool_supports_interactive_sessions("shell_dangerous", {"interactive_capable": False}) is False
+
+
+class TestInteractiveSubprocessSpawn:
+    def test_interactive_subprocess_gives_child_a_controlling_tty(self):
+        from mcp_kali import _run_interactive_subprocess_with_timeout_prompt
+
+        result = _run_interactive_subprocess_with_timeout_prompt(
+            ["/bin/sh", "-lc", "stty -a >/dev/null && printf 'TTY_OK\\n'"],
+            timeout_seconds=5,
+            tool_name="shell_dangerous",
+            arguments={"args": "stty -a >/dev/null && printf 'TTY_OK\\n'"},
+            first_checkpoint_seconds=5,
+            idle_timeout_seconds=5,
+        )
+
+        assert result["returncode"] == 0
+        assert "TTY_OK" in result["stdout"]
+        assert "Inappropriate ioctl for device" not in result["stdout"]

@@ -11,6 +11,7 @@ import ipaddress
 import pty
 import select
 import signal
+import termios
 from urllib.parse import urlparse
 from mcp.server import Server
 from mcp.types import Tool, TextContent
@@ -94,6 +95,7 @@ _SESSION_OPEN_GENERIC_RE = re.compile(r'session\s+\d+\s+(?:opened|created)', re.
 _METERPRETER_PROMPT_RE = re.compile(r'^\s*meterpreter(?:\s+[^\n>]*)?>\s*$', re.IGNORECASE | re.MULTILINE)
 _SHELL_PROMPT_RE = re.compile(r'^\s*shell>\s*$', re.IGNORECASE | re.MULTILINE)
 _MSF_PROMPT_RE = re.compile(r'^\s*msf\d*(?:\s+[^\n>]*)?>\s*$', re.IGNORECASE | re.MULTILINE)
+_STTY_IOCTL_WARNING_RE = re.compile(r"stty:\s+'standard input':\s+Inappropriate ioctl for device", re.IGNORECASE)
 _POWERSHELL_PROMPT_RE = re.compile(r'^\s*PS\s+[^\n>]*>\s*$', re.IGNORECASE)
 _CMD_PROMPT_RE = re.compile(r'^[A-Za-z]:\\[^\n>]*>\s*$')
 _UNIX_SHELL_PROMPT_RE = re.compile(r'^(?:[^\n]{0,120}[#$])\s*$')
@@ -136,6 +138,15 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
+def _normalize_interactive_detection_text(text: str) -> str:
+    normalized = _strip_ansi(text or "")
+    if not normalized:
+        return ""
+    normalized = _STTY_IOCTL_WARNING_RE.sub("", normalized)
+    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+    return normalized.strip()
+
+
 def _merge_process_stream_text(snapshot: str | None, final_text: str | None) -> str:
     snapshot_text = str(snapshot or "")
     final_stream_text = str(final_text or "")
@@ -171,7 +182,7 @@ def _manual_recreation_instructions(tool_name: str, arguments: dict, cmd: list[s
 
 
 def _looks_like_interactive_session(tool_name: str, cmd: list[str], stdout: str, stderr: str) -> bool:
-    combined = _strip_ansi("\n".join(part for part in [stdout or "", stderr or ""] if part)).strip()
+    combined = _normalize_interactive_detection_text("\n".join(part for part in [stdout or "", stderr or ""] if part))
     if not combined:
         return False
 
@@ -190,7 +201,7 @@ def _looks_like_interactive_session(tool_name: str, cmd: list[str], stdout: str,
 
 
 def _looks_like_preservable_interactive_session(tool_name: str, stdout: str, stderr: str) -> bool:
-    combined = _strip_ansi("\n".join(part for part in [stdout or "", stderr or ""] if part)).strip()
+    combined = _normalize_interactive_detection_text("\n".join(part for part in [stdout or "", stderr or ""] if part))
     if not combined:
         return False
 
@@ -276,6 +287,14 @@ def _next_interactive_session_id() -> str:
 def _set_nonblocking(fd: int):
     flags = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+
+def _attach_controlling_tty():
+    try:
+        if os.isatty(0) and hasattr(termios, "TIOCSCTTY"):
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    except Exception:
+        pass
 
 
 def _truncate_tail(text: str, limit: int) -> str:
@@ -1324,6 +1343,7 @@ def _run_interactive_subprocess_with_timeout_prompt(
         text=False,
         start_new_session=True,
         close_fds=True,
+        preexec_fn=_attach_controlling_tty,
     )
     os.close(slave_fd)
 
