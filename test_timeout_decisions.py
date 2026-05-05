@@ -79,6 +79,39 @@ class TestToolTimeoutDecisions:
         assert payload["action"] == "background"
         assert "wait_seconds" not in payload
 
+    def test_background_timeout_decision_sets_turn_completion_flag(self, tmp_path, monkeypatch):
+        import mcp_client
+
+        response_path = tmp_path / "tool_timeout_response.json"
+        monkeypatch.setattr(mcp_client, "_tool_timeout_response_path", lambda run_id: str(response_path))
+
+        session = mcp_client.MCPSession(
+            ollama_url="http://localhost:11434",
+            model="test-model",
+            server_command="python mcp_kali.py",
+            run_id="test-run",
+        )
+        session._pending_tool_timeout_decision = {
+            "request_id": "req-999",
+            "tool": "tcpdump",
+            "command": "tcpdump -ni eth0",
+        }
+
+        assert session.resolve_tool_timeout_decision("background") is True
+        assert session._pending_background_turn_completion == {
+            "tool": "tcpdump",
+            "command": "tcpdump -ni eth0",
+            "request_id": "req-999",
+        }
+        assert session._consume_background_turn_completion("other-tool") is False
+        assert session._pending_background_turn_completion == {
+            "tool": "tcpdump",
+            "command": "tcpdump -ni eth0",
+            "request_id": "req-999",
+        }
+        assert session._consume_background_turn_completion("tcpdump") is True
+        assert session._pending_background_turn_completion is None
+
 
 class TestInteractiveSessionDiscovery:
     def test_discover_interactive_sessions_emits_isess_created_from_list_output(self):

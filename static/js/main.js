@@ -212,6 +212,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let _activeToolEntry = null;
     let _logInitialCleared = false;
     let _toolTimelineCounter = 0;
+    let _queuedChatPrompts = [];
+    const AUTO_ANALYZE_OUTPUT_CHAR_LIMIT = 6000;
 
     function getChatScopeIndex() {
         const rawValue = Number.parseInt(chatScopeSlider?.value ?? '2', 10);
@@ -1876,6 +1878,8 @@ document.addEventListener('DOMContentLoaded', () => {
         tabBtn.dataset.tabId = sessionId;
         tabBtn.dataset.sessionWritable = writable ? 'true' : 'false';
         tabBtn.dataset.sessionKind = sessionKind;
+        tabBtn.dataset.sessionTool = tool || '';
+        tabBtn.dataset.sessionArgsSummary = argsSummary || '';
         tabBtn.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 256 256" style="flex-shrink:0">
                 <path d="M128,128a8,8,0,0,1-3.12.65,8,8,0,0,1-6.94-4A8,8,0,0,1,120.84,116l80-48a8,8,0,0,1,8.32,13.66ZM232,56V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200Z"></path>
@@ -1908,6 +1912,14 @@ document.addEventListener('DOMContentLoaded', () => {
             contextHtml += `<br><span style="color: var(--text-secondary); font-size: 0.75rem;">Background monitor only. Output will stream here, but this session does not accept input.</span>`;
         }
 
+        const sessionActionsHtml = !writable
+            ? `
+            <div class="isess-session-actions" style="display:flex; gap:0.5rem; margin:0.75rem 0 0.25rem; flex-wrap:wrap;">
+                <button type="button" class="btn btn-secondary isess-stop-btn" data-session-id="${escapeHtml(sessionId)}">Stop Tool</button>
+                <button type="button" class="btn btn-primary isess-stop-analyze-btn" data-session-id="${escapeHtml(sessionId)}">Stop And Analyze</button>
+            </div>`
+            : '';
+
         const waitingMessage = writable
             ? 'Waiting for output… You can type commands below once the session is ready.'
             : 'Waiting for output… This background session is read-only and will stream new output here.';
@@ -1926,10 +1938,13 @@ document.addEventListener('DOMContentLoaded', () => {
         tabPanel.id = `chat-tab-${sessionId}`;
         tabPanel.dataset.sessionWritable = writable ? 'true' : 'false';
         tabPanel.dataset.sessionKind = sessionKind;
+        tabPanel.dataset.sessionTool = tool || '';
+        tabPanel.dataset.sessionArgsSummary = argsSummary || '';
         tabPanel.innerHTML = `
             <div class="isess-log-viewer" id="log-viewer-${sessionId}">
                 <div class="log-entry log-status" style="border-left: 3px solid var(--accent-primary); padding-left: 0.6rem; margin-bottom: 0.4rem;">
                     ${contextHtml}
+                    ${sessionActionsHtml}
                 </div>
                 <div class="log-entry log-status">${waitingMessage}</div>
             </div>
@@ -1969,41 +1984,220 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        const stopBtn = tabPanel.querySelector('.isess-stop-btn');
+        if (stopBtn) {
+            stopBtn.addEventListener('click', async () => {
+                await stopBackgroundSession(sessionId, { confirmBeforeStop: true });
+            });
+        }
+
+        const stopAnalyzeBtn = tabPanel.querySelector('.isess-stop-analyze-btn');
+        if (stopAnalyzeBtn) {
+            stopAnalyzeBtn.addEventListener('click', async () => {
+                await stopAndAnalyzeBackgroundSession(sessionId, { tool, argsSummary });
+            });
+        }
+
         // Do NOT auto-switch — keep the user on the main agent tab.
         // Highlight the new tab so the user notices it.
         tabBtn.style.animation = 'tab-pulse 1.5s ease-in-out 3';
     }
 
+    function removeTerminalTab(sessionId) {
+        const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
+        const panel = document.getElementById(`chat-tab-${sessionId}`);
+        const wasActive = Boolean(tab && tab.classList.contains('active'));
+        if (tab) tab.remove();
+        if (panel) panel.remove();
+        if (wasActive) {
+            switchChatTab('main');
+        }
+    }
+
+    async function closeInteractiveSession(sessionId, options = {}) {
+        const {
+            confirmBeforeStop = true,
+            confirmMessage = `Are you sure you want to close session ${sessionId}?`,
+            appendOutput = true,
+            markClosedAfter = true,
+        } = options;
+
+        if (confirmBeforeStop && !confirm(confirmMessage)) {
+            return { success: false, cancelled: true };
+        }
+
+        const response = await fetch('/api/session/isess/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to close session.');
+        }
+
+        if (appendOutput && data.content) {
+            appendIsessLog(sessionId, data.content + '\n', 'log-tool-result');
+        }
+        if (markClosedAfter) {
+            markSessionClosed(sessionId);
+        }
+        return { success: true, data };
+    }
+
+    async function stopBackgroundSession(sessionId, options = {}) {
+        try {
+            return await closeInteractiveSession(sessionId, {
+                confirmBeforeStop: options.confirmBeforeStop !== false,
+                confirmMessage: options.confirmMessage || `Are you sure you want to stop background tool ${sessionId}?`,
+                appendOutput: options.appendOutput !== false,
+                markClosedAfter: options.markClosedAfter !== false,
+            });
+        } catch (error) {
+            showAlert(error.message, 'error');
+            return { success: false, error };
+        }
+    }
+
+    function truncateTextForQueuedPrompt(text, maxChars = AUTO_ANALYZE_OUTPUT_CHAR_LIMIT) {
+        const normalized = String(text || '').trim();
+        if (!normalized) {
+            return '';
+        }
+        if (normalized.length <= maxChars) {
+            return normalized;
+        }
+        return `${normalized.slice(0, maxChars).trim()}\n\n[truncated ${normalized.length - maxChars} additional characters]`;
+    }
+
+    function collectSessionLogExcerpt(sessionId, maxChars = AUTO_ANALYZE_OUTPUT_CHAR_LIMIT) {
+        const viewer = document.getElementById(`log-viewer-${sessionId}`);
+        if (!viewer) {
+            return '';
+        }
+        const text = Array.from(viewer.querySelectorAll('.log-entry'))
+            .map(entry => String(entry.textContent || '').trim())
+            .filter(Boolean)
+            .join('\n\n');
+        return truncateTextForQueuedPrompt(text, maxChars);
+    }
+
+    function buildStopAndAnalyzePrompt({ source = 'active-tool', tool = '', argsSummary = '', sessionId = '', outputExcerpt = '' } = {}) {
+        if (source === 'background-session') {
+            const lines = [
+                `The user chose Stop And Analyze for background session ${sessionId}${tool ? ` from tool ${tool}` : ''}.`,
+                'This session output was collected outside the normal tool-call transcript. Analyze the excerpt below, summarize what it shows, call out findings or blockers, and recommend the best next step. Do not rerun the stopped tool unless the user explicitly asks.',
+            ];
+            if (argsSummary) {
+                lines.push(`Original args summary: ${argsSummary}`);
+            }
+            if (outputExcerpt) {
+                lines.push(`Captured output excerpt:\n\n${outputExcerpt}`);
+            }
+            return lines.join('\n\n');
+        }
+
+        const lines = [
+            `The user chose Stop And Analyze for the just-stopped tool ${tool || 'tool'}.`,
+            'Analyze the partial output from the stopped tool in the immediately preceding tool results and conversation context. Summarize what completed, what remains incomplete, any findings or blockers, and the best next step. Do not rerun the stopped tool unless the user explicitly asks.',
+        ];
+        if (argsSummary) {
+            lines.push(`Tool args: ${argsSummary}`);
+        }
+        return lines.join('\n\n');
+    }
+
+    function enqueueChatPrompt(prompt, options = {}) {
+        if (!_serviceRunning) {
+            showAlert('The service must be running to queue an analysis prompt.', 'error');
+            return false;
+        }
+
+        _queuedChatPrompts.push({
+            prompt,
+            label: options.label || '🧠 Queued Analysis',
+            displayText: options.displayText || 'Queued analysis prompt',
+        });
+
+        appendLog(`<span class="log-label">⏳ Queued</span> ${escapeHtml(options.statusMessage || 'Analysis queued. It will run before the next user prompt is available.')}`, 'log-status');
+
+        if (!_chatBusy) {
+            return processQueuedChatPrompt();
+        }
+        return true;
+    }
+
+    function processQueuedChatPrompt() {
+        if (_chatBusy || !_serviceRunning || !_queuedChatPrompts.length) {
+            return false;
+        }
+
+        const nextPrompt = _queuedChatPrompts.shift();
+        return submitChatPrompt(nextPrompt.prompt, {
+            recordHistory: false,
+            label: nextPrompt.label,
+            displayText: nextPrompt.displayText,
+        });
+    }
+
+    async function stopAndAnalyzeBackgroundSession(sessionId, options = {}) {
+        if (!_currentRunId || !_serviceRunning) {
+            showAlert('No active run is available for queued analysis.', 'error');
+            return;
+        }
+
+        const preStopExcerpt = collectSessionLogExcerpt(sessionId);
+        const stopResult = await stopBackgroundSession(sessionId, {
+            confirmBeforeStop: true,
+            confirmMessage: `Stop background tool ${sessionId} and queue an analysis prompt?`,
+        });
+        if (!stopResult.success) {
+            return;
+        }
+
+        const combinedExcerpt = truncateTextForQueuedPrompt([
+            preStopExcerpt,
+            stopResult.data?.content || '',
+        ].filter(Boolean).join('\n\n'));
+        const prompt = buildStopAndAnalyzePrompt({
+            source: 'background-session',
+            tool: options.tool || '',
+            argsSummary: options.argsSummary || '',
+            sessionId,
+            outputExcerpt: combinedExcerpt,
+        });
+
+        enqueueChatPrompt(prompt, {
+            displayText: `Stop and analyze background tool ${options.tool || sessionId}`,
+        });
+    }
+
     async function closeTerminalTab(sessionId) {
         const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
         const closeEl = tab ? tab.querySelector('.chat-tab-close') : null;
+        const sessionWritable = tab?.dataset.sessionWritable !== 'false';
         
         // If it's already closed/dimmed (⏹ icon), clicking again deletes the tab entirely
         if (closeEl && closeEl.textContent === '⏹') {
-            const panel = document.getElementById(`chat-tab-${sessionId}`);
-            if (tab) tab.remove();
-            if (panel) panel.remove();
-            
-            // Switch back to main if we closed the active tab
-            if (tab && tab.classList.contains('active')) {
-                switchChatTab('main');
+            removeTerminalTab(sessionId);
+            return;
+        }
+
+        if (!sessionWritable) {
+            const stopResult = await stopBackgroundSession(sessionId, {
+                confirmBeforeStop: true,
+                confirmMessage: `Stop and remove background tool ${sessionId}?`,
+                appendOutput: false,
+                markClosedAfter: false,
+            });
+            if (stopResult.success) {
+                removeTerminalTab(sessionId);
             }
             return;
         }
 
-        if (!confirm(`Are you sure you want to close session ${sessionId}?`)) return;
-
         try {
-            const response = await fetch('/api/session/isess/close', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId })
-            });
-            const data = await response.json();
-            if (!data.success) {
-                throw new Error(data.error || 'Failed to close session.');
-            }
-            markSessionClosed(sessionId);
+            await closeInteractiveSession(sessionId);
         } catch (error) {
             showAlert(error.message, 'error');
         }
@@ -2013,15 +2207,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const panel = document.getElementById(`chat-tab-${sessionId}`);
         if (!panel) return;
 
+        const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
+        if (tab && tab.classList.contains('status-closed')) {
+            return;
+        }
+
         // Remove input row
         const inputRow = panel.querySelector('.isess-input-row');
         if (inputRow) inputRow.remove();
+
+        const actionsRow = panel.querySelector('.isess-session-actions');
+        if (actionsRow) actionsRow.remove();
 
         // Append closed banner
         appendIsessLog(sessionId, `\n— Session ${sessionId} has been closed —`, 'log-status');
 
         // Dim and color the tab label
-        const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
         if (tab) {
             tab.classList.remove('status-active');
             tab.classList.add('status-closed');
@@ -2128,6 +2329,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="log-tool-runtime-chip ${chipClass}">${phaseLabel} ${runtime}</span>
                     ${(_activeToolState.phase === 'running' && !_activeToolState.stopping) ? `
                         <button class="log-tool-stop-btn" onclick="stopCurrentTool(event)" title="Stop tool and continue analysis from partial output">⏹</button>
+                        <button type="button" class="btn btn-secondary" style="margin-left:0.4rem;" onclick="stopCurrentToolAndAnalyze(event)" title="Stop tool and queue a follow-up analysis prompt">Stop & Analyze</button>
                     ` : (_activeToolState.stopping ? `<span class="log-tool-stop-loading">Stopping...</span>` : '')}
                 </span>
             </div>
@@ -2864,24 +3066,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    async function sendChat() {
-        const prompt = chatPromptInput.value.trim();
-        if (!prompt || _chatBusy || !_serviceRunning) return;
+    function submitChatPrompt(prompt, options = {}) {
+        const normalizedPrompt = String(prompt || '').trim();
+        if (!normalizedPrompt || _chatBusy || !_serviceRunning) {
+            return false;
+        }
+
         const scopeEnabled = isChatScopeEnabled();
         const urgencyEnabled = isChatUrgencyEnabled();
         const scope = scopeEnabled ? getChatScopeConfig().id : null;
         const urgency = urgencyEnabled ? getChatUrgencyConfig().id : null;
 
         _chatBusy = true;
-        
-        if (promptHistory.length === 0 || promptHistory[promptHistory.length - 1] !== prompt) {
-            promptHistory.push(prompt);
-            if (promptHistory.length > PROMPT_HISTORY_MAX) {
-                promptHistory.shift();
+
+        if (options.recordHistory !== false) {
+            if (promptHistory.length === 0 || promptHistory[promptHistory.length - 1] !== normalizedPrompt) {
+                promptHistory.push(normalizedPrompt);
+                if (promptHistory.length > PROMPT_HISTORY_MAX) {
+                    promptHistory.shift();
+                }
             }
+            promptHistoryIndex = promptHistory.length;
+            promptCurrentDraft = "";
         }
-        promptHistoryIndex = promptHistory.length;
-        promptCurrentDraft = "";
         
         chatPromptInput.value = '';
         resizeChatPromptInput();
@@ -2894,28 +3101,36 @@ document.addEventListener('DOMContentLoaded', () => {
         sendPromptBtn.setAttribute('aria-label', 'Stop agent turn');
         sendPromptBtn.innerHTML = ICON_SVG.STOP;
 
-        appendLog(`<span class="log-label">👤 You</span> ${escapeHtml(prompt)}`, 'log-prompt');
+        appendLog(`<span class="log-label">${escapeHtml(options.label || '👤 You')}</span> ${escapeHtml(options.displayText || normalizedPrompt)}`, 'log-prompt');
 
-        try {
-            const response = await fetch('/api/session/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    scope,
-                    urgency,
-                    scope_enabled: scopeEnabled,
-                    urgency_enabled: urgencyEnabled,
-                })
-            });
+        fetch('/api/session/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt: normalizedPrompt,
+                scope,
+                urgency,
+                scope_enabled: scopeEnabled,
+                urgency_enabled: urgencyEnabled,
+            })
+        }).then(async response => {
             const data = await response.json();
             if (!data.success) {
                 appendLog(`<span class="log-label">❌ Error</span> ${escapeHtml(data.error || 'Chat failed.')}`, 'log-error');
+                setChatReady();
             }
-        } catch (error) {
+        }).catch(error => {
             appendLog(`<span class="log-label">❌ Error</span> ${escapeHtml(error.message)}`, 'log-error');
             setChatReady();
-        }
+        });
+
+        return true;
+    }
+
+    async function sendChat() {
+        const prompt = chatPromptInput.value.trim();
+        if (!prompt) return;
+        submitChatPrompt(prompt);
     }
 
     function setChatReady() {
@@ -2923,6 +3138,10 @@ document.addEventListener('DOMContentLoaded', () => {
         clearActiveToolStatus();
         closePostToolReplyModal();
         closeToolTimeoutModal();
+
+        if (_serviceRunning && processQueuedChatPrompt()) {
+            return;
+        }
         
         // Restore the send button
         sendPromptBtn.classList.remove('btn-danger', 'btn-secondary');
@@ -2957,10 +3176,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    window.stopCurrentTool = async function(event) {
-        if (event) event.preventDefault();
+    function buildActiveToolStopAndAnalyzePrompt(toolSnapshot) {
+        return buildStopAndAnalyzePrompt({
+            source: 'active-tool',
+            tool: toolSnapshot?.tool || '',
+            argsSummary: truncateTextForQueuedPrompt(JSON.stringify(toolSnapshot?.args || {}), 1200),
+        });
+    }
+
+    async function requestActiveToolStop(options = {}) {
+        const queueAnalysis = options.queueAnalysis === true;
+        const toolSnapshot = _activeToolState
+            ? {
+                tool: _activeToolState.tool,
+                args: _activeToolState.args || {},
+            }
+            : null;
+
         if (_activeToolState) {
             _activeToolState.stopping = true;
+            _activeToolState.note = queueAnalysis
+                ? 'Stop and analyze requested. Waiting for final tool output before the queued analysis prompt runs.'
+                : _activeToolState.note;
             renderActiveToolEntry();
         }
         
@@ -2969,6 +3206,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await resp.json();
             if (data.success) {
                 appendLog(`<span class="log-label">⏹ Info</span> Stop signal sent to tool. Waiting for final output...`, 'log-info');
+                if (queueAnalysis && toolSnapshot) {
+                    enqueueChatPrompt(buildActiveToolStopAndAnalyzePrompt(toolSnapshot), {
+                        displayText: `Stop and analyze ${toolSnapshot.tool || 'current tool'}`,
+                    });
+                }
             } else {
                 appendLog(`<span class="log-label">❌ Error</span> ${escapeHtml(data.error || 'Failed to stop tool.')}`, 'log-error');
                 if (_activeToolState) {
@@ -2983,6 +3225,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderActiveToolEntry();
             }
         }
+    }
+
+    window.stopCurrentTool = async function(event) {
+        if (event) event.preventDefault();
+        await requestActiveToolStop({ queueAnalysis: false });
+    };
+
+    window.stopCurrentToolAndAnalyze = async function(event) {
+        if (event) event.preventDefault();
+        await requestActiveToolStop({ queueAnalysis: true });
     };
 
     // ---------------------------------------------------------------
@@ -3132,6 +3384,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const stoppedRunId = _currentRunId;
         _serviceRunning = false;
         _chatBusy = false;
+        _queuedChatPrompts = [];
         _currentRunId = null;
         _logInitialCleared = false; // Reset for next run
         updateStatus('success', 'Service Stopped');

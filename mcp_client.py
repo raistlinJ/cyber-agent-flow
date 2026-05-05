@@ -1397,6 +1397,7 @@ class MCPSession:
         self._pending_post_tool_reply = None
         self._pending_dangerous_tool_approval = None
         self._pending_tool_timeout_decision = None
+        self._pending_background_turn_completion = None
         self._active_interactive_sessions = set()
         self._enabled_tool_guidance: str = ""
         
@@ -1613,6 +1614,18 @@ class MCPSession:
                 "writable": writable,
                 "session_kind": session_kind,
             })
+
+    def _consume_background_turn_completion(self, tool_name: str) -> bool:
+        pending = self._pending_background_turn_completion
+        if not pending:
+            return False
+
+        pending_tool = str(pending.get("tool") or "")
+        if pending_tool and pending_tool != str(tool_name or ""):
+            return False
+
+        self._pending_background_turn_completion = None
+        return True
 
     async def _discover_interactive_sessions(self, source_tool: str = "", source_args=None) -> None:
         """Best-effort discovery so UI tabs still appear even if result text parsing misses a session."""
@@ -1987,6 +2000,15 @@ class MCPSession:
             payload["wait_seconds"] = int(wait_seconds)
         with open(response_path, "w") as f:
             json.dump(payload, f, indent=2)
+
+        if action == "background":
+            self._pending_background_turn_completion = {
+                "tool": str(pending.get("tool") or ""),
+                "command": str(pending.get("command") or ""),
+                "request_id": request_id,
+            }
+        else:
+            self._pending_background_turn_completion = None
 
         if self._logger:
             tool_name = str(pending.get("tool") or "tool")
@@ -2527,14 +2549,10 @@ class MCPSession:
                     )
 
                     if "Interactive session preserved as" in result_text:
-                        # Detect isess-XXX ID
                         isess_match = re.search(r"preserved as (isess-\w+)", result_text)
-                        self._logger.debug(f"[isess_created] Checking for isess session in result_text. Match: {isess_match}")
                         if isess_match:
                             isess_id = isess_match.group(1)
-                            self._logger.info(f"[isess_created] Interactive session detected: {isess_id}")
                             self._active_interactive_sessions.add(isess_id)
-                            # Build a short summary of the args for the tab label
                             args_summary = ""
                             if isinstance(tool_args, dict):
                                 args_summary = str(tool_args.get("args", ""))[:80]
@@ -2543,7 +2561,6 @@ class MCPSession:
                             lower_result_text = result_text.lower()
                             writable = "read-only background session" not in lower_result_text
                             session_kind = "background" if not writable else "interactive"
-                            self._logger.info(f"[isess_created] Emitting isess_created event: session_id={isess_id}, tool={tool_name}, args={args_summary}")
                             _emit(self.event_callback, "isess_created", {
                                 "session_id": isess_id,
                                 "tool": tool_name or "",
@@ -2551,8 +2568,6 @@ class MCPSession:
                                 "writable": writable,
                                 "session_kind": session_kind,
                             })
-                        else:
-                            self._logger.warning(f"[isess_created] 'Interactive session preserved as' found but regex did not match. Result text:\n{result_text[:500]}")
 
                     if tool_name == "interactive_session_list":
                         self._reconcile_interactive_sessions_from_list_text(result_text)
@@ -2585,11 +2600,18 @@ class MCPSession:
                         "duration_ms": duration_ms,
                     })
 
+                    if self._consume_background_turn_completion(tool_name) and "Interactive session preserved as" in result_text:
+                        _emit(self.event_callback, "chat_done", {
+                            "message": "Tool moved to background session. Ready for next prompt."
+                        })
+                        return
+
                     if is_cancelled:
                         _emit_chat_cancelled(self.event_callback)
                         return
 
                 except Exception as exc:
+                    self._consume_background_turn_completion(tool_name)
                     duration_ms = int((time.time() - t0) * 1000)
                     err_msg = f"Tool execution failed before a result was returned: {exc}"
                     self._logger.log_tool_call(
