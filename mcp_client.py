@@ -186,14 +186,72 @@ def _http_error_response_text(exc: Exception) -> str:
         return ""
 
 
+def _response_error_detail(response) -> str:
+    if response is None:
+        return ""
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message")
+            if message:
+                return str(message)
+            if error_obj:
+                try:
+                    return json.dumps(error_obj, ensure_ascii=True)
+                except Exception:
+                    return str(error_obj)
+        if error_obj:
+            return str(error_obj)
+
+        message = payload.get("message")
+        if message:
+            return str(message)
+
+        detail = payload.get("detail")
+        if detail:
+            return str(detail)
+
+    try:
+        text = str(response.text or "").strip()
+    except Exception:
+        text = ""
+    return text
+
+
+def _raise_for_status_with_error_detail(response, request_label: str) -> None:
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = _response_error_detail(response)
+        if detail:
+            compact_detail = " ".join(detail.split())
+            if len(compact_detail) > 500:
+                compact_detail = compact_detail[:500].rstrip() + "…"
+            raise requests.HTTPError(
+                f"{request_label} failed with HTTP {response.status_code}: {compact_detail}",
+                response=response,
+                request=getattr(exc, "request", None),
+            ) from exc
+        raise
+
+
 def _is_litellm_retryable_tool_error(exc: Exception) -> bool:
     status_code = _http_error_status_code(exc)
     if status_code not in {400, 422, 500, 502, 503, 504}:
         return False
 
-    response_text = _http_error_response_text(exc).lower()
-    if not response_text and status_code >= 500:
+    if status_code >= 500:
         return True
+
+    response_text = _http_error_response_text(exc).lower()
+    if not response_text:
+        return False
 
     retry_markers = (
         "tool",
@@ -203,6 +261,8 @@ def _is_litellm_retryable_tool_error(exc: Exception) -> bool:
         "invalid parameter",
         "bad request",
         "unsupported",
+        "chat template",
+        "template",
     )
     return any(marker in response_text for marker in retry_markers)
 
@@ -491,7 +551,7 @@ class _LiteLLMClient:
             timeout=min(self.timeout, 20),
             verify=self.verify,
         )
-        response.raise_for_status()
+        _raise_for_status_with_error_detail(response, "Model list request")
         payload = response.json() or {}
         for item in payload.get("data", []):
             if isinstance(item, dict) and item.get("id") == model:
@@ -520,7 +580,7 @@ class _LiteLLMClient:
             timeout=self.timeout,
             verify=self.verify,
         )
-        response.raise_for_status()
+        _raise_for_status_with_error_detail(response, "Chat completion request")
         raw = response.json() or {}
         choices = raw.get("choices") or []
         choice = choices[0] if choices else {}
