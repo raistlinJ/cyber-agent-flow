@@ -94,6 +94,13 @@ _TOOL_DOC_MAP = {
 }
 _TOOL_DOC_MAX_CHARS_PER_DOC = 3500
 _TOOL_DOC_MAX_TOTAL_CHARS = 14000
+_INTERACTIVE_SESSION_SOURCE_TOOLS = {
+    "msf_run",
+    "shell",
+    "shell_extended",
+    "shell_sequence",
+    "shell_dangerous",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1565,6 +1572,41 @@ class MCPSession:
         except Exception as e:
             return {"error": str(e), "success": False}
 
+    async def _discover_interactive_sessions(self, source_tool: str = "", source_args=None) -> None:
+        """Best-effort discovery so UI tabs still appear even if result text parsing misses a session."""
+        if not self._session:
+            return
+        try:
+            result = await self._session.call_tool("interactive_session_list", {})
+        except Exception:
+            return
+
+        result_text = ""
+        if result and getattr(result, "content", None):
+            result_text = "\n".join(getattr(c, "text", str(c)) for c in result.content)
+        if not result_text or "No preserved interactive sessions" in result_text:
+            return
+
+        args_summary = ""
+        if isinstance(source_args, dict):
+            args_summary = str(source_args.get("args", ""))[:80]
+        elif isinstance(source_args, str):
+            args_summary = source_args[:80]
+
+        for line in result_text.splitlines():
+            match = re.match(r"^\s*(isess-[A-Za-z0-9_-]+)\s*:", line)
+            if not match:
+                continue
+            isess_id = match.group(1)
+            if isess_id in self._active_interactive_sessions:
+                continue
+            self._active_interactive_sessions.add(isess_id)
+            _emit(self.event_callback, "isess_created", {
+                "session_id": isess_id,
+                "tool": source_tool or "",
+                "args_summary": args_summary,
+            })
+
     async def _retry_empty_reply_after_tools(self, prompt: str, tool_results: list[dict]) -> str | None:
         _emit(self.event_callback, "status", {
             "message": "Model returned an empty post-tool reply; retrying once without tools for a final answer …"
@@ -2443,12 +2485,6 @@ class MCPSession:
 
                     is_error = getattr(result, "isError", False)
                     exit_code = -1 if is_error else 0
-                    
-                    # DEBUG: Log all tool results
-                    if tool_name == "msf_run" or "interactive" in tool_name.lower():
-                        print(f"[DEBUG] Tool {tool_name} result (first 500 chars):", flush=True)
-                        print(result_text[:500], flush=True)
-                        print(f"[DEBUG] Checking for 'Interactive session preserved as': {'Interactive session preserved as' in result_text}", flush=True)
 
                     graceful_stop = result_text.startswith("[GRACEFUL STOP]")
                     is_cancelled = bool(cancel_event and cancel_event.is_set())
@@ -2466,11 +2502,9 @@ class MCPSession:
                         # Detect isess-XXX ID
                         isess_match = re.search(r"preserved as (isess-\w+)", result_text)
                         self._logger.debug(f"[isess_created] Checking for isess session in result_text. Match: {isess_match}")
-                        print(f"[DEBUG] mcp_client: 'Interactive session preserved as' found in result_text, checking regex...", flush=True)
                         if isess_match:
                             isess_id = isess_match.group(1)
                             self._logger.info(f"[isess_created] Interactive session detected: {isess_id}")
-                            print(f"[DEBUG] mcp_client: Extracted session_id={isess_id}", flush=True)
                             self._active_interactive_sessions.add(isess_id)
                             # Build a short summary of the args for the tab label
                             args_summary = ""
@@ -2479,7 +2513,6 @@ class MCPSession:
                             elif isinstance(tool_args, str):
                                 args_summary = tool_args[:80]
                             self._logger.info(f"[isess_created] Emitting isess_created event: session_id={isess_id}, tool={tool_name}, args={args_summary}")
-                            print(f"[DEBUG] mcp_client: Emitting isess_created event for {isess_id}", flush=True)
                             _emit(self.event_callback, "isess_created", {
                                 "session_id": isess_id,
                                 "tool": tool_name or "",
@@ -2487,8 +2520,10 @@ class MCPSession:
                             })
                         else:
                             self._logger.warning(f"[isess_created] 'Interactive session preserved as' found but regex did not match. Result text:\n{result_text[:500]}")
-                            print(f"[DEBUG] mcp_client: WARNING - 'Interactive session preserved as' found but regex FAILED to match!", flush=True)
-                            print(f"[DEBUG] mcp_client: Result text preview: {result_text[:300]}", flush=True)
+
+                    # Backstop discovery: reconcile active isess IDs from the server after likely source tools.
+                    if tool_name in _INTERACTIVE_SESSION_SOURCE_TOOLS:
+                        await self._discover_interactive_sessions(tool_name, tool_args)
 
                     if tool_name == "interactive_session_close" and exit_code == 0:
                         closed_id = ""
