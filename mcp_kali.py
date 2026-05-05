@@ -399,6 +399,7 @@ def _refresh_interactive_session(session: dict, wait_seconds: float = 0.0) -> st
 
 def _preserve_interactive_session(proc: subprocess.Popen, master_fd: int, tool_name: str, arguments: dict, cmd: list[str], initial_output: str) -> str:
     session_id = _next_interactive_session_id()
+    print(f"[DEBUG] _preserve_interactive_session called: tool={tool_name}, session_id={session_id}, initial_output_len={len(initial_output or '')}", flush=True)
     session = {
         "id": session_id,
         "tool": tool_name,
@@ -416,6 +417,7 @@ def _preserve_interactive_session(proc: subprocess.Popen, master_fd: int, tool_n
     }
     _append_session_output(session, initial_output, pending=False)
     _interactive_sessions[session_id] = session
+    print(f"[DEBUG] Session {session_id} stored. Total sessions: {len(_interactive_sessions)}", flush=True)
     return session_id
 
 
@@ -1028,9 +1030,11 @@ def _run_subprocess_with_timeout_prompt(
                 last_activity_at = time.time()
 
             if _looks_like_interactive_session(tool_name, cmd, partial_stdout, partial_stderr):
+                print(f"[DEBUG] Timeout: detected interactive session for {tool_name}", flush=True)
                 # Check if this session is preservable (not just interactive)
                 if _looks_like_preservable_interactive_session(tool_name, partial_stdout, partial_stderr):
                     # Preserve the session instead of terminating it
+                    print(f"[DEBUG] Timeout: session is preservable, preserving it", flush=True)
                     session_id = _preserve_interactive_session(proc, master_fd, tool_name, arguments, cmd, partial_stdout)
                     return {
                         "stdout": partial_stdout,
@@ -1045,7 +1049,7 @@ def _run_subprocess_with_timeout_prompt(
                     }
                 else:
                     # Not preservable, so perform handoff
-                    final_stdout, final_stderr, returncode = _terminate_process_with_output(proc)
+                    print(f"[DEBUG] Timeout: session NOT preservable, performing handoff", flush=True)
                     merged_stdout = _merge_process_stream_text(partial_stdout, final_stdout)
                     merged_stderr = _merge_process_stream_text(partial_stderr, final_stderr)
                     return {
@@ -1206,6 +1210,7 @@ def _run_interactive_subprocess_with_timeout_prompt(
             last_activity_at = time.time()
 
         if _looks_like_preservable_interactive_session(tool_name, transcript, ""):
+            print(f"[DEBUG] Main loop: detected preservable session for {tool_name}, preserving", flush=True)
             session_id = _preserve_interactive_session(proc, master_fd, tool_name, arguments, cmd, transcript)
             return {
                 "stdout": transcript,
@@ -2048,6 +2053,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         stderr = _strip_ansi(execution.get("stderr") or "")
         if execution.get("interactive_preserved"):
             session_id = str(execution.get("interactive_session_id") or "").strip()
+            # DEBUG: Log the session preservation
+            print(f"[DEBUG] Tool {name}: interactive_preserved=True, session_id={session_id}", flush=True)
+            if not session_id:
+                print(f"[DEBUG] WARNING: session_id is empty! execution dict keys: {execution.keys()}", flush=True)
             preserved_message = (
                 f"Interactive session preserved as {session_id}.\n"
                 f"IMPORTANT: To interact with this session, you MUST use session_id=\"{session_id}\" (not a Metasploit session number).\n"
@@ -2060,6 +2069,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if execution.get("stdout"):
                 output += f"\n\nCaptured output before preservation:\n{_strip_ansi(execution.get('stdout') or '')}"
             output += "\n\n" + _manual_recreation_instructions(name, arguments, cmd)
+            print(f"[DEBUG] Tool {name}: Final output starts with: {output[:150]}", flush=True)
         elif execution.get("interactive_handoff"):
             output = str(execution.get("handoff_message") or "Interactive session detected.")
             if execution.get("stdout"):
