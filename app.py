@@ -1603,6 +1603,36 @@ def session_isess_write():
         app.logger.error(f"Error writing to isess {session_id}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/session/isess/close', methods=['POST'])
+def session_isess_close():
+    """Execute interactive_session_close directly for a preserved session."""
+    with _session_lock:
+        if _session_state["status"] != "running":
+            return jsonify({'success': False, 'error': 'No active session.'}), 409
+        session = _session_state["session"]
+        loop = _session_state["loop"]
+
+    data = request.json or {}
+    session_id = data.get('session_id')
+
+    if not session_id:
+        return jsonify({'success': False, 'error': 'Missing session_id.'}), 400
+
+    app.logger.info('Direct isess close run_id=%s session_id=%s', _session_state.get('run_id'), session_id)
+
+    future = asyncio.run_coroutine_threadsafe(
+        session.call_tool_direct("interactive_session_close", {"session_id": session_id}),
+        loop
+    )
+
+    try:
+        res = future.result(timeout=10)
+        return jsonify(res)
+    except Exception as e:
+        app.logger.error(f"Error closing isess {session_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/sessions/<run_id>/scaffolding', methods=['GET'])
 def get_session_scaffolding(run_id):
     """List generated scaffolding assets for a specific session."""
@@ -1895,7 +1925,7 @@ def session_dangerous_tool_action():
 
 @app.route('/api/session/tool_timeout_action', methods=['POST'])
 def session_tool_timeout_action():
-    """Resolve a paused tool-timeout checkpoint with wait or kill."""
+    """Resolve a paused tool-timeout checkpoint with wait, background, or kill."""
     with _session_lock:
         if _session_state["status"] != "running":
             return jsonify({
@@ -1906,8 +1936,8 @@ def session_tool_timeout_action():
 
     data = request.json or {}
     action = (data.get('action') or '').strip().lower()
-    if action not in {'wait', 'kill'}:
-        return jsonify({'success': False, 'error': 'Action must be wait or kill.'}), 400
+    if action not in {'wait', 'background', 'kill'}:
+        return jsonify({'success': False, 'error': 'Action must be wait, background, or kill.'}), 400
 
     wait_seconds = None
     if action == 'wait':
@@ -1925,7 +1955,12 @@ def session_tool_timeout_action():
         return jsonify({'success': False, 'error': 'No pending tool timeout decision to resolve.'}), 409
 
     app.logger.info('Tool timeout decision submitted action=%s wait_seconds=%s', action, wait_seconds)
-    message = f'Will ask again in {wait_seconds} seconds.' if action == 'wait' else f'{action.title()} request sent.'
+    if action == 'wait':
+        message = f'Will ask again in {wait_seconds} seconds.'
+    elif action == 'background':
+        message = 'Background request sent. The tool will continue in a separate session tab.'
+    else:
+        message = f'{action.title()} request sent.'
     return jsonify({'success': True, 'message': message})
 
 @app.route('/api/sessions/<run_id>/annotate', methods=['POST'])

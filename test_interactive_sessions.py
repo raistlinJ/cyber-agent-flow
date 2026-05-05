@@ -181,6 +181,39 @@ class TestInteractiveSessionToolResult:
         assert exit_code == -1
         assert "already closed" in output
 
+    def test_interactive_session_write_rejects_read_only_background_session(self):
+        from mcp_kali import _interactive_session_tool_result
+
+        fake_proc = Mock()
+        fake_proc.poll.return_value = None
+        session = {
+            "id": "isess-001",
+            "tool": "tcpdump",
+            "command": ["tcpdump", "-ni", "eth0"],
+            "proc": fake_proc,
+            "master_fd": None,
+            "stdout_fd": None,
+            "stderr_fd": None,
+            "writable": False,
+            "session_kind": "background",
+            "history": "",
+            "pending_output": "",
+            "created_at": 0,
+            "last_output_at": 0,
+            "closed": False,
+            "closed_at": None,
+            "returncode": None,
+        }
+
+        with patch.dict("mcp_kali._interactive_sessions", {"isess-001": session}, clear=True):
+            output, exit_code = _interactive_session_tool_result(
+                "interactive_session_write",
+                {"session_id": "isess-001", "input": "help"},
+            )
+
+        assert exit_code == -1
+        assert "read-only" in output
+
 
 class TestInteractiveSessionConfig:
     def test_msf_run_is_interactive_capable_by_default(self):

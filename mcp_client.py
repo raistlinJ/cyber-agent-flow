@@ -1601,11 +1601,17 @@ class MCPSession:
             isess_id = match.group(1)
             if isess_id in self._active_interactive_sessions:
                 continue
+            writable_match = re.search(r"\bwritable=(yes|no)\b", line)
+            kind_match = re.search(r"\b(?:kind|mode)=([A-Za-z0-9_-]+)\b", line)
+            writable = (writable_match.group(1) != "no") if writable_match else True
+            session_kind = kind_match.group(1) if kind_match else "interactive"
             self._active_interactive_sessions.add(isess_id)
             _emit(self.event_callback, "isess_created", {
                 "session_id": isess_id,
                 "tool": source_tool or "",
                 "args_summary": args_summary,
+                "writable": writable,
+                "session_kind": session_kind,
             })
 
     async def _retry_empty_reply_after_tools(self, prompt: str, tool_results: list[dict]) -> str | None:
@@ -1902,12 +1908,12 @@ class MCPSession:
                     if elapsed_seconds > 0:
                         status_message = (
                             f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"after {elapsed_seconds} seconds. Waiting for user decision: ask again later or kill."
+                            f"after {elapsed_seconds} seconds. Waiting for user decision: ask again later, background it, or kill."
                         )
                     else:
                         status_message = (
                             f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: ask again later or kill."
+                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: ask again later, background it, or kill."
                         )
 
                     _emit(self.event_callback, "status", {
@@ -1918,12 +1924,12 @@ class MCPSession:
                         detail_message = (
                             f"{tool_name} has shown no new output for {timeout_seconds} seconds "
                             f"(elapsed: {max(0, elapsed_seconds)} seconds). "
-                            "Choose when to ask again if it is still idle, or kill it now and return any partial output."
+                            "Choose when to ask again if it is still idle, background it into a session tab, or kill it now and return any partial output."
                         )
                     else:
                         detail_message = (
                             f"{tool_name} has been running for {timeout_seconds * checkpoint_index} seconds. "
-                            "Choose when to ask again if it is still running, or kill it now and return any partial output."
+                            "Choose when to ask again if it is still running, background it into a session tab, or kill it now and return any partial output."
                         )
 
                     _emit(self.event_callback, "tool_timeout_decision", {
@@ -1935,7 +1941,7 @@ class MCPSession:
                         "trigger": trigger,
                         "elapsed_seconds": elapsed_seconds,
                         "message": detail_message,
-                        "options": ["wait", "kill"],
+                        "options": ["wait", "background", "kill"],
                     })
 
                 await asyncio.sleep(0.25)
@@ -1943,7 +1949,7 @@ class MCPSession:
             self._pending_tool_timeout_decision = None
 
     def resolve_tool_timeout_decision(self, action: str, wait_seconds: int | None = None) -> bool:
-        if action not in {"wait", "kill"}:
+        if action not in {"wait", "background", "kill"}:
             return False
         if action == "wait" and wait_seconds not in _TOOL_TIMEOUT_WAIT_OPTIONS:
             return False
@@ -1975,6 +1981,8 @@ class MCPSession:
                 (
                     f"Chose to ask again in {int(wait_seconds)} seconds for {tool_name} after timeout checkpoint: {command_text}"
                     if action == "wait"
+                    else f"Chose to background {tool_name} into a session after timeout checkpoint: {command_text}"
+                    if action == "background"
                     else f"Chose to kill {tool_name} after timeout checkpoint: {command_text}"
                 ),
                 category="tool_timeout_decision",
@@ -2518,11 +2526,16 @@ class MCPSession:
                                 args_summary = str(tool_args.get("args", ""))[:80]
                             elif isinstance(tool_args, str):
                                 args_summary = tool_args[:80]
+                            lower_result_text = result_text.lower()
+                            writable = "read-only background session" not in lower_result_text
+                            session_kind = "background" if not writable else "interactive"
                             self._logger.info(f"[isess_created] Emitting isess_created event: session_id={isess_id}, tool={tool_name}, args={args_summary}")
                             _emit(self.event_callback, "isess_created", {
                                 "session_id": isess_id,
                                 "tool": tool_name or "",
                                 "args_summary": args_summary,
+                                "writable": writable,
+                                "session_kind": session_kind,
                             })
                         else:
                             self._logger.warning(f"[isess_created] 'Interactive session preserved as' found but regex did not match. Result text:\n{result_text[:500]}")

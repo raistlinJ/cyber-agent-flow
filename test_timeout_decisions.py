@@ -52,3 +52,28 @@ class TestToolTimeoutDecisions:
 
         assert session.resolve_tool_timeout_decision("wait", wait_seconds=45) is False
         assert not response_path.exists()
+
+    def test_background_timeout_decision_writes_background_action(self, tmp_path, monkeypatch):
+        import mcp_client
+
+        response_path = tmp_path / "tool_timeout_response.json"
+        monkeypatch.setattr(mcp_client, "_tool_timeout_response_path", lambda run_id: str(response_path))
+
+        session = mcp_client.MCPSession(
+            ollama_url="http://localhost:11434",
+            model="test-model",
+            server_command="python mcp_kali.py",
+            run_id="test-run",
+        )
+        session._pending_tool_timeout_decision = {
+            "request_id": "req-789",
+            "tool": "tcpdump",
+            "command": "tcpdump -ni eth0",
+        }
+
+        assert session.resolve_tool_timeout_decision("background") is True
+
+        payload = json.loads(response_path.read_text())
+        assert payload["request_id"] == "req-789"
+        assert payload["action"] == "background"
+        assert "wait_seconds" not in payload

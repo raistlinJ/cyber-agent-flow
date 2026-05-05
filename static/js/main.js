@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolTimeoutMessage = document.getElementById('tool-timeout-message');
     const toolTimeoutCommand = document.getElementById('tool-timeout-command');
     const toolTimeoutWaitSelect = document.getElementById('tool-timeout-wait-select');
+    const backgroundToolTimeoutBtn = document.getElementById('background-tool-timeout-btn');
     const killToolTimeoutBtn = document.getElementById('kill-tool-timeout-btn');
     
     const annotationAction = document.getElementById('annotation-action');
@@ -1842,7 +1843,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function createTerminalTab(sessionId, tool = '', argsSummary = '') {
+    function createTerminalTab(sessionId, tool = '', argsSummary = '', options = {}) {
+        const writable = options.writable !== false;
+        const sessionKind = options.sessionKind || 'interactive';
         console.log('[createTerminalTab] Creating tab for sessionId:', sessionId, 'tool:', tool, 'argsSummary:', argsSummary);
         
         if (!chatTabBar) {
@@ -1871,6 +1874,8 @@ document.addEventListener('DOMContentLoaded', () => {
         tabBtn.type = 'button';
         tabBtn.className = 'chat-tab status-active';
         tabBtn.dataset.tabId = sessionId;
+        tabBtn.dataset.sessionWritable = writable ? 'true' : 'false';
+        tabBtn.dataset.sessionKind = sessionKind;
         tabBtn.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 256 256" style="flex-shrink:0">
                 <path d="M128,128a8,8,0,0,1-3.12.65,8,8,0,0,1-6.94-4A8,8,0,0,1,120.84,116l80-48a8,8,0,0,1,8.32,13.66ZM232,56V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200Z"></path>
@@ -1899,62 +1904,77 @@ document.addEventListener('DOMContentLoaded', () => {
             const safeArgs = escapeHtml(argsSummary.length > 120 ? argsSummary.substring(0, 120) + '…' : argsSummary);
             contextHtml += `<br><span style="color: var(--text-secondary); font-size: 0.75rem;">Args: <code>${safeArgs}</code></span>`;
         }
+        if (!writable) {
+            contextHtml += `<br><span style="color: var(--text-secondary); font-size: 0.75rem;">Background monitor only. Output will stream here, but this session does not accept input.</span>`;
+        }
+
+        const waitingMessage = writable
+            ? 'Waiting for output… You can type commands below once the session is ready.'
+            : 'Waiting for output… This background session is read-only and will stream new output here.';
+        const inputRowHtml = writable
+            ? `
+            <div class="isess-input-row" id="input-row-${sessionId}">
+                <span class="isess-prompt-indicator">></span>
+                <input type="text" class="isess-input" id="input-${sessionId}" 
+                    placeholder="Waiting for session to initialize..." disabled>
+            </div>`
+            : '';
 
         // Create Tab Panel
         const tabPanel = document.createElement('div');
         tabPanel.className = 'chat-tab-panel';
         tabPanel.id = `chat-tab-${sessionId}`;
+        tabPanel.dataset.sessionWritable = writable ? 'true' : 'false';
+        tabPanel.dataset.sessionKind = sessionKind;
         tabPanel.innerHTML = `
             <div class="isess-log-viewer" id="log-viewer-${sessionId}">
                 <div class="log-entry log-status" style="border-left: 3px solid var(--accent-primary); padding-left: 0.6rem; margin-bottom: 0.4rem;">
                     ${contextHtml}
                 </div>
-                <div class="log-entry log-status">Waiting for output… You can type commands below once the session is ready.</div>
+                <div class="log-entry log-status">${waitingMessage}</div>
             </div>
-            <div class="isess-input-row" id="input-row-${sessionId}">
-                <span class="isess-prompt-indicator">></span>
-                <input type="text" class="isess-input" id="input-${sessionId}" 
-                    placeholder="Waiting for session to initialize..." disabled>
-            </div>
+            ${inputRowHtml}
         `;
 
         chatTabsContent.appendChild(tabPanel);
 
         // Setup input handler
         const inputEl = tabPanel.querySelector('.isess-input');
-        inputEl.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
-                const val = inputEl.value.trim();
-                if (!val) return;
-                
-                inputEl.value = '';
-                appendIsessLog(sessionId, `\n> ${val}\n`, 'log-user-input');
-                
-                try {
-                    const res = await fetch('/api/session/isess/write', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ session_id: sessionId, input: val })
-                    });
-                    const data = await res.json();
-                    if (!data.success) {
-                        appendIsessLog(sessionId, `Error: ${data.error || 'Failed to send command.'}\n`, 'log-error-text');
-                    } else if (data.content) {
-                        // Display the output returned by the write handler
-                        appendIsessLog(sessionId, data.content + '\n', 'log-tool-result');
+        if (inputEl) {
+            inputEl.addEventListener('keydown', async (e) => {
+                if (e.key === 'Enter') {
+                    const val = inputEl.value.trim();
+                    if (!val) return;
+                    
+                    inputEl.value = '';
+                    appendIsessLog(sessionId, `\n> ${val}\n`, 'log-user-input');
+                    
+                    try {
+                        const res = await fetch('/api/session/isess/write', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ session_id: sessionId, input: val })
+                        });
+                        const data = await res.json();
+                        if (!data.success) {
+                            appendIsessLog(sessionId, `Error: ${data.error || 'Failed to send command.'}\n`, 'log-error-text');
+                        } else if (data.content) {
+                            // Display the output returned by the write handler
+                            appendIsessLog(sessionId, data.content + '\n', 'log-tool-result');
+                        }
+                    } catch (err) {
+                        appendIsessLog(sessionId, `Network error: ${err.message}\n`, 'log-error-text');
                     }
-                } catch (err) {
-                    appendIsessLog(sessionId, `Network error: ${err.message}\n`, 'log-error-text');
                 }
-            }
-        });
+            });
+        }
 
         // Do NOT auto-switch — keep the user on the main agent tab.
         // Highlight the new tab so the user notices it.
         tabBtn.style.animation = 'tab-pulse 1.5s ease-in-out 3';
     }
 
-    function closeTerminalTab(sessionId) {
+    async function closeTerminalTab(sessionId) {
         const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
         const closeEl = tab ? tab.querySelector('.chat-tab-close') : null;
         
@@ -1971,16 +1991,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (!confirm(`Are you sure you want to close the interactive session ${sessionId}?`)) return;
+        if (!confirm(`Are you sure you want to close session ${sessionId}?`)) return;
 
-        // Call backend to close
-        fetch('/api/session/isess/write', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: sessionId, input: 'exit' })
-        });
-
-        markSessionClosed(sessionId);
+        try {
+            const response = await fetch('/api/session/isess/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to close session.');
+            }
+            markSessionClosed(sessionId);
+        } catch (error) {
+            showAlert(error.message, 'error');
+        }
     }
 
     function markSessionClosed(sessionId) {
@@ -2367,6 +2393,7 @@ document.addEventListener('DOMContentLoaded', () => {
             toolTimeoutWaitSelect.disabled = false;
             toolTimeoutWaitSelect.value = '';
         }
+        if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = false;
         killToolTimeoutBtn.disabled = false;
     }
 
@@ -2374,6 +2401,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!_serviceRunning || !_awaitingToolTimeoutDecision) return;
 
         if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = true;
+        if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = true;
         killToolTimeoutBtn.disabled = true;
 
         try {
@@ -2399,6 +2427,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (action === 'kill') {
                     _activeToolState.phase = 'killing';
                     _activeToolState.note = "Termination requested. Waiting for process to die...";
+                } else if (action === 'background') {
+                    _activeToolState.phase = 'running';
+                    _activeToolState.note = 'Background requested. The tool will continue in a separate session tab.';
                 } else {
                     _activeToolState.phase = 'running';
                     _activeToolState.note = Number.isFinite(waitSeconds) && waitSeconds > 0
@@ -2409,6 +2440,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = false;
+            if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = false;
             killToolTimeoutBtn.disabled = false;
             showAlert(error.message, 'error');
         }
@@ -2419,6 +2451,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!Number.isFinite(waitSeconds) || waitSeconds <= 0) return;
         resolveToolTimeoutDecision('wait', waitSeconds);
     });
+    backgroundToolTimeoutBtn.addEventListener('click', () => resolveToolTimeoutDecision('background'));
     killToolTimeoutBtn.addEventListener('click', () => resolveToolTimeoutDecision('kill'));
 
     async function stopTargetedSession(runId) {
@@ -3219,13 +3252,14 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'tool_timeout_decision':
                 _awaitingToolTimeoutDecision = true;
                 progressModal.style.display = 'none';
-                markActiveToolWaiting('Paused at a timeout checkpoint. Choose when to ask again or stop it.');
+                markActiveToolWaiting('Paused at a timeout checkpoint. Choose when to ask again, background it, or stop it.');
                 toolTimeoutMessage.textContent = event.message || 'A tool reached its timeout checkpoint.';
                 toolTimeoutCommand.textContent = String(event.command || '');
                 if (toolTimeoutWaitSelect) {
                     toolTimeoutWaitSelect.value = '';
                     toolTimeoutWaitSelect.disabled = false;
                 }
+                if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = false;
                 toolTimeoutModalOverlay.style.display = 'flex';
                 break;
             case 'chat_done':
@@ -3264,10 +3298,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sid = event.session_id || (event.data && event.data.session_id);
                 const tool = event.tool || (event.data && event.data.tool) || '';
                 const argsSummary = event.args_summary || (event.data && event.data.args_summary) || '';
-                console.log('[renderEvent] isess_created event received:', { sid, tool, argsSummary });
+                const writable = (event.writable ?? (event.data && event.data.writable)) !== false;
+                const sessionKind = event.session_kind || (event.data && event.data.session_kind) || 'interactive';
+                console.log('[renderEvent] isess_created event received:', { sid, tool, argsSummary, writable, sessionKind });
                 if (sid) {
                     console.log('[renderEvent] Calling createTerminalTab with:', sid);
-                    createTerminalTab(sid, tool, argsSummary);
+                    createTerminalTab(sid, tool, argsSummary, { writable, sessionKind });
                 } else {
                     console.warn('[renderEvent] isess_created event missing session_id. Event:', event);
                 }

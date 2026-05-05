@@ -364,17 +364,100 @@ def _read_pty_available(master_fd: int | None, timeout_seconds: float = 0.0) -> 
     return b"".join(collected).decode(errors="replace")
 
 
+def _close_session_stream_fds(session: dict):
+    for key in ("stdout_fd", "stderr_fd"):
+        fd = session.get(key)
+        if fd is None:
+            continue
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        session[key] = None
+
+
+def _read_session_stream_fds_available(session: dict, timeout_seconds: float = 0.0) -> str:
+    fds = [fd for fd in (session.get("stdout_fd"), session.get("stderr_fd")) if fd is not None]
+    if not fds:
+        return ""
+
+    collected: list[bytes] = []
+    end_at = time.time() + max(0.0, float(timeout_seconds))
+    first_pass = True
+
+    while True:
+        if not fds:
+            break
+
+        remaining = max(0.0, end_at - time.time()) if not first_pass else max(0.0, float(timeout_seconds))
+        ready, _, _ = select.select(fds, [], [], remaining)
+        first_pass = False
+        if not ready:
+            break
+
+        for fd in list(ready):
+            while True:
+                try:
+                    chunk = os.read(fd, _INTERACTIVE_SESSION_READ_CHUNK)
+                except OSError as exc:
+                    if exc.errno in {errno.EAGAIN, errno.EWOULDBLOCK}:
+                        break
+                    if exc.errno == errno.EIO:
+                        chunk = b""
+                    else:
+                        raise
+
+                if not chunk:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    if session.get("stdout_fd") == fd:
+                        session["stdout_fd"] = None
+                    if session.get("stderr_fd") == fd:
+                        session["stderr_fd"] = None
+                    fds = [candidate for candidate in fds if candidate != fd]
+                    break
+
+                collected.append(chunk)
+
+            if time.time() >= end_at:
+                break
+
+        if time.time() >= end_at:
+            break
+
+    return b"".join(collected).decode(errors="replace")
+
+
+def _compose_background_session_output(stdout: str, stderr: str) -> str:
+    output = _strip_ansi(stdout or "")
+    stderr_text = _strip_ansi(stderr or "")
+    if stderr_text:
+        if output:
+            output += f"\n\nSTDERR:\n{stderr_text}"
+        else:
+            output = f"STDERR:\n{stderr_text}"
+    return output
+
+
 def _refresh_interactive_session(session: dict, wait_seconds: float = 0.0) -> str:
     if session.get("closed"):
         return ""
 
-    chunk = _read_pty_available(session.get("master_fd"), wait_seconds)
+    if session.get("master_fd") is not None:
+        chunk = _read_pty_available(session.get("master_fd"), wait_seconds)
+    else:
+        chunk = _read_session_stream_fds_available(session, wait_seconds)
     if chunk:
         _append_session_output(session, chunk, pending=True)
 
     proc = session.get("proc")
     if proc and proc.poll() is not None:
-        trailing = _read_pty_available(session.get("master_fd"), 0.0)
+        if session.get("master_fd") is not None:
+            trailing = _read_pty_available(session.get("master_fd"), 0.0)
+        else:
+            trailing = _read_session_stream_fds_available(session, 0.0)
         if trailing:
             _append_session_output(session, trailing, pending=True)
             chunk += trailing
@@ -382,6 +465,7 @@ def _refresh_interactive_session(session: dict, wait_seconds: float = 0.0) -> st
         session["returncode"] = int(proc.returncode or 0)
         session["closed_at"] = time.time()
         _close_session_master_fd(session)
+        _close_session_stream_fds(session)
 
         # Log the auto-close so the session lifecycle is fully captured
         sid = session.get("id", "unknown")
@@ -397,7 +481,19 @@ def _refresh_interactive_session(session: dict, wait_seconds: float = 0.0) -> st
     return chunk
 
 
-def _preserve_interactive_session(proc: subprocess.Popen, master_fd: int, tool_name: str, arguments: dict, cmd: list[str], initial_output: str) -> str:
+def _preserve_interactive_session(
+    proc: subprocess.Popen,
+    master_fd: int | None,
+    tool_name: str,
+    arguments: dict,
+    cmd: list[str],
+    initial_output: str,
+    *,
+    stdout_fd: int | None = None,
+    stderr_fd: int | None = None,
+    writable: bool = True,
+    session_kind: str = "interactive",
+) -> str:
     session_id = _next_interactive_session_id()
     session = {
         "id": session_id,
@@ -406,6 +502,10 @@ def _preserve_interactive_session(proc: subprocess.Popen, master_fd: int, tool_n
         "command": list(cmd),
         "proc": proc,
         "master_fd": master_fd,
+        "stdout_fd": stdout_fd,
+        "stderr_fd": stderr_fd,
+        "writable": bool(writable),
+        "session_kind": str(session_kind or "interactive"),
         "history": "",
         "pending_output": "",
         "created_at": time.time(),
@@ -425,7 +525,9 @@ def _interactive_session_status_line(session: dict) -> str:
     status = "active" if running else f"closed (exit {session.get('returncode', 0)})"
     command = shlex.join(session.get("command") or [])
     pending_chars = len(session.get("pending_output") or "")
-    return f"{session.get('id')}: {status}; tool={session.get('tool')}; pending_chars={pending_chars}; command={command}"
+    writable = "yes" if session.get("writable", True) else "no"
+    session_kind = str(session.get("session_kind") or "interactive")
+    return f"{session.get('id')}: {status}; kind={session_kind}; writable={writable}; tool={session.get('tool')}; pending_chars={pending_chars}; command={command}"
 
 
 def _coerce_wait_seconds(value, default: float = 0.0) -> float:
@@ -544,6 +646,8 @@ def _interactive_session_tool_result(name: str, arguments: dict) -> tuple[str, i
         _refresh_interactive_session(session, 0.0)
         if session.get("closed"):
             return f"Error: Interactive session {session_id} is already closed.", -1
+        if not session.get("writable", True):
+            return f"Error: Interactive session {session_id} is read-only and does not accept input.", -1
         if session.get("master_fd") is None:
             return f"Error: Interactive session {session_id} is not writable because its terminal is no longer attached.", -1
         user_input = str((arguments or {}).get("input") or "")
@@ -577,6 +681,7 @@ def _interactive_session_tool_result(name: str, arguments: dict) -> tuple[str, i
         session["closed_at"] = time.time()
         session["returncode"] = int(proc.returncode or 0) if proc else 0
         _close_session_master_fd(session)
+        _close_session_stream_fds(session)
         pending_output = session.get("pending_output") or ""
         session["pending_output"] = ""
         if pending_output:
@@ -935,7 +1040,7 @@ def _await_timeout_decision(
 
                 if isinstance(response, dict) and response.get("request_id") == request_id:
                     action = str(response.get("action") or "").strip().lower()
-                    if action in {"wait", "kill"}:
+                    if action in {"wait", "kill", "background"}:
                         try:
                             wait_seconds = int(response.get("wait_seconds")) if action == "wait" else None
                         except (TypeError, ValueError):
@@ -1008,6 +1113,39 @@ def _run_subprocess_with_timeout_prompt(
     idle_limit = max(0, idle_limit)
     last_activity_at = t0
     last_seen_sizes = (0, 0)
+
+    def _background_noninteractive_session(partial_stdout: str, partial_stderr: str) -> dict:
+        stdout_fd = proc.stdout.fileno() if proc.stdout else None
+        stderr_fd = proc.stderr.fileno() if proc.stderr else None
+        for fd in (stdout_fd, stderr_fd):
+            if fd is not None:
+                _set_nonblocking(fd)
+
+        session_id = _preserve_interactive_session(
+            proc,
+            None,
+            tool_name,
+            arguments,
+            cmd,
+            _compose_background_session_output(partial_stdout, partial_stderr),
+            stdout_fd=stdout_fd,
+            stderr_fd=stderr_fd,
+            writable=False,
+            session_kind="background",
+        )
+        return {
+            "stdout": partial_stdout,
+            "stderr": partial_stderr or "",
+            "returncode": 0,
+            "duration_ms": int((time.time() - t0) * 1000),
+            "timed_out_kill": False,
+            "cancelled": False,
+            "interactive_preserved": True,
+            "interactive_session_id": session_id,
+            "interactive_session_writable": False,
+            "interactive_session_kind": "background",
+            "checkpoint_index": checkpoint_index,
+        }
 
     while True:
         try:
@@ -1098,6 +1236,8 @@ def _run_subprocess_with_timeout_prompt(
                     last_activity_at = time.time()
                     next_checkpoint_at = time.time() + delay_seconds
                     continue
+                if action == "background":
+                    return _background_noninteractive_session(partial_stdout, partial_stderr)
 
                 if action != "finished" and proc.poll() is None:
                     proc.kill()
@@ -1136,6 +1276,8 @@ def _run_subprocess_with_timeout_prompt(
                 next_checkpoint_at = time.time() + delay_seconds
                 last_activity_at = time.time()
                 continue
+            if action == "background":
+                return _background_noninteractive_session(partial_stdout, partial_stderr)
 
             if action != "finished" and proc.poll() is None:
                 proc.kill()
@@ -1279,6 +1421,30 @@ def _run_interactive_subprocess_with_timeout_prompt(
                 next_checkpoint_at = time.time() + delay_seconds
                 last_activity_at = time.time()
                 continue
+            if action == "background":
+                session_id = _preserve_interactive_session(
+                    proc,
+                    master_fd,
+                    tool_name,
+                    arguments,
+                    cmd,
+                    transcript,
+                    writable=True,
+                    session_kind="interactive",
+                )
+                return {
+                    "stdout": transcript,
+                    "stderr": "",
+                    "returncode": 0,
+                    "duration_ms": int((time.time() - t0) * 1000),
+                    "timed_out_kill": False,
+                    "cancelled": False,
+                    "interactive_preserved": True,
+                    "interactive_session_id": session_id,
+                    "interactive_session_writable": True,
+                    "interactive_session_kind": "interactive",
+                    "checkpoint_index": checkpoint_index,
+                }
 
             if action != "finished":
                 _terminate_process_group(proc)
@@ -1319,6 +1485,30 @@ def _run_interactive_subprocess_with_timeout_prompt(
             next_checkpoint_at = time.time() + delay_seconds
             last_activity_at = time.time()
             continue
+        if action == "background":
+            session_id = _preserve_interactive_session(
+                proc,
+                master_fd,
+                tool_name,
+                arguments,
+                cmd,
+                transcript,
+                writable=True,
+                session_kind="interactive",
+            )
+            return {
+                "stdout": transcript,
+                "stderr": "",
+                "returncode": 0,
+                "duration_ms": int((time.time() - t0) * 1000),
+                "timed_out_kill": False,
+                "cancelled": False,
+                "interactive_preserved": True,
+                "interactive_session_id": session_id,
+                "interactive_session_writable": True,
+                "interactive_session_kind": "interactive",
+                "checkpoint_index": checkpoint_index,
+            }
 
         if action != "finished":
             _terminate_process_group(proc)
@@ -2049,14 +2239,26 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         stderr = _strip_ansi(execution.get("stderr") or "")
         if execution.get("interactive_preserved"):
             session_id = str(execution.get("interactive_session_id") or "").strip()
-            preserved_message = (
-                f"Interactive session preserved as {session_id}.\n"
-                f"IMPORTANT: To interact with this session, you MUST use session_id=\"{session_id}\" (not a Metasploit session number).\n"
-                f"- Use interactive_session_write with session_id=\"{session_id}\" and input=\"<your command>\" to send commands.\n"
-                f"- Use interactive_session_read with session_id=\"{session_id}\" to collect output.\n"
-                f"- Use interactive_session_list to see all active sessions.\n"
-                f"- Use interactive_session_close with session_id=\"{session_id}\" when you are done."
-            )
+            session_writable = bool(execution.get("interactive_session_writable", True))
+            session_kind = str(execution.get("interactive_session_kind") or "interactive")
+            if session_kind == "background" and not session_writable:
+                preserved_message = (
+                    f"Interactive session preserved as {session_id}.\n"
+                    f"IMPORTANT: This is a read-only background session for the running tool.\n"
+                    f"- Use interactive_session_read with session_id=\"{session_id}\" to collect output.\n"
+                    f"- interactive_session_write is unavailable because this session does not accept input.\n"
+                    f"- Use interactive_session_list to see all active sessions.\n"
+                    f"- Use interactive_session_close with session_id=\"{session_id}\" when you are done."
+                )
+            else:
+                preserved_message = (
+                    f"Interactive session preserved as {session_id}.\n"
+                    f"IMPORTANT: To interact with this session, you MUST use session_id=\"{session_id}\" (not a Metasploit session number).\n"
+                    f"- Use interactive_session_write with session_id=\"{session_id}\" and input=\"<your command>\" to send commands.\n"
+                    f"- Use interactive_session_read with session_id=\"{session_id}\" to collect output.\n"
+                    f"- Use interactive_session_list to see all active sessions.\n"
+                    f"- Use interactive_session_close with session_id=\"{session_id}\" when you are done."
+                )
             output = preserved_message
             if execution.get("stdout"):
                 output += f"\n\nCaptured output before preservation:\n{_strip_ansi(execution.get('stdout') or '')}"
