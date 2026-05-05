@@ -6,6 +6,7 @@ The agent loop auto-loads only the guides for currently enabled tools.
 
 ## Current guides
 
+- `msf_run.md`
 - `RIPv2.md`
 - `ospf_sniff.md`
 - `shell.md`

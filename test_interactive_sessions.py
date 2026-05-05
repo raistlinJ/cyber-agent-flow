@@ -49,6 +49,12 @@ class TestInteractiveSessionDetection:
         stdout = "root@target:/tmp# "
         assert _looks_like_preservable_interactive_session("shell_dangerous", stdout, "") is True
 
+    def test_plain_msf_prompt_is_treated_as_preservable_for_shell_dangerous(self):
+        from mcp_kali import _looks_like_preservable_interactive_session
+
+        stdout = "msf > "
+        assert _looks_like_preservable_interactive_session("shell_dangerous", stdout, "") is True
+
     def test_reverse_perl_session_open_is_detected(self):
         from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
 
@@ -220,6 +226,11 @@ class TestInteractiveSessionConfig:
         from mcp_kali import _tool_supports_interactive_sessions
 
         assert _tool_supports_interactive_sessions("msf_run", {}) is True
+
+    def test_shell_dangerous_is_interactive_capable_by_default(self):
+        from mcp_kali import _tool_supports_interactive_sessions
+
+        assert _tool_supports_interactive_sessions("shell_dangerous", {}) is True
 
     def test_config_can_enable_interactive_capable_for_other_tools(self):
         from mcp_kali import _tool_supports_interactive_sessions

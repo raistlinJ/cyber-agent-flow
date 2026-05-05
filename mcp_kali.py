@@ -108,7 +108,7 @@ _TIMEOUT_DECISION_MAX_WAIT_SECONDS = int(os.environ.get("MCP_TIMEOUT_DECISION_MA
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
 _TOOL_STOP_REQUEST_FILENAME = "tool_graceful_stop.json"
 _PROCESS_CANCEL_POLL_SECONDS = 0.25
-_DEFAULT_INTERACTIVE_SESSION_START_TOOLS = {"msf_run", "shell", "shell_sequence", "shell_extended"}
+_DEFAULT_INTERACTIVE_SESSION_START_TOOLS = {"msf_run", "shell", "shell_sequence", "shell_extended", "shell_dangerous"}
 _INTERACTIVE_SESSION_HISTORY_LIMIT = 200000
 _INTERACTIVE_SESSION_PENDING_LIMIT = 65536
 _INTERACTIVE_SESSION_DEFAULT_WAIT_SECONDS = 0.75
@@ -205,6 +205,10 @@ def _looks_like_preservable_interactive_session(tool_name: str, stdout: str, std
         return True
     # We no longer auto-preserve 'msf_run' just because it returns to the msf prompt.
     # This prevents idle consoles from spawning tabs. Real sessions are caught above.
+    # For shell-backed tools, a plain msf prompt means the user explicitly launched
+    # an interactive Metasploit console and expects to keep it open.
+    if tool_name != "msf_run" and _MSF_PROMPT_RE.search(combined):
+        return True
     if _METERPRETER_PROMPT_RE.search(combined):
         return True
     if _SHELL_PROMPT_RE.search(combined):
@@ -237,11 +241,9 @@ def _looks_like_preservable_interactive_session(tool_name: str, stdout: str, std
 
 
 def _tool_supports_interactive_sessions(tool_name: str, tool_config: dict | None) -> bool:
-    if tool_name in _DEFAULT_INTERACTIVE_SESSION_START_TOOLS:
-        return True
-    if not isinstance(tool_config, dict):
-        return False
-    return bool(tool_config.get("interactive_capable"))
+    if isinstance(tool_config, dict) and "interactive_capable" in tool_config:
+        return bool(tool_config.get("interactive_capable"))
+    return tool_name in _DEFAULT_INTERACTIVE_SESSION_START_TOOLS
 
 
 def _build_interactive_session_handoff(tool_name: str, arguments: dict, cmd: list[str]) -> str:
