@@ -49,6 +49,34 @@ class TestInteractiveSessionDetection:
         stdout = "root@target:/tmp# "
         assert _looks_like_preservable_interactive_session("shell_dangerous", stdout, "") is True
 
+    def test_reverse_perl_session_open_is_detected(self):
+        from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
+
+        stdout = "[*] Perl session 1 opened (10.0.0.1:4444 -> 10.0.0.2:5555)\nmeterpreter > "
+        assert _looks_like_interactive_session("msf_run", ["msfconsole"], stdout, "") is True
+        assert _looks_like_preservable_interactive_session("msf_run", stdout, "") is True
+
+    def test_reverse_python_session_open_is_detected(self):
+        from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
+
+        stdout = "[*] Python session 1 opened (10.0.0.1:4444 -> 10.0.0.2:5555)\nshell > "
+        assert _looks_like_interactive_session("msf_run", ["msfconsole"], stdout, "") is True
+        assert _looks_like_preservable_interactive_session("msf_run", stdout, "") is True
+
+    def test_generic_session_opened_is_detected(self):
+        from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
+
+        stdout = "[*] Session 1 created in the background."
+        assert _looks_like_interactive_session("msf_run", ["msfconsole"], stdout, "") is True
+        assert _looks_like_preservable_interactive_session("msf_run", stdout, "") is True
+
+    def test_bash_session_open_is_detected(self):
+        from mcp_kali import _looks_like_interactive_session, _looks_like_preservable_interactive_session
+
+        stdout = "[*] Bash session 1 opened (10.0.0.1:4444 -> 10.0.0.2:5555)\nroot@target:/tmp# "
+        assert _looks_like_interactive_session("msf_run", ["msfconsole"], stdout, "") is True
+        assert _looks_like_preservable_interactive_session("msf_run", stdout, "") is True
+
 
 class TestManualRecreationInstructions:
     def test_msf_manual_recreation_mentions_msfconsole(self):

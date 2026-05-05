@@ -89,7 +89,8 @@ _ANSI_ESCAPE_RE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
 _URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 _CIDR_OR_IP_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b')
 _HOSTNAME_RE = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$', re.IGNORECASE)
-_INTERACTIVE_SESSION_OPEN_RE = re.compile(r'(?:meterpreter|command shell) session\s+\d+\s+opened', re.IGNORECASE)
+_INTERACTIVE_SESSION_OPEN_RE = re.compile(r'(?:meterpreter|command shell|perl|python|shell|bash|sh)\s+session\s+\d+\s+opened', re.IGNORECASE)
+_SESSION_OPEN_GENERIC_RE = re.compile(r'session\s+\d+\s+(?:opened|created)', re.IGNORECASE)
 _METERPRETER_PROMPT_RE = re.compile(r'^\s*meterpreter(?:\s+[^\n>]*)?>\s*$', re.IGNORECASE | re.MULTILINE)
 _SHELL_PROMPT_RE = re.compile(r'^\s*shell>\s*$', re.IGNORECASE | re.MULTILINE)
 _MSF_PROMPT_RE = re.compile(r'^\s*msf\d*(?:\s+[^\n>]*)?>\s*$', re.IGNORECASE | re.MULTILINE)
@@ -177,6 +178,8 @@ def _looks_like_interactive_session(tool_name: str, cmd: list[str], stdout: str,
     command_name = os.path.basename(cmd[0]) if cmd else ""
     if _INTERACTIVE_SESSION_OPEN_RE.search(combined):
         return True
+    if _SESSION_OPEN_GENERIC_RE.search(combined):
+        return True
     if _METERPRETER_PROMPT_RE.search(combined):
         return True
     if _SHELL_PROMPT_RE.search(combined):
@@ -193,6 +196,8 @@ def _looks_like_preservable_interactive_session(tool_name: str, stdout: str, std
 
     # Positive success indicators
     if _INTERACTIVE_SESSION_OPEN_RE.search(combined):
+        return True
+    if _SESSION_OPEN_GENERIC_RE.search(combined):
         return True
     if "You have active sessions open" in combined:
         return True
