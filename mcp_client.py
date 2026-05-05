@@ -2399,8 +2399,10 @@ class MCPSession:
                     if "Interactive session preserved as" in result_text:
                         # Detect isess-XXX ID
                         isess_match = re.search(r"preserved as (isess-\w+)", result_text)
+                        self._logger.debug(f"[isess_created] Checking for isess session in result_text. Match: {isess_match}")
                         if isess_match:
                             isess_id = isess_match.group(1)
+                            self._logger.info(f"[isess_created] Interactive session detected: {isess_id}")
                             self._active_interactive_sessions.add(isess_id)
                             # Build a short summary of the args for the tab label
                             args_summary = ""
@@ -2408,11 +2410,14 @@ class MCPSession:
                                 args_summary = str(tool_args.get("args", ""))[:80]
                             elif isinstance(tool_args, str):
                                 args_summary = tool_args[:80]
+                            self._logger.info(f"[isess_created] Emitting isess_created event: session_id={isess_id}, tool={tool_name}, args={args_summary}")
                             _emit(self.event_callback, "isess_created", {
                                 "session_id": isess_id,
                                 "tool": tool_name or "",
                                 "args_summary": args_summary,
                             })
+                        else:
+                            self._logger.warning(f"[isess_created] 'Interactive session preserved as' found but regex did not match. Result text:\n{result_text[:500]}")
 
                     if tool_name == "interactive_session_close" and exit_code == 0:
                         closed_id = ""

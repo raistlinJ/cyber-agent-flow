@@ -1843,7 +1843,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createTerminalTab(sessionId, tool = '', argsSummary = '') {
-        if (document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`)) return;
+        console.log('[createTerminalTab] Creating tab for sessionId:', sessionId, 'tool:', tool, 'argsSummary:', argsSummary);
+        
+        if (!chatTabBar) {
+            console.error('[createTerminalTab] ERROR: chatTabBar is null or undefined');
+            return;
+        }
+        if (!chatTabsContent) {
+            console.error('[createTerminalTab] ERROR: chatTabsContent is null or undefined');
+            return;
+        }
+        
+        if (document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`)) {
+            console.log('[createTerminalTab] Tab already exists for', sessionId);
+            return;
+        }
 
         // Build a descriptive tab label
         let tabLabel = sessionId;
@@ -2689,9 +2703,12 @@ document.addEventListener('DOMContentLoaded', () => {
         _eventSource.onmessage = (ev) => {
             try {
                 const event = JSON.parse(ev.data);
+                console.log('[openSseStream] Received event:', event.type, event);
                 renderEvent(event);
                 if (event.type === 'done') { closeSse(); handleServiceStopped(); }
-            } catch (err) {}
+            } catch (err) {
+                console.error('[openSseStream] Error parsing event:', err, 'Data:', ev.data);
+            }
         };
         _eventSource.onerror = () => {
             closeSse();
@@ -3227,7 +3244,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sid = event.session_id || (event.data && event.data.session_id);
                 const tool = event.tool || (event.data && event.data.tool) || '';
                 const argsSummary = event.args_summary || (event.data && event.data.args_summary) || '';
-                if (sid) createTerminalTab(sid, tool, argsSummary);
+                console.log('[renderEvent] isess_created event received:', { sid, tool, argsSummary });
+                if (sid) {
+                    console.log('[renderEvent] Calling createTerminalTab with:', sid);
+                    createTerminalTab(sid, tool, argsSummary);
+                } else {
+                    console.warn('[renderEvent] isess_created event missing session_id. Event:', event);
+                }
                 break;
             }
             case 'isess_output': {

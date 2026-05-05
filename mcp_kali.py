@@ -1023,20 +1023,37 @@ def _run_subprocess_with_timeout_prompt(
                 last_activity_at = time.time()
 
             if _looks_like_interactive_session(tool_name, cmd, partial_stdout, partial_stderr):
-                final_stdout, final_stderr, returncode = _terminate_process_with_output(proc)
-                merged_stdout = _merge_process_stream_text(partial_stdout, final_stdout)
-                merged_stderr = _merge_process_stream_text(partial_stderr, final_stderr)
-                return {
-                    "stdout": merged_stdout,
-                    "stderr": merged_stderr,
-                    "returncode": returncode,
-                    "duration_ms": int((time.time() - t0) * 1000),
-                    "timed_out_kill": False,
-                    "cancelled": False,
-                    "interactive_handoff": True,
-                    "handoff_message": _build_interactive_session_handoff(tool_name, arguments, cmd),
-                    "checkpoint_index": checkpoint_index,
-                }
+                # Check if this session is preservable (not just interactive)
+                if _looks_like_preservable_interactive_session(tool_name, partial_stdout, partial_stderr):
+                    # Preserve the session instead of terminating it
+                    session_id = _preserve_interactive_session(proc, master_fd, tool_name, arguments, cmd, partial_stdout)
+                    return {
+                        "stdout": partial_stdout,
+                        "stderr": partial_stderr or "",
+                        "returncode": 0,
+                        "duration_ms": int((time.time() - t0) * 1000),
+                        "timed_out_kill": False,
+                        "cancelled": False,
+                        "interactive_preserved": True,
+                        "interactive_session_id": session_id,
+                        "checkpoint_index": checkpoint_index,
+                    }
+                else:
+                    # Not preservable, so perform handoff
+                    final_stdout, final_stderr, returncode = _terminate_process_with_output(proc)
+                    merged_stdout = _merge_process_stream_text(partial_stdout, final_stdout)
+                    merged_stderr = _merge_process_stream_text(partial_stderr, final_stderr)
+                    return {
+                        "stdout": merged_stdout,
+                        "stderr": merged_stderr,
+                        "returncode": returncode,
+                        "duration_ms": int((time.time() - t0) * 1000),
+                        "timed_out_kill": False,
+                        "cancelled": False,
+                        "interactive_handoff": True,
+                        "handoff_message": _build_interactive_session_handoff(tool_name, arguments, cmd),
+                        "checkpoint_index": checkpoint_index,
+                    }
 
             if _cancel_requested():
                 if proc.poll() is None:
