@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -77,3 +78,46 @@ class TestToolTimeoutDecisions:
         assert payload["request_id"] == "req-789"
         assert payload["action"] == "background"
         assert "wait_seconds" not in payload
+
+
+class TestInteractiveSessionDiscovery:
+    def test_discover_interactive_sessions_emits_isess_created_from_list_output(self):
+        import mcp_client
+
+        events = []
+
+        class FakeText:
+            def __init__(self, text):
+                self.text = text
+
+        class FakeSession:
+            async def call_tool(self, name, arguments):
+                assert name == "interactive_session_list"
+                return type("FakeResult", (), {
+                    "content": [
+                        FakeText(
+                            "isess-001: active; kind=interactive; writable=yes; tool=shell_dangerous; pending_chars=0; command=/bin/sh"
+                        )
+                    ]
+                })()
+
+        session = mcp_client.MCPSession(
+            ollama_url="http://localhost:11434",
+            model="test-model",
+            server_command="python mcp_kali.py",
+            run_id="test-run",
+            event_callback=events.append,
+        )
+        session._session = FakeSession()
+
+        asyncio.run(session._discover_interactive_sessions())
+
+        assert session._active_interactive_sessions == {"isess-001"}
+        assert events == [{
+            "type": "isess_created",
+            "session_id": "isess-001",
+            "tool": "shell_dangerous",
+            "args_summary": "",
+            "writable": True,
+            "session_kind": "interactive",
+        }]

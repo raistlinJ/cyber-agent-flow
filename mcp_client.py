@@ -1573,6 +1573,47 @@ class MCPSession:
         except Exception as e:
             return {"error": str(e), "success": False}
 
+    def _reconcile_interactive_sessions_from_list_text(
+        self,
+        result_text: str,
+        source_tool: str = "",
+        source_args=None,
+    ) -> None:
+        if not result_text or "No preserved interactive sessions" in result_text:
+            return
+
+        args_summary = ""
+        if source_tool and source_tool != "interactive_session_list":
+            if isinstance(source_args, dict):
+                args_summary = str(source_args.get("args", ""))[:80]
+            elif isinstance(source_args, str):
+                args_summary = source_args[:80]
+
+        for line in result_text.splitlines():
+            match = re.match(r"^\s*(isess-[A-Za-z0-9_-]+)\s*:", line)
+            if not match:
+                continue
+
+            isess_id = match.group(1)
+            if isess_id in self._active_interactive_sessions:
+                continue
+
+            writable_match = re.search(r"\bwritable=(yes|no)\b", line)
+            kind_match = re.search(r"\b(?:kind|mode)=([A-Za-z0-9_-]+)\b", line)
+            tool_match = re.search(r"\btool=([^;]+)", line)
+            writable = (writable_match.group(1) != "no") if writable_match else True
+            session_kind = kind_match.group(1) if kind_match else "interactive"
+            listed_tool = tool_match.group(1).strip() if tool_match else ""
+
+            self._active_interactive_sessions.add(isess_id)
+            _emit(self.event_callback, "isess_created", {
+                "session_id": isess_id,
+                "tool": source_tool or listed_tool,
+                "args_summary": args_summary,
+                "writable": writable,
+                "session_kind": session_kind,
+            })
+
     async def _discover_interactive_sessions(self, source_tool: str = "", source_args=None) -> None:
         """Best-effort discovery so UI tabs still appear even if result text parsing misses a session."""
         if not self._session:
@@ -1585,34 +1626,7 @@ class MCPSession:
         result_text = ""
         if result and getattr(result, "content", None):
             result_text = "\n".join(getattr(c, "text", str(c)) for c in result.content)
-        if not result_text or "No preserved interactive sessions" in result_text:
-            return
-
-        args_summary = ""
-        if isinstance(source_args, dict):
-            args_summary = str(source_args.get("args", ""))[:80]
-        elif isinstance(source_args, str):
-            args_summary = source_args[:80]
-
-        for line in result_text.splitlines():
-            match = re.match(r"^\s*(isess-[A-Za-z0-9_-]+)\s*:", line)
-            if not match:
-                continue
-            isess_id = match.group(1)
-            if isess_id in self._active_interactive_sessions:
-                continue
-            writable_match = re.search(r"\bwritable=(yes|no)\b", line)
-            kind_match = re.search(r"\b(?:kind|mode)=([A-Za-z0-9_-]+)\b", line)
-            writable = (writable_match.group(1) != "no") if writable_match else True
-            session_kind = kind_match.group(1) if kind_match else "interactive"
-            self._active_interactive_sessions.add(isess_id)
-            _emit(self.event_callback, "isess_created", {
-                "session_id": isess_id,
-                "tool": source_tool or "",
-                "args_summary": args_summary,
-                "writable": writable,
-                "session_kind": session_kind,
-            })
+        self._reconcile_interactive_sessions_from_list_text(result_text, source_tool, source_args)
 
     async def _retry_empty_reply_after_tools(self, prompt: str, tool_results: list[dict]) -> str | None:
         _emit(self.event_callback, "status", {
@@ -2539,6 +2553,9 @@ class MCPSession:
                             })
                         else:
                             self._logger.warning(f"[isess_created] 'Interactive session preserved as' found but regex did not match. Result text:\n{result_text[:500]}")
+
+                    if tool_name == "interactive_session_list":
+                        self._reconcile_interactive_sessions_from_list_text(result_text)
 
                     # Backstop discovery: reconcile active isess IDs from the server after likely source tools.
                     if tool_name in _INTERACTIVE_SESSION_SOURCE_TOOLS:
