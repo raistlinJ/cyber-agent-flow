@@ -102,6 +102,7 @@ _INTERNAL_ARTIFACT_PREFIXES = (
     "litellm_malformed_turn_",
     "litellm_json_tool_plan_raw",
 )
+_TOOL_TIMEOUT_WAIT_OPTIONS = {30, 60, 90, 120, 300}
 
 
 def _configure_logging():
@@ -1908,14 +1909,24 @@ def session_tool_timeout_action():
     if action not in {'wait', 'kill'}:
         return jsonify({'success': False, 'error': 'Action must be wait or kill.'}), 400
 
+    wait_seconds = None
+    if action == 'wait':
+        try:
+            wait_seconds = int(data.get('wait_seconds'))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'wait_seconds must be one of 30, 60, 90, 120, or 300.'}), 400
+        if wait_seconds not in _TOOL_TIMEOUT_WAIT_OPTIONS:
+            return jsonify({'success': False, 'error': 'wait_seconds must be one of 30, 60, 90, 120, or 300.'}), 400
+
     if not session or not hasattr(session, 'resolve_tool_timeout_decision'):
         return jsonify({'success': False, 'error': 'Session cannot resolve tool timeout decisions.'}), 409
 
-    if not session.resolve_tool_timeout_decision(action):
+    if not session.resolve_tool_timeout_decision(action, wait_seconds=wait_seconds):
         return jsonify({'success': False, 'error': 'No pending tool timeout decision to resolve.'}), 409
 
-    app.logger.info('Tool timeout decision submitted action=%s', action)
-    return jsonify({'success': True, 'message': f'{action.title()} request sent.'})
+    app.logger.info('Tool timeout decision submitted action=%s wait_seconds=%s', action, wait_seconds)
+    message = f'Will ask again in {wait_seconds} seconds.' if action == 'wait' else f'{action.title()} request sent.'
+    return jsonify({'success': True, 'message': message})
 
 @app.route('/api/sessions/<run_id>/annotate', methods=['POST'])
 def session_annotate(run_id):

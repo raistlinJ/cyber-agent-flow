@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolTimeoutModalOverlay = document.getElementById('tool-timeout-modal-overlay');
     const toolTimeoutMessage = document.getElementById('tool-timeout-message');
     const toolTimeoutCommand = document.getElementById('tool-timeout-command');
-    const waitToolTimeoutBtn = document.getElementById('wait-tool-timeout-btn');
+    const toolTimeoutWaitSelect = document.getElementById('tool-timeout-wait-select');
     const killToolTimeoutBtn = document.getElementById('kill-tool-timeout-btn');
     
     const annotationAction = document.getElementById('annotation-action');
@@ -2363,21 +2363,28 @@ document.addEventListener('DOMContentLoaded', () => {
     function closeToolTimeoutModal() {
         _awaitingToolTimeoutDecision = false;
         toolTimeoutModalOverlay.style.display = 'none';
-        waitToolTimeoutBtn.disabled = false;
+        if (toolTimeoutWaitSelect) {
+            toolTimeoutWaitSelect.disabled = false;
+            toolTimeoutWaitSelect.value = '';
+        }
         killToolTimeoutBtn.disabled = false;
     }
 
-    async function resolveToolTimeoutDecision(action) {
+    async function resolveToolTimeoutDecision(action, waitSeconds = null) {
         if (!_serviceRunning || !_awaitingToolTimeoutDecision) return;
 
-        waitToolTimeoutBtn.disabled = true;
+        if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = true;
         killToolTimeoutBtn.disabled = true;
 
         try {
+            const payload = { action };
+            if (action === 'wait' && Number.isFinite(waitSeconds) && waitSeconds > 0) {
+                payload.wait_seconds = waitSeconds;
+            }
             const response = await fetch('/api/session/tool_timeout_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action })
+                body: JSON.stringify(payload)
             });
             const data = await response.json();
 
@@ -2394,18 +2401,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     _activeToolState.note = "Termination requested. Waiting for process to die...";
                 } else {
                     _activeToolState.phase = 'running';
-                    _activeToolState.note = "Allowed to continue running...";
+                    _activeToolState.note = Number.isFinite(waitSeconds) && waitSeconds > 0
+                        ? `Will ask again in ${waitSeconds} seconds if it is still running.`
+                        : 'Allowed to continue running...';
                 }
                 renderActiveToolEntry();
             }
         } catch (error) {
-            waitToolTimeoutBtn.disabled = false;
+            if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = false;
             killToolTimeoutBtn.disabled = false;
             showAlert(error.message, 'error');
         }
     }
 
-    waitToolTimeoutBtn.addEventListener('click', () => resolveToolTimeoutDecision('wait'));
+    toolTimeoutWaitSelect.addEventListener('change', () => {
+        const waitSeconds = Number(toolTimeoutWaitSelect.value || 0);
+        if (!Number.isFinite(waitSeconds) || waitSeconds <= 0) return;
+        resolveToolTimeoutDecision('wait', waitSeconds);
+    });
     killToolTimeoutBtn.addEventListener('click', () => resolveToolTimeoutDecision('kill'));
 
     async function stopTargetedSession(runId) {
@@ -3192,20 +3205,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'post_tool_reply_decision':
                 _awaitingPostToolReplyDecision = true;
+                progressModal.style.display = 'none';
                 postToolReplyMessage.textContent = event.message || 'The model completed the tool calls, returned an empty final reply, and then failed one automatic final-answer retry.';
                 postToolReplyModalOverlay.style.display = 'flex';
                 break;
             case 'dangerous_tool_approval':
                 _awaitingDangerousToolApproval = true;
+                progressModal.style.display = 'none';
                 dangerousToolMessage.textContent = event.message || 'The model requested a dangerous shell command.';
                 dangerousToolCommand.textContent = String(event.command || '');
                 dangerousToolModalOverlay.style.display = 'flex';
                 break;
             case 'tool_timeout_decision':
                 _awaitingToolTimeoutDecision = true;
-                markActiveToolWaiting('Paused at a timeout checkpoint. Waiting for your decision to keep running or stop it.');
+                progressModal.style.display = 'none';
+                markActiveToolWaiting('Paused at a timeout checkpoint. Choose when to ask again or stop it.');
                 toolTimeoutMessage.textContent = event.message || 'A tool reached its timeout checkpoint.';
                 toolTimeoutCommand.textContent = String(event.command || '');
+                if (toolTimeoutWaitSelect) {
+                    toolTimeoutWaitSelect.value = '';
+                    toolTimeoutWaitSelect.disabled = false;
+                }
                 toolTimeoutModalOverlay.style.display = 'flex';
                 break;
             case 'chat_done':

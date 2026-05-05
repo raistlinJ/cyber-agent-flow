@@ -94,6 +94,7 @@ _TOOL_DOC_MAP = {
 }
 _TOOL_DOC_MAX_CHARS_PER_DOC = 3500
 _TOOL_DOC_MAX_TOTAL_CHARS = 14000
+_TOOL_TIMEOUT_WAIT_OPTIONS = (30, 60, 90, 120, 300)
 _INTERACTIVE_SESSION_SOURCE_TOOLS = {
     "msf_run",
     "shell",
@@ -1901,12 +1902,12 @@ class MCPSession:
                     if elapsed_seconds > 0:
                         status_message = (
                             f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"after {elapsed_seconds} seconds. Waiting for user decision: wait or kill."
+                            f"after {elapsed_seconds} seconds. Waiting for user decision: ask again later or kill."
                         )
                     else:
                         status_message = (
                             f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: wait or kill."
+                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: ask again later or kill."
                         )
 
                     _emit(self.event_callback, "status", {
@@ -1917,12 +1918,12 @@ class MCPSession:
                         detail_message = (
                             f"{tool_name} has shown no new output for {timeout_seconds} seconds "
                             f"(elapsed: {max(0, elapsed_seconds)} seconds). "
-                            "Wait keeps the process running. Kill terminates it and returns any partial output."
+                            "Choose when to ask again if it is still idle, or kill it now and return any partial output."
                         )
                     else:
                         detail_message = (
                             f"{tool_name} has been running for {timeout_seconds * checkpoint_index} seconds. "
-                            "Wait keeps the process running until the next timeout checkpoint. Kill terminates it and returns any partial output."
+                            "Choose when to ask again if it is still running, or kill it now and return any partial output."
                         )
 
                     _emit(self.event_callback, "tool_timeout_decision", {
@@ -1941,8 +1942,10 @@ class MCPSession:
         finally:
             self._pending_tool_timeout_decision = None
 
-    def resolve_tool_timeout_decision(self, action: str) -> bool:
+    def resolve_tool_timeout_decision(self, action: str, wait_seconds: int | None = None) -> bool:
         if action not in {"wait", "kill"}:
+            return False
+        if action == "wait" and wait_seconds not in _TOOL_TIMEOUT_WAIT_OPTIONS:
             return False
 
         pending = self._pending_tool_timeout_decision
@@ -1955,19 +1958,22 @@ class MCPSession:
 
         response_path = _tool_timeout_response_path(self.run_id)
         os.makedirs(os.path.dirname(response_path), exist_ok=True)
+        payload = {
+            "request_id": request_id,
+            "action": action,
+            "timestamp": time.time(),
+        }
+        if action == "wait":
+            payload["wait_seconds"] = int(wait_seconds)
         with open(response_path, "w") as f:
-            json.dump({
-                "request_id": request_id,
-                "action": action,
-                "timestamp": time.time(),
-            }, f, indent=2)
+            json.dump(payload, f, indent=2)
 
         if self._logger:
             tool_name = str(pending.get("tool") or "tool")
             command_text = str(pending.get("command") or "")
             self._logger.log_human_decision(
                 (
-                    f"Chose to wait for {tool_name} after timeout checkpoint: {command_text}"
+                    f"Chose to ask again in {int(wait_seconds)} seconds for {tool_name} after timeout checkpoint: {command_text}"
                     if action == "wait"
                     else f"Chose to kill {tool_name} after timeout checkpoint: {command_text}"
                 ),

@@ -898,7 +898,7 @@ def _await_timeout_decision(
     checkpoint_index: int,
     trigger: str = "timeout",
     elapsed_seconds: int = 0,
-) -> str:
+) -> tuple[str, int | None]:
     request_id = _write_timeout_request(
         tool_name,
         arguments,
@@ -909,7 +909,7 @@ def _await_timeout_decision(
         elapsed_seconds=elapsed_seconds,
     )
     if not request_id:
-        return "kill"
+        return "kill", None
 
     response_path = _timeout_response_path()
     request_path = _timeout_request_path()
@@ -918,13 +918,13 @@ def _await_timeout_decision(
     try:
         while True:
             if proc.poll() is not None:
-                return "finished"
+                return "finished", None
 
             if time.time() - wait_started_at >= max(1, _TIMEOUT_DECISION_MAX_WAIT_SECONDS):
-                return "kill_no_decision"
+                return "kill_no_decision", None
 
             if _cancel_requested():
-                return "kill"
+                return "kill", None
 
             if response_path and os.path.exists(response_path):
                 try:
@@ -936,7 +936,11 @@ def _await_timeout_decision(
                 if isinstance(response, dict) and response.get("request_id") == request_id:
                     action = str(response.get("action") or "").strip().lower()
                     if action in {"wait", "kill"}:
-                        return action
+                        try:
+                            wait_seconds = int(response.get("wait_seconds")) if action == "wait" else None
+                        except (TypeError, ValueError):
+                            wait_seconds = None
+                        return action, wait_seconds
 
             time.sleep(_TIMEOUT_DECISION_POLL_SECONDS)
     finally:
@@ -1077,7 +1081,7 @@ def _run_subprocess_with_timeout_prompt(
             now = time.time()
             if idle_limit > 0 and (now - last_activity_at) >= idle_limit:
                 checkpoint_index += 1
-                action = _await_timeout_decision(
+                action, wait_seconds = _await_timeout_decision(
                     proc,
                     tool_name,
                     arguments,
@@ -1088,8 +1092,11 @@ def _run_subprocess_with_timeout_prompt(
                     elapsed_seconds=int(now - t0),
                 )
                 if action == "wait":
+                    delay_seconds = max(1, int(wait_seconds or checkpoint_interval))
+                    checkpoint_interval = delay_seconds
+                    idle_limit = delay_seconds
                     last_activity_at = time.time()
-                    next_checkpoint_at = time.time() + checkpoint_interval
+                    next_checkpoint_at = time.time() + delay_seconds
                     continue
 
                 if action != "finished" and proc.poll() is None:
@@ -1112,7 +1119,7 @@ def _run_subprocess_with_timeout_prompt(
                 continue
 
             checkpoint_index += 1
-            action = _await_timeout_decision(
+            action, wait_seconds = _await_timeout_decision(
                 proc,
                 tool_name,
                 arguments,
@@ -1123,7 +1130,10 @@ def _run_subprocess_with_timeout_prompt(
                 elapsed_seconds=int(time.time() - t0),
             )
             if action == "wait":
-                next_checkpoint_at = time.time() + checkpoint_interval
+                delay_seconds = max(1, int(wait_seconds or checkpoint_interval))
+                checkpoint_interval = delay_seconds
+                idle_limit = delay_seconds if idle_limit > 0 else 0
+                next_checkpoint_at = time.time() + delay_seconds
                 last_activity_at = time.time()
                 continue
 
@@ -1252,7 +1262,7 @@ def _run_interactive_subprocess_with_timeout_prompt(
         now = time.time()
         if idle_limit > 0 and (now - last_activity_at) >= idle_limit:
             checkpoint_index += 1
-            action = _await_timeout_decision(
+            action, wait_seconds = _await_timeout_decision(
                 proc,
                 tool_name,
                 arguments,
@@ -1263,7 +1273,10 @@ def _run_interactive_subprocess_with_timeout_prompt(
                 elapsed_seconds=int(now - t0),
             )
             if action == "wait":
-                next_checkpoint_at = time.time() + checkpoint_interval
+                delay_seconds = max(1, int(wait_seconds or checkpoint_interval))
+                checkpoint_interval = delay_seconds
+                idle_limit = delay_seconds
+                next_checkpoint_at = time.time() + delay_seconds
                 last_activity_at = time.time()
                 continue
 
@@ -1289,7 +1302,7 @@ def _run_interactive_subprocess_with_timeout_prompt(
             continue
 
         checkpoint_index += 1
-        action = _await_timeout_decision(
+        action, wait_seconds = _await_timeout_decision(
             proc,
             tool_name,
             arguments,
@@ -1300,7 +1313,10 @@ def _run_interactive_subprocess_with_timeout_prompt(
             elapsed_seconds=int(time.time() - t0),
         )
         if action == "wait":
-            next_checkpoint_at = time.time() + checkpoint_interval
+            delay_seconds = max(1, int(wait_seconds or checkpoint_interval))
+            checkpoint_interval = delay_seconds
+            idle_limit = delay_seconds if idle_limit > 0 else 0
+            next_checkpoint_at = time.time() + delay_seconds
             last_activity_at = time.time()
             continue
 

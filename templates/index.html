@@ -1146,7 +1146,7 @@
                 </div>
             </div>
 
-            <div id="post-tool-reply-modal-overlay" class="modal-overlay" style="display: none; z-index: 9997;">
+            <div id="post-tool-reply-modal-overlay" class="modal-overlay" style="display: none; z-index: 10010;">
                 <div class="annotation-modal" style="max-width: 520px; width: 92%;">
                     <div class="modal-header">
                         <h3><i class="ph ph-arrow-counter-clockwise"></i> Final Reply Failed</h3>
@@ -1166,7 +1166,7 @@
                 </div>
             </div>
 
-            <div id="dangerous-tool-modal-overlay" class="modal-overlay" style="display: none; z-index: 9998;">
+            <div id="dangerous-tool-modal-overlay" class="modal-overlay" style="display: none; z-index: 10020;">
                 <div class="annotation-modal" style="max-width: 620px; width: 94%;">
                     <div class="modal-header">
                         <h3><i class="ph ph-warning-octagon"></i> Approve Dangerous Command</h3>
@@ -1187,7 +1187,7 @@
                 </div>
             </div>
 
-            <div id="tool-timeout-modal-overlay" class="modal-overlay" style="display: none; z-index: 9998;">
+            <div id="tool-timeout-modal-overlay" class="modal-overlay" style="display: none; z-index: 10030;">
                 <div class="annotation-modal" style="max-width: 620px; width: 94%;">
                     <div class="modal-header">
                         <h3><i class="ph ph-timer"></i> Tool Timeout Checkpoint</h3>
@@ -1198,18 +1198,29 @@
                         </p>
                         <pre id="tool-timeout-command" class="log-pre" style="margin: 0; max-height: 240px; overflow: auto;"></pre>
                         <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0; opacity: 0.9;">
-                            Wait keeps the process running until the next timeout checkpoint. Kill terminates it now and returns any partial output captured so far.
+                            Choose when the WebUI should ask again if the process is still running. Kill terminates it now and returns any partial output captured so far.
                         </p>
                     </div>
                     <div class="modal-footer">
+                        <div class="select-wrapper" style="min-width: 220px;">
+                            <i class="ph ph-hourglass-medium icon-left"></i>
+                            <select id="tool-timeout-wait-select" aria-label="Ask again in">
+                                <option value="" selected>Ask again in...</option>
+                                <option value="30">30 seconds</option>
+                                <option value="60">60 seconds</option>
+                                <option value="90">90 seconds</option>
+                                <option value="120">120 seconds</option>
+                                <option value="300">300 seconds</option>
+                            </select>
+                            <i class="ph ph-caret-down icon-right"></i>
+                        </div>
                         <button type="button" id="kill-tool-timeout-btn" class="btn btn-secondary">Kill Process</button>
-                        <button type="button" id="wait-tool-timeout-btn" class="btn btn-primary">Wait Longer</button>
                     </div>
                 </div>
             </div>
 
             <!-- Generic Progress/Loading Modal -->
-            <div id="progress-modal-overlay" class="modal-overlay" style="display: none; z-index: 9999;">
+            <div id="progress-modal-overlay" class="modal-overlay" style="display: none; z-index: 10000;">
                 <div class="annotation-modal" style="max-width: 400px; text-align: center; padding: 2.5rem;">
                     <div class="loading-spinner-large" id="progress-spinner">
                         <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="var(--accent-primary)"
