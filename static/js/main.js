@@ -213,6 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let _logInitialCleared = false;
     let _toolTimelineCounter = 0;
     let _queuedChatPrompts = [];
+    let _backgroundSessionCloseIntents = new Map();
     const AUTO_ANALYZE_OUTPUT_CHAR_LIMIT = 6000;
 
     function getChatScopeIndex() {
@@ -2022,29 +2023,44 @@ document.addEventListener('DOMContentLoaded', () => {
             confirmMessage = `Are you sure you want to close session ${sessionId}?`,
             appendOutput = true,
             markClosedAfter = true,
+            closeIntent = '',
         } = options;
 
         if (confirmBeforeStop && !confirm(confirmMessage)) {
             return { success: false, cancelled: true };
         }
 
-        const response = await fetch('/api/session/isess/close', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: sessionId })
-        });
-        const data = await response.json();
-        if (!data.success) {
-            throw new Error(data.error || 'Failed to close session.');
+        if (closeIntent) {
+            _backgroundSessionCloseIntents.set(sessionId, closeIntent);
         }
 
-        if (appendOutput && data.content) {
-            appendIsessLog(sessionId, data.content + '\n', 'log-tool-result');
+        try {
+            const response = await fetch('/api/session/isess/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                if (closeIntent) {
+                    _backgroundSessionCloseIntents.delete(sessionId);
+                }
+                throw new Error(data.error || 'Failed to close session.');
+            }
+
+            if (appendOutput && data.content) {
+                appendIsessLog(sessionId, data.content + '\n', 'log-tool-result');
+            }
+            if (markClosedAfter) {
+                markSessionClosed(sessionId);
+            }
+            return { success: true, data };
+        } catch (error) {
+            if (closeIntent) {
+                _backgroundSessionCloseIntents.delete(sessionId);
+            }
+            throw error;
         }
-        if (markClosedAfter) {
-            markSessionClosed(sessionId);
-        }
-        return { success: true, data };
     }
 
     async function stopBackgroundSession(sessionId, options = {}) {
@@ -2054,6 +2070,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 confirmMessage: options.confirmMessage || `Are you sure you want to stop background tool ${sessionId}?`,
                 appendOutput: options.appendOutput !== false,
                 markClosedAfter: options.markClosedAfter !== false,
+                closeIntent: options.closeIntent || 'manual-stop',
             });
         } catch (error) {
             showAlert(error.message, 'error');
@@ -2109,6 +2126,63 @@ document.addEventListener('DOMContentLoaded', () => {
         return lines.join('\n\n');
     }
 
+    function buildBackgroundSessionCompletionPrompt({ tool = '', argsSummary = '', sessionId = '', outputExcerpt = '' } = {}) {
+        const lines = [
+            `Background session ${sessionId}${tool ? ` from tool ${tool}` : ''} has finished.`,
+            'This output was collected outside the normal tool-call transcript. Review the excerpt below, summarize what completed, identify any findings or blockers, and decide the best next step. Continue the workflow from this result instead of ignoring it. Do not rerun the completed tool unless the user explicitly asks.',
+        ];
+        if (argsSummary) {
+            lines.push(`Original args summary: ${argsSummary}`);
+        }
+        if (outputExcerpt) {
+            lines.push(`Captured output excerpt:\n\n${outputExcerpt}`);
+        }
+        return lines.join('\n\n');
+    }
+
+    function queueCompletedBackgroundSession(sessionId) {
+        if (!_serviceRunning) {
+            return false;
+        }
+
+        const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
+        const panel = document.getElementById(`chat-tab-${sessionId}`);
+        if (!tab || !panel) {
+            return false;
+        }
+
+        const isWritable = tab.dataset.sessionWritable !== 'false';
+        const sessionKind = String(tab.dataset.sessionKind || '').toLowerCase();
+        if (isWritable || sessionKind !== 'background') {
+            return false;
+        }
+
+        if (panel.dataset.autoQueuedOnClose === 'true') {
+            return false;
+        }
+
+        const tool = String(tab.dataset.sessionTool || panel.dataset.sessionTool || '').trim();
+        const argsSummary = String(tab.dataset.sessionArgsSummary || panel.dataset.sessionArgsSummary || '').trim();
+        const outputExcerpt = collectSessionLogExcerpt(sessionId);
+        const prompt = buildBackgroundSessionCompletionPrompt({
+            tool,
+            argsSummary,
+            sessionId,
+            outputExcerpt,
+        });
+
+        panel.dataset.autoQueuedOnClose = 'true';
+        const queued = enqueueChatPrompt(prompt, {
+            label: '🧠 Background Result',
+            displayText: `Completed background tool ${tool || sessionId}`,
+            statusMessage: `Background tool ${tool || sessionId} finished. Queued for agent review.`,
+        });
+        if (!queued) {
+            delete panel.dataset.autoQueuedOnClose;
+        }
+        return queued;
+    }
+
     function enqueueChatPrompt(prompt, options = {}) {
         if (!_serviceRunning) {
             showAlert('The service must be running to queue an analysis prompt.', 'error');
@@ -2152,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const stopResult = await stopBackgroundSession(sessionId, {
             confirmBeforeStop: true,
             confirmMessage: `Stop background tool ${sessionId} and queue an analysis prompt?`,
+            closeIntent: 'manual-stop-analyze',
         });
         if (!stopResult.success) {
             return;
@@ -2191,6 +2266,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 confirmMessage: `Stop and remove background tool ${sessionId}?`,
                 appendOutput: false,
                 markClosedAfter: false,
+                closeIntent: 'manual-close',
             });
             if (stopResult.success) {
                 removeTerminalTab(sessionId);
@@ -3387,6 +3463,7 @@ document.addEventListener('DOMContentLoaded', () => {
         _serviceRunning = false;
         _chatBusy = false;
         _queuedChatPrompts = [];
+        _backgroundSessionCloseIntents = new Map();
         _currentRunId = null;
         _logInitialCleared = false; // Reset for next run
         updateStatus('success', 'Service Stopped');
@@ -3586,7 +3663,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             case 'isess_closed': {
                 const csid = (event.data && event.data.session_id) || event.session_id;
-                if (csid) markSessionClosed(csid);
+                if (csid) {
+                    const closeIntent = _backgroundSessionCloseIntents.get(csid);
+                    if (closeIntent) {
+                        _backgroundSessionCloseIntents.delete(csid);
+                    }
+                    markSessionClosed(csid);
+                    if (!closeIntent) {
+                        queueCompletedBackgroundSession(csid);
+                    }
+                }
                 break;
             }
             case 'watcher_analysis_note':
