@@ -742,12 +742,21 @@ def _prepare_msf_run_args(user_args: str) -> str:
         cmd.lower().startswith("set wfsdelay ") or cmd.lower().startswith("setg wfsdelay ")
         for cmd in commands
     )
+    has_autocheck = any(
+        cmd.lower().startswith("set autocheck ") or cmd.lower().startswith("setg autocheck ")
+        for cmd in commands
+    )
 
     normalized = []
     inserted_wfsdelay = False
+    inserted_autocheck = False
     for command in commands:
         lower = command.lower()
         is_run_command = lower == "exploit" or lower.startswith("exploit ") or lower == "run" or lower.startswith("run ")
+
+        if is_exploit_workflow and is_run_command and not has_autocheck and not inserted_autocheck:
+            normalized.append("set AutoCheck false")
+            inserted_autocheck = True
 
         if is_exploit_workflow and is_run_command and not has_wfsdelay and not inserted_wfsdelay:
             normalized.append(f"set WfsDelay {_MSF_RUN_DEFAULT_WFS_DELAY}")

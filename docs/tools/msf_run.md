@@ -18,6 +18,7 @@ Tool name: `msf_run`
 - For Meterpreter or shell sessions, start with `help` in the current context to list valid commands.
 - Do not assume Linux shell commands are valid in Meterpreter without entering a shell.
 - Prefer explicit module setup (`set RHOSTS`, `set RPORT`, `set LHOST/LPORT`) before `run` or `exploit`.
+- For exploit modules, `msf_run` now defaults to `set AutoCheck false` before the first `run`/`exploit` unless you explicitly set `AutoCheck` yourself.
 - If you need to confirm a payload or option change inside batch mode, add `show options` after the relevant `set` commands.
 
 ## Batch mode caveats
@@ -25,6 +26,7 @@ Tool name: `msf_run`
 - `msf_run` executes `msfconsole -q -x`, so Metasploit may print startup or module-load output before later commands in the sequence run.
 - An early line such as `Using configured payload cmd/unix/reverse_perl` can reflect the module's default payload at load time, not the final payload after a later `set PAYLOAD ...` command.
 - Do not treat that first payload banner alone as proof that a later payload override failed. Prefer later console output, `show options`, or the resulting session type to confirm the effective payload.
+- If you do want Metasploit's module check behavior, explicitly set it (for example, `set AutoCheck true`) in your command chain; explicit settings are preserved.
 - `msf_run` is intended for deterministic batch execution, not for keeping an idle `msf >` console attached. If you specifically want a live Metasploit console tab, launch `msfconsole` through `shell_dangerous` instead.
 
 ## Session behavior

@@ -119,6 +119,32 @@ class TestManualRecreationInstructions:
         assert "python3 -m http.server 8080" in message
 
 
+class TestMsfRunArgsNormalization:
+    def test_exploit_workflow_defaults_autocheck_false(self):
+        from mcp_kali import _prepare_msf_run_args
+
+        prepared = _prepare_msf_run_args("use exploit/linux/http/webmin_backdoor; set RHOSTS 10.0.0.1; exploit")
+
+        assert "set AutoCheck false" in prepared
+        assert prepared.count("set AutoCheck false") == 1
+        assert "exploit -z" in prepared
+
+    def test_exploit_workflow_respects_explicit_autocheck_setting(self):
+        from mcp_kali import _prepare_msf_run_args
+
+        prepared = _prepare_msf_run_args("use exploit/linux/http/webmin_backdoor; set AutoCheck true; exploit")
+
+        assert "set AutoCheck false" not in prepared
+        assert "set AutoCheck true" in prepared
+
+    def test_auxiliary_workflow_does_not_inject_autocheck(self):
+        from mcp_kali import _prepare_msf_run_args
+
+        prepared = _prepare_msf_run_args("use auxiliary/scanner/http/http_version; run")
+
+        assert "set AutoCheck false" not in prepared
+
+
 class TestInteractiveSessionToolResult:
     def test_interactive_session_list_returns_status_lines(self):
         from mcp_kali import _interactive_session_tool_result
