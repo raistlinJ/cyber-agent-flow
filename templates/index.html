@@ -1188,7 +1188,7 @@
             </div>
 
             <div id="tool-timeout-modal-overlay" class="modal-overlay" style="display: none; z-index: 10030;">
-                <div class="annotation-modal" style="max-width: 620px; width: 94%;">
+                <div class="annotation-modal tool-timeout-modal" style="max-width: 620px; width: 94%;">
                     <div class="modal-header">
                         <h3><i class="ph ph-timer"></i> Tool Timeout Checkpoint</h3>
                     </div>
@@ -1201,8 +1201,8 @@
                             Choose when the WebUI should ask again if the process is still running. Kill terminates it now and returns any partial output captured so far.
                         </p>
                     </div>
-                    <div class="modal-footer">
-                        <div class="select-wrapper" style="min-width: 220px;">
+                    <div class="modal-footer tool-timeout-footer">
+                        <div class="select-wrapper tool-timeout-select">
                             <i class="ph ph-hourglass-medium icon-left"></i>
                             <select id="tool-timeout-wait-select" aria-label="Ask again in">
                                 <option value="" selected>Ask again in...</option>
@@ -1214,8 +1214,8 @@
                             </select>
                             <i class="ph ph-caret-down icon-right"></i>
                         </div>
-                        <button type="button" id="background-tool-timeout-btn" class="btn btn-secondary">Background as Session</button>
-                        <button type="button" id="kill-tool-timeout-btn" class="btn btn-secondary">Kill Process</button>
+                        <button type="button" id="background-tool-timeout-btn" class="btn btn-secondary btn-compact tool-timeout-btn">Background as Session</button>
+                        <button type="button" id="kill-tool-timeout-btn" class="btn btn-danger btn-compact tool-timeout-btn">Kill Process</button>
                     </div>
                 </div>
             </div>

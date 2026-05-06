@@ -1916,9 +1916,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const sessionActionsHtml = !writable
             ? `
-            <div class="isess-session-actions" style="display:flex; gap:0.5rem; margin:0.75rem 0 0.25rem; flex-wrap:wrap;">
-                <button type="button" class="btn btn-secondary isess-stop-btn" data-session-id="${escapeHtml(sessionId)}">Stop Tool</button>
-                <button type="button" class="btn btn-primary isess-stop-analyze-btn" data-session-id="${escapeHtml(sessionId)}">Stop And Analyze</button>
+            <div class="isess-session-actions">
+                <button type="button" class="btn btn-danger btn-compact isess-action-btn isess-stop-btn" data-session-id="${escapeHtml(sessionId)}">Stop</button>
+                <button type="button" class="btn btn-warning btn-compact isess-action-btn isess-stop-analyze-btn" data-session-id="${escapeHtml(sessionId)}">Stop &amp; Analyze</button>
             </div>`
             : '';
 
