@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agentflow
+    container_name: cyber-agentflow
     ports:
       - "5055:5055"
     volumes:

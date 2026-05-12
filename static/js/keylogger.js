@@ -1,5 +1,5 @@
 /**
- * Browser Keylogger for AgentFlow
+ * Browser Keylogger for CyberAgentFlow
  * Captures all keystrokes within the WebUI for interaction pattern analysis.
  * 
  * Features:

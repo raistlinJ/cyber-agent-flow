@@ -1,5 +1,5 @@
 /**
- * watcher.js — Tool Suggestion + Analysis tab for agentflow
+ * watcher.js — Tool Suggestion + Analysis tab for cyber-agentflow
  *
  * Two analysis modes:
  *   📡 Continuous — delta-polls every N seconds, surfaces suggestions as they come

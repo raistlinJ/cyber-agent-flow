@@ -1,5 +1,5 @@
 """
-Tests for the Keylogger feature in AgentFlow
+Tests for the Keylogger feature in CyberAgentFlow
 
 Run with: pytest test_keylogger.py -v
 """

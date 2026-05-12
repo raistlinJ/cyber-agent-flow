@@ -1,5 +1,5 @@
 """
-Session Logger for AgentFlow
+Session Logger for CyberAgentFlow
 Provides structured, timestamped logging of MCP sessions including
 tool calls, arguments, outputs, and artifacts.
 """

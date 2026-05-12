@@ -1,5 +1,5 @@
 """
-tool_watcher.py — Background analysis agent for agentflow.
+tool_watcher.py — Background analysis agent for cyber-agentflow.
 
 Two operating modes (set in session_meta['watch_mode']):
 

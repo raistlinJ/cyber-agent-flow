@@ -1,5 +1,5 @@
 """
-System Keylogger Daemon for AgentFlow
+System Keylogger Daemon for CyberAgentFlow
 Captures system-wide keystrokes for the current user and integrates with session logging.
 
 Features:

@@ -1,6 +1,6 @@
-# AgentFlow
+# CyberAgentFlow
 
-A privacy-preserving, fully localized agentic penetration testing platform. AgentFlow bridges the gap between Large Language Models (LLMs) and native cybersecurity toolchains by utilizing the Model Context Protocol (MCP).
+A privacy-preserving, fully localized agentic penetration testing platform. CyberAgentFlow bridges the gap between Large Language Models (LLMs) and native cybersecurity toolchains by utilizing the Model Context Protocol (MCP).
 
 Unlike cloud-dependent conversational hacking tools, this platform ensures that your proprietary network layouts, vulnerability telemetry, and zero-day discoveries never leave your perimeter by orchestrating everything through a local LLM instance (like Ollama).
 
@@ -55,8 +55,8 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/raistlinJ/agentflow.git
-    cd agentflow
+    git clone https://github.com/raistlinJ/cyber-agentflow.git
+    cd cyber-agentflow
     ```
 
 2.  **Install Dependencies**

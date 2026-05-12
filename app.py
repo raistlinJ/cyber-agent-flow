@@ -2454,7 +2454,7 @@ def download_session_archive(run_id):
     return send_file(
         memory_file,
         as_attachment=True,
-        download_name=f"agentflow_run_{run_id}.zip",
+        download_name=f"cyber-agentflow_run_{run_id}.zip",
         mimetype='application/zip'
     )
 
