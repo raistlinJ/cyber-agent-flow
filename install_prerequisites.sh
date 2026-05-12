@@ -1,6 +1,6 @@
 #!/bin/bash
 # install_prerequisites.sh
-# Installs required system packages for Kali MCP WebUI keylogger support
+# Installs required system packages for AgentFlow keylogger support
 # Supports Kali Linux 2025.x and 2026.x
 
 set -e

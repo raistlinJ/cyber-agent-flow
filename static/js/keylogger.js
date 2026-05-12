@@ -1,5 +1,5 @@
 /**
- * Browser Keylogger for Kali MCP WebUI
+ * Browser Keylogger for AgentFlow
  * Captures all keystrokes within the WebUI for interaction pattern analysis.
  * 
  * Features:

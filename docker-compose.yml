@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kali-mcp-webui
+    container_name: agentflow
     ports:
       - "5055:5055"
     volumes:

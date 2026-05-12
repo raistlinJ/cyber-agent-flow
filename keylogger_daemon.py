@@ -1,5 +1,5 @@
 """
-System Keylogger Daemon for Kali MCP WebUI
+System Keylogger Daemon for AgentFlow
 Captures system-wide keystrokes for the current user and integrates with session logging.
 
 Features:

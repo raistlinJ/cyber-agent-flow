@@ -1,5 +1,5 @@
 """
-Tests for the Keylogger feature in Kali MCP WebUI
+Tests for the Keylogger feature in AgentFlow
 
 Run with: pytest test_keylogger.py -v
 """

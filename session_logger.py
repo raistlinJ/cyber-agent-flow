@@ -1,5 +1,5 @@
 """
-Session Logger for Kali MCP WebUI
+Session Logger for AgentFlow
 Provides structured, timestamped logging of MCP sessions including
 tool calls, arguments, outputs, and artifacts.
 """
