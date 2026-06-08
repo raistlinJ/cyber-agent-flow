@@ -1,0 +1,22 @@
+{
+  "provider": "ollama_direct",
+  "url": "http://localhost:11434",
+  "model": "llama3",
+  "api_key": "",
+  "api_key_env": "MCP_API_KEY",
+  "ssl_verify": true,
+  "server_command": "venv/bin/python mcp_kali.py",
+  "tools_config": "kali_tools.json",
+  "context_window": 8192,
+  "max_turns": 20,
+  "network_policy": {
+    "allow": ["*"],
+    "disallow": []
+  },
+  "scope": "medium",
+  "scope_enabled": true,
+  "urgency": "balanced",
+  "urgency_enabled": true,
+  "tool_output_chars": 6000,
+  "verbose": false
+}

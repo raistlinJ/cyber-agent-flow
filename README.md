@@ -79,12 +79,6 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 
 ## Running the Application
 
-1.  **Start the Web Server**
-    From the project root directory, run:
-    ```bash
-    ./start_local.sh
-    ```
-    Manual alternative:
     ```bash
     python3 app.py
     ```
@@ -102,12 +96,98 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
     *   Click **Start Service**. The dot indicator should turn green.
 
 4.  **Begin Testing**
-    *   Switch to the **Live Chat** tab.
-    *   Open **Prompt Controls** above the prompt box.
-    *   Use the per-control **On/Off** toggles to decide whether **Scope** and **Urgency** should apply to this prompt.
     *   Set the **Scope** and **Urgency** sliders to control how broadly and how aggressively the agent should approach the current request.
     *   Issue a natural language command (e.g., *"Run a fast nmap scan against scanme.nmap.org"*).
     *   Watch as the agent dynamically executes the tool in the foreground, shows the active runtime inline on the tool-call row, streams bounded live output, and returns an analysis.
+
+## Terminal CLI
+
+CyberAgentFlow can also run directly from your terminal. The CLI uses the same `MCPSession` engine, `mcp_kali.py` server, `kali_tools.json` tool configuration, and `runs/` transcript format as the WebUI.
+
+Run an interactive terminal chat session:
+
+```
+
+For config-file based sessions, copy the example profile once:
+
+```bash
+
+Then edit `configs/cli.json` and launch without repeating the same flags:
+
+```bash
+./start_cli.sh chat
+
+You can also keep multiple named profiles:
+
+```
+
+Run a single prompt and exit:
+
+```bash
+./start_cli.sh run --model llama3 "Run a fast nmap scan against scanme.nmap.org"
+```
+
+List saved run directories:
+
+```bash
+./start_cli.sh list-runs
+```
+
+The launcher reuses the persistent `venv/` created by `start_local.sh`. If dependencies have not been installed yet, run:
+
+```bash
+```
+In interactive chat, pressing **Tab** after typing `/` enables command autocomplete. It also completes `/set` keys and common values, known interactive session IDs for `/enter`, `/read`, `/write`, `/close`, and config paths for `/save-config`.
+
+Common CLI options:
+
+*   `--config configs/cli.json` loads a JSON session profile. If `configs/cli.json` exists, it is loaded automatically.
+*   `--url http://localhost:11434` sets the Ollama or provider base URL.
+*   `--provider ollama_direct|litellm|openai|claude` selects the LLM backend adapter.
+*   `--context-window 8192` and `--max-turns 20` match the WebUI runtime controls.
+*   `--scope medium` and `--urgency balanced` apply the same per-prompt controls used by Live Chat. Use `--no-scope` or `--no-urgency` to disable them.
+*   `--allow` and `--disallow` define the target access policy, for example `--allow 192.168.56.0/24 --disallow 192.168.56.10`.
+*   `--api-key` provides authenticated-provider credentials, but `MCP_API_KEY=... ./start_cli.sh ...` is safer for shell history.
+
+CLI flags override values from the config file, so you can keep a stable profile and temporarily change one setting:
+
+```bash
+./start_cli.sh chat --config configs/home-lab.json --urgency fast
+```
+
+Supported config keys:
+
+```json
+{
+    "provider": "ollama_direct",
+    "url": "http://localhost:11434",
+    "model": "llama3",
+    "api_key_env": "MCP_API_KEY",
+    "ssl_verify": true,
+    "server_command": "venv/bin/python mcp_kali.py",
+    "tools_config": "kali_tools.json",
+    "context_window": 8192,
+    "max_turns": 20,
+    "network_policy": {
+        "allow": ["192.168.56.0/24"],
+        "disallow": ["192.168.56.1"]
+    },
+    "scope": "medium",
+    "scope_enabled": true,
+    "urgency": "balanced",
+    "urgency_enabled": true,
+    "tool_output_chars": 6000,
+    "verbose": false
+}
+```
+
+Use `api_key_env` instead of storing API keys in config files. The CLI reads the named environment variable at startup.
+
+Inside `chat` mode, use `/help` to see terminal commands. The REPL supports `/enter SESSION_ID`, `/back`, `/where`, `/config`, `/set KEY VALUE`, `/save-config [PATH]`, `/tools`, `/scope`, `/urgency`, `/sessions`, `/read [SESSION_ID]`, `/write ...`, and `/close [SESSION_ID]` for preserved interactive sessions.
+
+`/set` lets you change settings from the running CLI (for example scope, urgency, verbose logging, and output truncation). Some settings are applied immediately, while connection-level settings (model, provider, context window, network policy, etc.) are stored and marked as requiring a restart.
+
+`/save-config` writes the current settings state to a JSON profile, similar to CLI tools that persist in-session configuration changes.
 
 ### Live Chat Behavior
 
