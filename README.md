@@ -77,6 +77,11 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
     *   Start the Ollama service on your machine, or point the UI at an authenticated Ollama-compatible proxy.
     *   Ensure you have downloaded your preferred model: `ollama pull llama3`
 
+4.  **Configure the Application** *(optional)*
+    *   Copy the example config file: `cp configs/cli.example.json configs/cli.json`
+    *   Edit `configs/cli.json` to set your provider, model, network policy, and other settings
+    *   See [Configuration Guide](docs/configuration.md) for full details
+
 ## Running the Application
 
     ```bash
@@ -104,18 +109,38 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 
 CyberAgentFlow can also run directly from your terminal. The CLI uses the same `MCPSession` engine, `mcp_kali.py` server, `kali_tools.json` tool configuration, and `runs/` transcript format as the WebUI.
 
-Run an interactive terminal chat session:
+### Basic Usage
 
-```
-
-For config-file based sessions, copy the example profile once:
-
-```bash
-
-Then edit `configs/cli.json` and launch without repeating the same flags:
-
+**Interactive chat (auto-loads `configs/cli.json` if present):**
 ```bash
 ./start_cli.sh chat
+```
+
+**Run with custom config:**
+```bash
+./start_cli.sh chat --config configs/my-profile.json
+```
+
+**Single prompt and exit:**
+```bash
+./start_cli.sh run --model llama3 "Run a fast nmap scan against scanme.nmap.org"
+```
+
+**List saved session runs:**
+```bash
+./start_cli.sh list-runs
+```
+
+### Configuration
+
+The CLI automatically loads `configs/cli.json` if it exists. You can specify a different config file with `--config`:
+```bash
+./start_cli.sh chat --config configs/prod.json
+```
+
+See [Configuration Guide](docs/configuration.md) for all available options.
+
+For config-file based sessions, copy the example profile once:
 
 You can also keep multiple named profiles:
 

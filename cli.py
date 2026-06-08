@@ -658,7 +658,7 @@ class TerminalEventHandler:
 
 
 def _add_session_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", help="Path to a JSON session config file. CLI flags override config values.")
+    parser.add_argument("--config", help="Path to a JSON session config file (default: configs/cli.json). CLI flags override config values. See docs/configuration.md for details.")
     parser.add_argument("--provider", help="LLM provider: ollama_direct, litellm, openai, or claude.")
     parser.add_argument("--url", help="LLM provider base URL.")
     parser.add_argument("--model", help="Model name. Can also be set with MCP_MODEL or in config.")
@@ -679,7 +679,7 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _create_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Terminal interface for CyberAgentFlow.")
+    parser = argparse.ArgumentParser(description="Terminal interface for CyberAgentFlow. Use --config to load settings from a JSON file (default: configs/cli.json).")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     chat_parser = subparsers.add_parser("chat", help="Start an interactive terminal chat session.")
