@@ -272,9 +272,6 @@ This script will:
 
 Without `xdotool`, the system keylogger will still capture keystrokes but won't be able to detect which application/window was active.
 
-### Docker Note
-
-When the WebUI is running inside Docker, the system-wide keylogger is automatically disabled. Browser keystroke logging still works, but `system_log.jsonl` will not be produced from containerized runs.
 
 ### Data Storage
 
