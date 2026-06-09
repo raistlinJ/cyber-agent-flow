@@ -1352,12 +1352,16 @@ async def _run_prompt(args: argparse.Namespace, event_handler: TerminalEventHand
 
 async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = None, session: MCPSession = None) -> int:
     known_session_ids: set[str] = set()
-    event_handler = TerminalEventHandler(
-        tool_output_chars=args.tool_output_chars,
-        verbose=args.verbose,
-        known_session_ids=known_session_ids,
-    )
-    session: MCPSession | None = None
+    if event_handler is None:
+        event_handler = TerminalEventHandler(
+            tool_output_chars=args.tool_output_chars,
+            verbose=args.verbose,
+            known_session_ids=known_session_ids,
+        )
+    else:
+        event_handler.known_session_ids = known_session_ids
+    _owns_session = session is None
+    session_ref: MCPSession | None = session
     current_scope = _effective_scope(args)
     current_urgency = _effective_urgency(args)
     active_session_id: str | None = None
@@ -1387,7 +1391,9 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
     next_session_refresh_at = 0.0
     session_refresh_interval_seconds = 2.5
     try:
-        session = await _start_session(args, event_handler)
+        if _owns_session:
+            session_ref = await _start_session(args, event_handler)
+        session = session_ref
         _install_slash_completion(get_session_ids=lambda: sorted(known_session_ids))
         event_handler._print("Type /help for CLI commands, /exit to stop.")
         while True:
@@ -1456,7 +1462,7 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
         event_handler._print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
-        if session:
+        if _owns_session and session:
             await session.stop()
 
 
