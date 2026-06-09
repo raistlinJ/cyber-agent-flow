@@ -2,4 +2,8 @@ Flask==3.0.2
 requests==2.31.0
 mcp
 ollama
-pynput>=1.7.6asyncssh
+pynput>=1.7.6
+asyncssh
+psutil
+pytest
+pytest-asyncio
