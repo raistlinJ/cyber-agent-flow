@@ -1258,7 +1258,7 @@ def session_start():
     tools_config = data.get('tools_config')
     context_window = int(data.get('context_window', 8192))
     max_turns = int(data.get('max_turns', 20))
-    default_wait_seconds = int(data.get('default_wait_seconds', 60))
+    tool_timeout = int(data.get('tool_timeout', 120))
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
     network_capture_enabled = bool(data.get('network_capture_enabled'))
@@ -1270,13 +1270,14 @@ def session_start():
         enabled_tool_guides = None
 
     app.logger.info(
-        'Session start requested provider=%s model=%s url=%s ssl_verify=%s context_window=%s max_turns=%s',
+        'Session start requested provider=%s model=%s url=%s ssl_verify=%s context_window=%s max_turns=%s tool_timeout=%s',
         llm_provider,
         model,
         _redact_sensitive_text(ollama_url),
         ssl_verify,
         context_window,
         max_turns,
+        tool_timeout,
     )
     app.logger.debug(
         'Session start details server_command=%s tools_enabled=%s network_policy=%s auth=%s keylogger_enabled=%s network_capture_enabled=%s syscall_logger_enabled=%s',
@@ -1291,6 +1292,9 @@ def session_start():
 
     if max_turns < 1 or max_turns > 100:
         return jsonify({'success': False, 'error': 'max_turns must be between 1 and 100'}), 400
+
+    if tool_timeout < 1 or tool_timeout > 3600:
+        return jsonify({'success': False, 'error': 'tool_timeout must be between 1 and 3600'}), 400
 
     if not model:
         return jsonify({'success': False, 'error': 'No model selected'}), 400
@@ -1354,7 +1358,7 @@ def session_start():
             event_callback=_event_callback,
             context_window=context_window,
             max_turns=max_turns,
-            default_wait_seconds=default_wait_seconds,
+            tool_timeout=tool_timeout,
             network_policy=network_policy,
             enabled_tool_guides=enabled_tool_guides,
         )

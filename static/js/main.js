@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const analysisSslVerifyToggle = document.getElementById('analysis-ssl-verify-toggle');
     const analysisApiKeyInput = document.getElementById('analysis-api-key');
     const maxTurnsInput = document.getElementById('max-turns');
+    const toolTimeoutInput = document.getElementById('tool-timeout');
     const policyTargetsInput = document.getElementById('policy-targets');
     const policyEntryHint = document.getElementById('policy-entry-hint');
     const policyEntryTypeInputs = document.querySelectorAll('input[name="policy-entry-type"]');
@@ -699,7 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 modelLabel: selectedModelOption?.textContent || '',
                 contextWindow: document.getElementById('context-window')?.value || '8192',
                 maxTurns: maxTurnsInput?.value || '20',
-                defaultWaitSeconds: document.getElementById('default-wait-seconds')?.value || '60',
+                toolTimeout: toolTimeoutInput?.value || '120',
                 kaliCommandType: kaliCommandType?.value || 'python',
                 policyEntryType: getSelectedPolicyEntryType(),
                 policyDraft: normalizePolicy(_policyDraft),
@@ -759,6 +760,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (maxTurnsInput && payload.maxTurns) {
                 maxTurnsInput.value = String(payload.maxTurns);
+            }
+            if (toolTimeoutInput && payload.toolTimeout) {
+                toolTimeoutInput.value = String(payload.toolTimeout);
             }
 
             if (kaliCommandType && payload.kaliCommandType) {
@@ -1068,7 +1072,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchBtn.disabled = false;
     }
 
-    const runtimeSettingElements = [providerSelect, ollamaUrlInput, sslVerifyToggle, modelSelect, maxTurnsInput, kaliCommandType, toolsJsonArea, document.getElementById('context-window')];
+    const runtimeSettingElements = [providerSelect, ollamaUrlInput, sslVerifyToggle, modelSelect, maxTurnsInput, toolTimeoutInput, kaliCommandType, toolsJsonArea, document.getElementById('context-window')];
     runtimeSettingElements.forEach(el => {
         if (!el) {
             return;
@@ -2816,6 +2820,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (!Number.isInteger(toolTimeout) || toolTimeout < 1 || toolTimeout > 3600) {
+            showAlert('Default tool timeout must be between 1 and 3600 seconds.', 'error');
+            return;
+        }
+
         let command = '';
         if (cmdType === 'python') {
             command = 'python3 mcp_kali.py';
@@ -2849,11 +2858,10 @@ document.addEventListener('DOMContentLoaded', () => {
         appendLog('<i class="ph ph-spinner-gap spin"></i> Launching MCP service…', 'log-status');
 
         try {
-            const defaultWaitSeconds = parseInt(document.getElementById('default-wait-seconds')?.value || '60', 10);
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, default_wait_seconds: defaultWaitSeconds, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 

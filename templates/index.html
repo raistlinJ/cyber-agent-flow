@@ -222,22 +222,24 @@
                                         limit</span>
                                 </div>
 
-                                <div class="input-group">
-                                    <label for="max-turns">Max Tool/Model Turns Per Prompt</label>
-                                    <div class="input-with-icon">
-                                        <i class="ph ph-repeat"></i>
-                                        <input type="number" id="max-turns" min="1" max="100" step="1" value="20">
+                                <div style="display: flex; gap: 1rem; align-items: flex-start;">
+                                    <div class="input-group" style="flex: 1;">
+                                        <label for="max-turns">Max Tool/Model Turns Per Prompt</label>
+                                        <div class="input-with-icon">
+                                            <i class="ph ph-repeat"></i>
+                                            <input type="number" id="max-turns" min="1" max="100" step="1" value="20">
+                                        </div>
+                                        <span class="input-hint">Limits the LLM → tool → LLM loop for a single prompt before the turn is stopped.</span>
                                     </div>
-                                    <span class="input-hint">Limits the LLM → tool → LLM loop for a single prompt before the turn is stopped.</span>
-                                </div>
 
-                                <div class="input-group">
-                                    <label for="default-wait-seconds">Default Wait Time (seconds)</label>
-                                    <div class="input-with-icon">
-                                        <i class="ph ph-clock"></i>
-                                        <input type="number" id="default-wait-seconds" min="30" max="300" step="30" value="60">
+                                    <div class="input-group" style="flex: 1;">
+                                        <label for="tool-timeout">Default Tool Timeout (seconds)</label>
+                                        <div class="input-with-icon">
+                                            <i class="ph ph-hourglass"></i>
+                                            <input type="number" id="tool-timeout" min="1" max="3600" step="1" value="120">
+                                        </div>
+                                        <span class="input-hint">Default time before asking to keep waiting when a tool is running.</span>
                                     </div>
-                                    <span class="input-hint">Default time in seconds to wait before asking again when a tool is idle or times out.</span>
                                 </div>
                             </div>
                         </div>

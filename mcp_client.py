@@ -1371,7 +1371,7 @@ class MCPSession:
         event_callback=None,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         max_turns: int = DEFAULT_MAX_TURNS,
-        default_wait_seconds: int = 60,
+        tool_timeout: int = 120,
         network_policy: dict | None = None,
         enabled_tool_guides: list[str] | None = None,
     ):
@@ -1383,7 +1383,7 @@ class MCPSession:
         self.server_command = server_command
         self.context_window = context_window
         self.max_turns = max_turns
-        self.default_wait_seconds = default_wait_seconds
+        self.tool_timeout = tool_timeout
         self.event_callback = event_callback
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
@@ -2049,6 +2049,7 @@ class MCPSession:
                 "llm_auth_enabled": bool(self.api_key),
                 "context_window": self.context_window,
                 "max_turns": self.max_turns,
+                "tool_timeout": self.tool_timeout,
                 "network_policy": self.network_policy,
             },
             event_callback=self.event_callback,
@@ -2068,6 +2069,7 @@ class MCPSession:
                 "MCP_CURRENT_RUN_ID": self.run_id,
                 "MCP_MODEL": self.model,
                 "MCP_OLLAMA_URL": self.ollama_url,
+                "MCP_TOOL_TIMEOUT": str(self.tool_timeout),
                 "MCP_NETWORK_POLICY": json.dumps(self.network_policy),
             },
         )

@@ -103,16 +103,16 @@ BUILTIN_SESSION_DEFAULTS: dict[str, Any] = {
     "api_key": DEFAULT_API_KEY,
     "ssl_verify": True,
     "server_command": DEFAULT_SERVER_COMMAND,
-    "tools_config": None,
+    "tools_config": "kali_tools.json",
     "context_window": 8192,
     "max_turns": 20,
-    "default_wait_seconds": 60,
+    "tool_timeout": 120,
     "network_policy": {"allow": ["*"], "disallow": []},
     "scope": "medium",
     "scope_enabled": True,
     "urgency": "balanced",
     "urgency_enabled": True,
-    "tool_output_chars": 6000,
+    "tool_output_chars": 4000,
     "verbose": False,
     "prompt": None,
 }
@@ -226,7 +226,7 @@ def _load_session_config(path_text: str | None) -> dict[str, Any]:
 
 
 def _apply_config_value(resolved: dict[str, Any], key: str, value: Any) -> None:
-    if key in {"context_window", "max_turns", "tool_output_chars"}:
+    if key in {"context_window", "max_turns", "tool_timeout", "tool_output_chars"}:
         resolved[key] = int(value)
     elif key in {"ssl_verify", "scope_enabled", "urgency_enabled", "verbose"}:
         resolved[key] = bool(value)
@@ -257,6 +257,7 @@ def _resolve_session_args(args: argparse.Namespace) -> argparse.Namespace:
         "tools_config",
         "context_window",
         "max_turns",
+        "tool_timeout",
         "scope",
         "urgency",
         "tool_output_chars",
@@ -300,6 +301,7 @@ def _resolve_session_args(args: argparse.Namespace) -> argparse.Namespace:
     merged.tools_config = resolved["tools_config"]
     merged.context_window = resolved["context_window"]
     merged.max_turns = resolved["max_turns"]
+    merged.tool_timeout = resolved["tool_timeout"]
     merged.network_policy = resolved["network_policy"]
     merged.scope = resolved["scope"]
     merged.no_scope = not bool(resolved["scope_enabled"])
@@ -693,6 +695,7 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tools-config", help="Path to a kali_tools.json-compatible file. Defaults to ./kali_tools.json.")
     parser.add_argument("--context-window", type=int, help="LLM context window budget in tokens.")
     parser.add_argument("--max-turns", type=int, help="Maximum LLM/tool iterations per prompt.")
+    parser.add_argument("--tool-timeout", type=int, help="Default timeout for tool executions in seconds.")
     parser.add_argument("--allow", action="append", help="Allowed target entry. Repeat or comma-separate values. Default: *")
     parser.add_argument("--disallow", action="append", help="Disallowed target entry. Repeat or comma-separate values.")
     parser.add_argument("--scope", choices=SCOPE_CHOICES, help="Per-prompt scope control.")
@@ -729,6 +732,8 @@ def _validate_session_args(args: argparse.Namespace) -> None:
         raise ValueError("--max-turns must be between 1 and 100.")
     if args.context_window < 1024:
         raise ValueError("--context-window must be at least 1024.")
+    if args.tool_timeout < 1 or args.tool_timeout > 3600:
+        raise ValueError("--tool-timeout must be between 1 and 3600.")
 
 
 def _effective_scope(args: argparse.Namespace) -> str | None:
@@ -755,7 +760,7 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
         event_callback=event_handler,
         context_window=args.context_window,
         max_turns=args.max_turns,
-        default_wait_seconds=args.default_wait_seconds,
+        tool_timeout=args.tool_timeout,
         network_policy=args.network_policy,
         enabled_tool_guides=enabled_tool_guides,
     )
@@ -801,6 +806,7 @@ async def _chat(args: argparse.Namespace) -> int:
         "tools_config": args.tools_config,
         "context_window": args.context_window,
         "max_turns": args.max_turns,
+        "tool_timeout": args.tool_timeout,
         "network_policy": {
             "allow": list((args.network_policy or {}).get("allow", ["*"])),
             "disallow": list((args.network_policy or {}).get("disallow", [])),
@@ -1003,7 +1009,7 @@ async def _handle_repl_command(
 
         if key in {
             "provider", "url", "model", "api_key", "ssl_verify",
-            "server_command", "tools_config", "context_window", "max_turns",
+            "server_command", "tools_config", "context_window", "max_turns", "tool_timeout",
             "allow", "disallow",
         }:
             restart_required_message = "Saved in config state. Restart the chat session for this to take effect."
@@ -1013,7 +1019,7 @@ async def _handle_repl_command(
                 except ValueError as exc:
                     print(str(exc))
                     return True, current_scope, current_urgency, active_session_id
-            elif key in {"context_window", "max_turns"}:
+            elif key in {"context_window", "max_turns", "tool_timeout"}:
                 try:
                     session_config[key] = int(raw_value)
                 except ValueError:
