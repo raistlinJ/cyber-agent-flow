@@ -665,7 +665,10 @@ class TerminalEventHandler:
     _SEPARATOR_CHAR = "─"
     _RESERVED_LINES = 3  # status + separator + input line
 
-    def __init__(self, *, tool_output_chars: int = 6000, verbose: bool = False, known_session_ids: set[str] | None = None):
+    def __init__(self, *, tool_output_chars: int = 6000, verbose: bool = False, known_session_ids: set[str] | None = None, stream_out=None, stream_in=None):
+        import sys
+        self.stream_out = stream_out or sys.stdout
+        self.stream_in = stream_in or sys.stdin
         self.session: MCPSession | None = None
         self.tool_output_chars = tool_output_chars
         self.verbose = verbose
@@ -679,6 +682,9 @@ class TerminalEventHandler:
         # Character-by-character input buffer (used during task execution)
         self._input_buffer = _InputBuffer()
         self._old_term_settings: list | None = None
+
+    def _is_tty(self) -> bool:
+        return hasattr(self.stream_in, "isatty") and self.stream_in.isatty() and hasattr(self.stream_in, "fileno")
 
     # ── Persistent bottom-bar management ──────────────────────────────
 
@@ -696,18 +702,18 @@ class TerminalEventHandler:
         h, w = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
         # Set scroll region to top portion
-        sys.stdout.write(f"\033[1;{scroll_end}r")
+        self.stream_out.write(f"\033[1;{scroll_end}r")
         # Draw the 3 fixed bottom lines
         self._draw_bottom_area()
         # Position cursor at the prompt line for user input
-        sys.stdout.write(f"\033[{h};1H")
-        sys.stdout.write(self.prompt_prefix)
-        sys.stdout.flush()
+        self.stream_out.write(f"\033[{h};1H")
+        self.stream_out.write(self.prompt_prefix)
+        self.stream_out.flush()
         # Switch to cbreak mode so we get characters one-at-a-time with no echo
-        if _HAS_TERMIOS and sys.stdin.isatty():
+        if _HAS_TERMIOS and self._is_tty():
             try:
-                self._old_term_settings = termios.tcgetattr(sys.stdin)
-                tty.setcbreak(sys.stdin.fileno())
+                self._old_term_settings = termios.tcgetattr(self.stream_in)
+                tty.setcbreak(self.stream_in.fileno())
             except Exception:
                 self._old_term_settings = None
         self._ensure_timer_started()
@@ -721,17 +727,17 @@ class TerminalEventHandler:
         # Use TCSAFLUSH to discard any pending cbreak input.
         if self._old_term_settings is not None:
             try:
-                termios.tcsetattr(sys.stdin, termios.TCSAFLUSH, self._old_term_settings)
+                termios.tcsetattr(self.stream_in, termios.TCSAFLUSH, self._old_term_settings)
             except Exception:
                 pass
             self._old_term_settings = None
         # Safety net: explicitly re-enable canonical mode + echo regardless
         # of whether TCSAFLUSH succeeded. Ensures input() always works.
-        if _HAS_TERMIOS and sys.stdin.isatty():
+        if _HAS_TERMIOS and self._is_tty():
             try:
-                attrs = termios.tcgetattr(sys.stdin)
+                attrs = termios.tcgetattr(self.stream_in)
                 attrs[3] |= termios.ECHO | termios.ICANON
-                termios.tcsetattr(sys.stdin, termios.TCSANOW, attrs)
+                termios.tcsetattr(self.stream_in, termios.TCSANOW, attrs)
             except Exception:
                 pass
         self._input_buffer.clear()
@@ -739,18 +745,18 @@ class TerminalEventHandler:
         scroll_end = max(h - self._RESERVED_LINES, 1)
         # Position cursor at last row of the scroll region BEFORE resetting,
         # so the reset doesn't teleport the cursor to an unexpected position.
-        sys.stdout.write(f"\033[{scroll_end};1H")
+        self.stream_out.write(f"\033[{scroll_end};1H")
         # Reset scroll region to full terminal
-        sys.stdout.write("\033[r")
+        self.stream_out.write("\033[r")
         # Ensure cursor is visible
-        sys.stdout.write("\033[?25h")
+        self.stream_out.write("\033[?25h")
         # Clear everything below the old scroll region (old bar area)
-        sys.stdout.write(f"\033[{scroll_end + 1};1H\033[J")
+        self.stream_out.write(f"\033[{scroll_end + 1};1H\033[J")
         # Move cursor back to scroll_end and advance with a newline.
         # This ensures the cursor lands right after the last output line,
         # cleanly separated from the old bar area.
-        sys.stdout.write(f"\033[{scroll_end};1H\n")
-        sys.stdout.flush()
+        self.stream_out.write(f"\033[{scroll_end};1H\n")
+        self.stream_out.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             self._timer_task = None
@@ -759,36 +765,36 @@ class TerminalEventHandler:
         """Draw all 3 fixed lines: status (H-2), separator (H-1), prompt (H)."""
         h, w = self._term_size()
         # Row H-2: Tool status
-        sys.stdout.write(f"\033[{h - 2};1H\033[K")
+        self.stream_out.write(f"\033[{h - 2};1H\033[K")
         self._write_status_content()
         # Row H-1: Separator
-        sys.stdout.write(f"\033[{h - 1};1H\033[K")
-        sys.stdout.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
+        self.stream_out.write(f"\033[{h - 1};1H\033[K")
+        self.stream_out.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
         # Row H: Prompt
-        sys.stdout.write(f"\033[{h};1H\033[K")
-        sys.stdout.write(self.prompt_prefix)
+        self.stream_out.write(f"\033[{h};1H\033[K")
+        self.stream_out.write(self.prompt_prefix)
 
     def _write_status_content(self) -> None:
         """Write the status text (no cursor movement, no flush)."""
         if self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
-            sys.stdout.write(
+            self.stream_out.write(
                 f" {Colors.ACCENT_PRIMARY}\u23f1{Colors.RESET} "
                 f"{Colors.TEXT_PRIMARY}{self._active_tool_name}{Colors.RESET} "
                 f"{Colors.DIM}{elapsed}s "
                 f"\u2502 /cancel  /force_analyze{Colors.RESET}"
             )
         else:
-            sys.stdout.write(f" {Colors.DIM}waiting\u2026{Colors.RESET}")
+            self.stream_out.write(f" {Colors.DIM}waiting\u2026{Colors.RESET}")
 
     def _update_status_line(self) -> None:
         """Update just the tool status line (H-2) without touching the prompt."""
         h, _ = self._term_size()
-        sys.stdout.write("\033[s")  # save cursor
-        sys.stdout.write(f"\033[{h - 2};1H\033[K")
+        self.stream_out.write("\033[s")  # save cursor
+        self.stream_out.write(f"\033[{h - 2};1H\033[K")
         self._write_status_content()
-        sys.stdout.write("\033[u")  # restore cursor
-        sys.stdout.flush()
+        self.stream_out.write("\033[u")  # restore cursor
+        self.stream_out.flush()
 
     def _echo_input(self) -> None:
         """Redraw the prompt line with the current input buffer text."""
@@ -796,9 +802,9 @@ class TerminalEventHandler:
             return
         h, _ = self._term_size()
         buf_text = self._input_buffer.text
-        sys.stdout.write(f"\033[{h};1H\033[K")  # move to row H, clear
-        sys.stdout.write(f"{self.prompt_prefix}{buf_text}")
-        sys.stdout.flush()
+        self.stream_out.write(f"\033[{h};1H\033[K")  # move to row H, clear
+        self.stream_out.write(f"{self.prompt_prefix}{buf_text}")
+        self.stream_out.flush()
 
     def _redraw_prompt_line(self) -> None:
         """Redraw the prompt line (H), clearing any typed text."""
@@ -821,12 +827,12 @@ class TerminalEventHandler:
             return
         h, _ = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
-        sys.stdout.write("\033[s")  # save cursor (at prompt line)
-        sys.stdout.write(f"\033[{scroll_end};1H")  # move to bottom of scroll region
+        self.stream_out.write("\033[s")  # save cursor (at prompt line)
+        self.stream_out.write(f"\033[{scroll_end};1H")  # move to bottom of scroll region
         for line in text.split("\n"):
-            sys.stdout.write(f"\n\033[K{line}")  # newline scrolls, then write
-        sys.stdout.write("\033[u")  # restore cursor to prompt
-        sys.stdout.flush()
+            self.stream_out.write(f"\n\033[K{line}")  # newline scrolls, then write
+        self.stream_out.write("\033[u")  # restore cursor to prompt
+        self.stream_out.flush()
 
     def _output_err(self, text: str) -> None:
         """Print error text (routes to scroll region when bar active)."""
@@ -842,15 +848,15 @@ class TerminalEventHandler:
                     self._update_status_line()
                 elif self._active_tool_name:
                     elapsed = int(time.monotonic() - self._tool_start_time)
-                    sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
-                    sys.stdout.flush()
+                    self.stream_out.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
+                    self.stream_out.flush()
         except asyncio.CancelledError:
             pass
 
     def _clear_timer_line(self) -> None:
         if not self._bar_active and self._active_tool_name:
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
+            self.stream_out.write("\r\033[K")
+            self.stream_out.flush()
 
     def _ensure_timer_started(self) -> None:
         if self._timer_task is None or self._timer_task.done():
@@ -933,8 +939,8 @@ class TerminalEventHandler:
             self._update_status_line()
         elif self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
-            sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
-            sys.stdout.flush()
+            self.stream_out.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
+            self.stream_out.flush()
 
     def _print_status(self, message: str) -> None:
         if message:
@@ -951,7 +957,7 @@ class TerminalEventHandler:
             self._output(f"{Colors.TEXT_SECONDARY}{result}{Colors.RESET}")
 
     def _prompt_choice(self, question: str, options: tuple[str, ...], default: str) -> str:
-        if not sys.stdin.isatty():
+        if not self._is_tty():
             self._output(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; choosing {default}.")
             return default
 
@@ -1004,7 +1010,7 @@ class TerminalEventHandler:
             self._output_err(f"{Colors.ACCENT_WARNING}[timeout]{Colors.RESET} Could not apply timeout decision.")
 
     def _prompt_wait_seconds(self, default: int) -> int:
-        if not sys.stdin.isatty():
+        if not self._is_tty():
             return default
         was_active = self._bar_active
         if was_active:
@@ -1185,10 +1191,8 @@ async def _run_chat_with_bar(
         _event_ref[0].set()
         _task_ref[0].cancel()
 
-    def _stdin_handler():
+    def _handle_char(ch: str):
         nonlocal next_prompt_override, _cancel_fired, _exit_fired
-        ch = sys.stdin.read(1)
-        # Tab completion
         if ch == '\t':
             matches = event_handler._input_buffer.tab_complete()
             event_handler._echo_input()
@@ -1198,7 +1202,7 @@ async def _run_chat_with_bar(
         line = event_handler._input_buffer.add_char(ch)
         event_handler._echo_input()
         if line is None:
-            return  # still typing
+            return
         cmd = line.strip().lower()
         if not cmd:
             return
@@ -1221,20 +1225,51 @@ async def _run_chat_with_bar(
             _event_ref[0].set()
             _task_ref[0].cancel()
 
+    async def _async_ssh_reader():
+        while True:
+            try:
+                ch = await event_handler.stream_in.read(1)
+                if not ch:
+                    break
+                _handle_char(ch)
+            except Exception:
+                break
+
+    def _sync_stdin_handler():
+        ch = event_handler.stream_in.read(1)
+        if ch:
+            _handle_char(ch)
+
     event_handler.activate_bar()
-    loop.add_signal_handler(signal.SIGINT, _sigint_handler)
-    loop.add_reader(sys.stdin, _stdin_handler)
+    
+    # Add signal handler safely (only works on main thread/local)
+    try:
+        loop.add_signal_handler(signal.SIGINT, _sigint_handler)
+    except NotImplementedError:
+        pass  # Windows or not main thread
+
+    is_async_stream = hasattr(event_handler.stream_in, "readexactly") or __import__("asyncio").iscoroutinefunction(getattr(event_handler.stream_in, "read", None))
+    reader_task = None
+    if is_async_stream:
+        reader_task = asyncio.create_task(_async_ssh_reader())
+    else:
+        loop.add_reader(event_handler.stream_in, _sync_stdin_handler)
+
     try:
         await chat_task
     except asyncio.CancelledError:
         pass
     except Exception:
-        pass  # Don't let unexpected errors leak out
+        pass
 
-    # ── Handle force_analyze follow-up INSIDE the bar ──────────────────
-    # If the user chose /force_analyze, chain the analysis chat immediately
-    # without tearing down the bar. This avoids the flash/gap where the
-    # prompt disappears while the _chat_lock drains.
+    if reader_task:
+        reader_task.cancel()
+    elif not is_async_stream:
+        try:
+            loop.remove_reader(event_handler.stream_in)
+        except Exception:
+            pass
+
     if next_prompt_override:
         event_handler._output(
             f"{Colors.DIM}[status] Cleaning up cancelled task, then analysing...{Colors.RESET}"
@@ -1266,7 +1301,10 @@ async def _run_chat_with_bar(
     except Exception:
         pass
     try:
-        loop.remove_reader(sys.stdin)
+        try:
+            loop.remove_reader(event_handler.stream_in)
+        except Exception:
+            pass
     except Exception:
         pass
     event_handler.deactivate_bar()
@@ -1277,7 +1315,7 @@ async def _run_chat_with_bar(
     return next_prompt_override
 
 
-async def _run_prompt(args: argparse.Namespace) -> int:
+async def _run_prompt(args: argparse.Namespace, event_handler: TerminalEventHandler = None, session: MCPSession = None) -> int:
     event_handler = TerminalEventHandler(tool_output_chars=args.tool_output_chars, verbose=args.verbose)
     session: MCPSession | None = None
     prompt = args.prompt_text
@@ -1299,7 +1337,7 @@ async def _run_prompt(args: argparse.Namespace) -> int:
             await session.stop()
 
 
-async def _chat(args: argparse.Namespace) -> int:
+async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = None, session: MCPSession = None) -> int:
     known_session_ids: set[str] = set()
     event_handler = TerminalEventHandler(
         tool_output_chars=args.tool_output_chars,
@@ -1354,11 +1392,11 @@ async def _chat(args: argparse.Namespace) -> int:
                 # Safety net: ensure terminal is in canonical (cooked) mode
                 # before blocking on input().  This catches any case where
                 # deactivate_bar() didn't fully restore the terminal.
-                if _HAS_TERMIOS and sys.stdin.isatty():
+                if _HAS_TERMIOS and event_handler._is_tty():
                     try:
-                        _attrs = termios.tcgetattr(sys.stdin)
+                        _attrs = termios.tcgetattr(event_handler.stream_in)
                         _attrs[3] |= termios.ECHO | termios.ICANON
-                        termios.tcsetattr(sys.stdin, termios.TCSANOW, _attrs)
+                        termios.tcsetattr(event_handler.stream_in, termios.TCSANOW, _attrs)
                     except Exception:
                         pass
                 event_handler._print_separator()

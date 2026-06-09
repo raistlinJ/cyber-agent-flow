@@ -140,6 +140,7 @@ class TestPersistentPrompt:
         old_stdout = sys.stdout
         buf = io.StringIO()
         sys.stdout = buf
+        handler.stream_out = buf
         try:
             handler._bar_active = True
             handler._output("test output")
@@ -475,6 +476,7 @@ class TestTimerBehavior:
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
+        handler.stream_out = buf
         try:
             handler._clear_timer_line()
             output = buf.getvalue()
@@ -493,6 +495,7 @@ class TestTimerBehavior:
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
+        handler.stream_out = buf
         try:
             handler._clear_timer_line()
             output = buf.getvalue()
@@ -740,6 +743,7 @@ class TestSeparatorAlwaysVisible:
         old_stdout = sys.stdout
         buf = io.StringIO()
         sys.stdout = buf
+        handler.stream_out = buf
         try:
             handler._bar_active = True
             handler.deactivate_bar()
@@ -762,6 +766,7 @@ class TestSeparatorAlwaysVisible:
         old_stdout = sys.stdout
         buf = io.StringIO()
         sys.stdout = buf
+        handler.stream_out = buf
         try:
             handler._bar_active = True
             handler.deactivate_bar()
