@@ -106,6 +106,7 @@ BUILTIN_SESSION_DEFAULTS: dict[str, Any] = {
     "tools_config": None,
     "context_window": 8192,
     "max_turns": 20,
+    "default_wait_seconds": 60,
     "network_policy": {"allow": ["*"], "disallow": []},
     "scope": "medium",
     "scope_enabled": True,
@@ -499,7 +500,8 @@ def _install_slash_completion(get_session_ids=None) -> None:
 
     try:
         readline.parse_and_bind("tab: complete")
-        readline.set_completer_delims(" \t\n")
+        # Include / in delimiters so /help, /exit, etc. complete properly
+        readline.set_completer_delims(" \t\n/")
         readline.set_completer(_completer)
     except Exception:
         return
@@ -753,6 +755,7 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
         event_callback=event_handler,
         context_window=args.context_window,
         max_turns=args.max_turns,
+        default_wait_seconds=args.default_wait_seconds,
         network_policy=args.network_policy,
         enabled_tool_guides=enabled_tool_guides,
     )

@@ -1258,6 +1258,7 @@ def session_start():
     tools_config = data.get('tools_config')
     context_window = int(data.get('context_window', 8192))
     max_turns = int(data.get('max_turns', 20))
+    default_wait_seconds = int(data.get('default_wait_seconds', 60))
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
     network_capture_enabled = bool(data.get('network_capture_enabled'))
@@ -1353,6 +1354,7 @@ def session_start():
             event_callback=_event_callback,
             context_window=context_window,
             max_turns=max_turns,
+            default_wait_seconds=default_wait_seconds,
             network_policy=network_policy,
             enabled_tool_guides=enabled_tool_guides,
         )

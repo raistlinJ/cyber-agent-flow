@@ -699,6 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 modelLabel: selectedModelOption?.textContent || '',
                 contextWindow: document.getElementById('context-window')?.value || '8192',
                 maxTurns: maxTurnsInput?.value || '20',
+                defaultWaitSeconds: document.getElementById('default-wait-seconds')?.value || '60',
                 kaliCommandType: kaliCommandType?.value || 'python',
                 policyEntryType: getSelectedPolicyEntryType(),
                 policyDraft: normalizePolicy(_policyDraft),
@@ -2848,10 +2849,11 @@ document.addEventListener('DOMContentLoaded', () => {
         appendLog('<i class="ph ph-spinner-gap spin"></i> Launching MCP service…', 'log-status');
 
         try {
+            const defaultWaitSeconds = parseInt(document.getElementById('default-wait-seconds')?.value || '60', 10);
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, default_wait_seconds: defaultWaitSeconds, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 

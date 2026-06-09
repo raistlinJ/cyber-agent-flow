@@ -1371,6 +1371,7 @@ class MCPSession:
         event_callback=None,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         max_turns: int = DEFAULT_MAX_TURNS,
+        default_wait_seconds: int = 60,
         network_policy: dict | None = None,
         enabled_tool_guides: list[str] | None = None,
     ):
@@ -1382,6 +1383,7 @@ class MCPSession:
         self.server_command = server_command
         self.context_window = context_window
         self.max_turns = max_turns
+        self.default_wait_seconds = default_wait_seconds
         self.event_callback = event_callback
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
