@@ -505,11 +505,26 @@ def _install_slash_completion(get_session_ids=None) -> None:
 
     try:
         readline.parse_and_bind("tab: complete")
+    except Exception:
+        pass
+        
+    try:
+        readline.parse_and_bind("bind ^I rl_complete")
+    except Exception:
+        pass
+        
+    try:
+        # Show all options immediately on first tab if ambiguous
+        readline.parse_and_bind("set show-all-if-ambiguous on")
+    except Exception:
+        pass
+        
+    try:
         # Do not include / in delimiters so /help, /exit, etc. complete as a single token
         readline.set_completer_delims(" \t\n")
         readline.set_completer(_completer)
     except Exception:
-        return
+        pass
 
 
 def _copy_tools_config_if_requested(path_text: str | None) -> list[str] | None:
@@ -827,9 +842,12 @@ async def _run_prompt(args: argparse.Namespace) -> int:
         loop = asyncio.get_running_loop()
         next_prompt_override: str | None = None
         
+        chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=_effective_scope(args), urgency=_effective_urgency(args)))
+        
         def _sigint_handler():
             print(f"\n{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling chat...{Colors.RESET}")
             cancel_event.set()
+            chat_task.cancel()
             loop.remove_signal_handler(signal.SIGINT)
             
         def _stdin_handler():
@@ -847,12 +865,15 @@ async def _run_prompt(args: argparse.Namespace) -> int:
                         "Do not rerun the stopped tool unless the user explicitly asks."
                     )
                 cancel_event.set()
+                chat_task.cancel()
                 loop.remove_reader(sys.stdin)
                 
         loop.add_signal_handler(signal.SIGINT, _sigint_handler)
         loop.add_reader(sys.stdin, _stdin_handler)
         try:
-            await session.chat(prompt, cancel_event=cancel_event, scope=_effective_scope(args), urgency=_effective_urgency(args))
+            await chat_task
+        except asyncio.CancelledError:
+            pass
         finally:
             loop.remove_signal_handler(signal.SIGINT)
             try:
@@ -958,9 +979,12 @@ async def _chat(args: argparse.Namespace) -> int:
                 loop = asyncio.get_running_loop()
                 next_prompt_override: str | None = None
                 
+                chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=current_scope, urgency=current_urgency))
+                
                 def _sigint_handler():
                     print(f"\n{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling chat...{Colors.RESET}")
                     cancel_event.set()
+                    chat_task.cancel()
                     loop.remove_signal_handler(signal.SIGINT)
                     
                 def _stdin_handler():
@@ -978,12 +1002,15 @@ async def _chat(args: argparse.Namespace) -> int:
                                 "Do not rerun the stopped tool unless the user explicitly asks."
                             )
                         cancel_event.set()
+                        chat_task.cancel()
                         loop.remove_reader(sys.stdin)
 
                 loop.add_signal_handler(signal.SIGINT, _sigint_handler)
                 loop.add_reader(sys.stdin, _stdin_handler)
                 try:
-                    await session.chat(prompt, cancel_event=cancel_event, scope=current_scope, urgency=current_urgency)
+                    await chat_task
+                except asyncio.CancelledError:
+                    pass
                 finally:
                     loop.remove_signal_handler(signal.SIGINT)
                     try:
