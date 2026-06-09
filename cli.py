@@ -564,7 +564,7 @@ class TerminalEventHandler:
         elif event_type == "service_started":
             tools = event.get("tools") or []
             run_id = event.get("run_id") or "unknown"
-            print(f"\n{Colors.ACCENT_SUCCESS}[started]{Colors.RESET} run_id={run_id} tools={len(tools)}")
+            print(f"\n{Colors.ACCENT_SUCCESS}[started]{Colors.RESET} run_id={Colors.TEXT_PRIMARY}{run_id}{Colors.RESET} tools={Colors.TEXT_PRIMARY}{len(tools)}{Colors.RESET}")
         elif event_type == "service_stopped":
             print(f"\n{Colors.ACCENT_WARNING}[stopped]{Colors.RESET} Session stopped.")
         elif event_type == "response":
@@ -574,17 +574,17 @@ class TerminalEventHandler:
         elif event_type == "tool_call":
             tool = event.get("tool") or "tool"
             args = _compact_json(event.get("args") or {})
-            print(f"\n{Colors.ACCENT_PRIMARY}[tool]{Colors.RESET} {tool} {args}")
+            print(f"\n{Colors.ACCENT_PRIMARY}[tool]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} {Colors.TEXT_SECONDARY}{args}{Colors.RESET}")
         elif event_type == "tool_result":
             self._print_tool_result(event)
         elif event_type == "error":
-            print(f"\n{Colors.ACCENT_ERROR}[error]{Colors.RESET} {event.get('message') or 'Unknown error.'}", file=sys.stderr)
+            print(f"\n{Colors.ACCENT_ERROR}[error] {event.get('message') or 'Unknown error.'}{Colors.RESET}", file=sys.stderr)
         elif event_type == "context_usage":
             if self.verbose:
                 used = event.get("used", "?")
                 budget = event.get("budget", "?")
                 model_max = event.get("model_max", "?")
-                print(f"{Colors.TEXT_SECONDARY}[context]{Colors.RESET} used={used} budget={budget} model_max={model_max}")
+                print(f"{Colors.TEXT_SECONDARY}[context] used={used} budget={budget} model_max={model_max}{Colors.RESET}")
         elif event_type == "post_tool_reply_decision":
             self._resolve_post_tool_reply(event)
         elif event_type == "dangerous_tool_approval":
@@ -592,22 +592,22 @@ class TerminalEventHandler:
         elif event_type == "tool_timeout_decision":
             self._resolve_tool_timeout(event)
         elif event_type == "chat_done":
-            print(f"{Colors.ACCENT_SUCCESS}[done]{Colors.RESET} {event.get('message') or 'Ready for next prompt.'}")
+            print(f"{Colors.ACCENT_SUCCESS}[done]{Colors.RESET} {Colors.BOLD}{event.get('message') or 'Ready for next prompt.'}{Colors.RESET}")
         elif event_type == "isess_created":
             session_id = event.get("session_id") or "unknown"
             session_kind = event.get("session_kind") or "interactive"
             if self.known_session_ids is not None and str(session_id).strip():
                 self.known_session_ids.add(str(session_id).strip())
-            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Preserved {session_kind} session {session_id}.")
+            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Preserved {session_kind} session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET}.")
         elif event_type == "isess_output":
             session_id = event.get("session_id") or "unknown"
             output = str(event.get("output") or "")
-            print(f"\n{Colors.ACCENT_PRIMARY}[interactive:{session_id}]{Colors.RESET}\n{output}")
+            print(f"\n{Colors.ACCENT_PRIMARY}[interactive:{Colors.TEXT_PRIMARY}{session_id}{Colors.ACCENT_PRIMARY}]{Colors.RESET}\n{output}")
         elif event_type == "isess_closed":
             session_id = event.get("session_id") or "unknown"
             if self.known_session_ids is not None and str(session_id).strip():
                 self.known_session_ids.discard(str(session_id).strip())
-            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Session {session_id} closed.")
+            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET} closed.")
 
     def _print_status(self, message: str) -> None:
         if message:
