@@ -2071,6 +2071,15 @@ class MCPSession:
             event_callback=self.event_callback,
         )
 
+        # Load previous messages if we are continuing an interaction
+        loaded_messages = self._logger.load_messages()
+        if loaded_messages:
+            # Retain the fresh system prompt generated during __init__
+            fresh_system_prompt = self.messages[0]["content"] if (self.messages and self.messages[0].get("role") == "system") else None
+            self.messages = loaded_messages
+            if fresh_system_prompt and self.messages and self.messages[0].get("role") == "system":
+                self.messages[0]["content"] = fresh_system_prompt
+
         _emit(self.event_callback, "status", {
             "message": f"Starting session {self.run_id} (context: {self.context_window} tokens, max turns: {self.max_turns}) …"
         })
@@ -2192,6 +2201,11 @@ class MCPSession:
         self._started = True
         return self.tool_names
 
+    def _save_messages(self):
+        """Helper to flush the current messages array to disk."""
+        if self._logger:
+            self._logger.save_messages(self.messages)
+
     async def chat(self, prompt: str, cancel_event: asyncio.Event | None = None, scope: str | None = None, urgency: str | None = None):
         """
         Send a user prompt into the running session. Runs the full agent loop
@@ -2235,6 +2249,7 @@ class MCPSession:
                 traceback.print_exc()
             finally:
                 self._current_tool_task = None
+                self._save_messages()
 
     async def _chat_with_transient_retry(self, *, messages: list[dict], tools, options: dict, turn_label: str):
         max_attempts = 2
@@ -2261,6 +2276,7 @@ class MCPSession:
         """Core agent loop for a single chat turn."""
         self._logger.log_prompt(prompt)
         self.messages.append({"role": "user", "content": prompt})
+        self._save_messages()
         turn_tool_results: list[dict] = []
         provider_name = _normalize_provider_name(self.llm_provider)
 
@@ -2403,6 +2419,7 @@ class MCPSession:
                 assistant_message["tool_calls"] = clean_tcs
 
             self.messages.append(assistant_message)
+            self._save_messages()
 
             if content:
                 self._logger.log_response(content)
@@ -2413,6 +2430,7 @@ class MCPSession:
                     if _can_auto_finalize_benign_empty(turn_tool_results):
                         benign_content = _build_benign_empty_finalization(turn_tool_results)
                         self.messages.append({"role": "assistant", "content": benign_content})
+                        self._save_messages()
                         self._logger.log_response(benign_content)
                         _emit(self.event_callback, "chat_done", {
                             "message": "Finalized benign no-findings tool result without retry."
@@ -2422,6 +2440,7 @@ class MCPSession:
                     recovered_content = await self._retry_empty_reply_after_tools(prompt, turn_tool_results)
                     if recovered_content:
                         self.messages.append({"role": "assistant", "content": recovered_content})
+                        self._save_messages()
                         self._logger.log_response(recovered_content)
                         _emit(self.event_callback, "chat_done", {
                             "message": "Recovered final answer after automatic retry."
@@ -2433,6 +2452,7 @@ class MCPSession:
                         recovered_content = await self._retry_empty_reply_after_tools(prompt, turn_tool_results)
                         if recovered_content:
                             self.messages.append({"role": "assistant", "content": recovered_content})
+                            self._save_messages()
                             self._logger.log_response(recovered_content)
                             _emit(self.event_callback, "chat_done", {
                                 "message": "Recovered final answer after user-approved retry."
@@ -2456,6 +2476,7 @@ class MCPSession:
                     return
 
                 self.messages.pop()
+                self._save_messages()
 
                 detail = "Model returned an empty reply with no tool calls."
                 if self.tool_names:
@@ -2501,6 +2522,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     _emit(self.event_callback, "status", {"message": err_msg})
                     continue
 
@@ -2527,6 +2549,7 @@ class MCPSession:
                             "name": tool_name,
                             "tool_call_id": tool_call_id,
                         })
+                        self._save_messages()
                         turn_tool_results.append({
                             "tool": tool_name,
                             "args": tool_args,
@@ -2569,6 +2592,7 @@ class MCPSession:
                             "name": tool_name,
                             "tool_call_id": tool_call_id,
                         })
+                        self._save_messages()
                         _emit(self.event_callback, "tool_result", {
                             "tool": tool_name,
                             "args": tool_args,
@@ -2653,6 +2677,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     turn_tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,
@@ -2688,6 +2713,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     turn_tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,

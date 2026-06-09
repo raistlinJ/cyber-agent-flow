@@ -1037,6 +1037,8 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-ssl-verify", action="store_true", help="Disable TLS verification for proxied HTTPS providers.")
     parser.add_argument("--server-command", help="Command used to launch the MCP server.")
     parser.add_argument("--tools-config", help="Path to a kali_tools.json-compatible file. Defaults to ./kali_tools.json.")
+    parser.add_argument("--continue", dest="continue_run", type=str, metavar="RUN_ID_OR_INDEX",
+                        help="Restore a previous interaction by run ID or index (view the 'Idx' column via 'cli.py list-runs').")
     parser.add_argument("--context-window", type=int, help="LLM context window budget in tokens.")
     parser.add_argument("--max-turns", type=int, help="Maximum LLM/tool iterations per prompt.")
     parser.add_argument("--tool-timeout", type=int, help="Default timeout for tool executions in seconds.")
@@ -1094,7 +1096,30 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
     _validate_session_args(args)
     enabled_tool_guides = _copy_tools_config_if_requested(args.tools_config)
     server_type = "apt" if "/usr/share/mcp-kali-server/mcp_server.py" in args.server_command else "cli"
-    run_id = make_run_id(server_type)
+    
+    run_id = None
+    if getattr(args, "continue_run", None) is not None:
+        sessions = load_session_list(str(PROJECT_DIR))
+        target = args.continue_run
+        if target.isdigit():
+            idx = int(target)
+            if idx < len(sessions):
+                run_id = sessions[idx].get("run_id")
+            else:
+                print(f"Run index {idx} out of range. Found {len(sessions)} runs.")
+                sys.exit(1)
+        else:
+            matches = [s.get("run_id") for s in sessions if s.get("run_id", "").startswith(target)]
+            if matches:
+                run_id = matches[0]
+            else:
+                print(f"Run '{target}' not found.")
+                sys.exit(1)
+        print(f"Restoring interaction from run_id: {run_id}")
+
+    if not run_id:
+        run_id = make_run_id(server_type)
+
     auto_approve = bool(getattr(args, "dangerous_no_prompt", False))
     if auto_approve:
         print(f"{Colors.ACCENT_ERROR}[WARNING]{Colors.RESET} {Colors.BOLD}--dangerous-no-prompt is active.{Colors.RESET} "
@@ -1144,6 +1169,12 @@ async def _run_chat_with_bar(
         session.chat(prompt, cancel_event=cancel_event, scope=scope, urgency=urgency)
     )
 
+    # Mutable cells so the stdin handler can be re-targeted to a follow-up
+    # task without needing a separate handler function.
+    _task_ref: list[asyncio.Task] = [chat_task]
+    _event_ref: list[asyncio.Event] = [cancel_event]
+    _exit_fired = False
+
     def _sigint_handler():
         nonlocal _cancel_fired
         if _cancel_fired:
@@ -1151,11 +1182,11 @@ async def _run_chat_with_bar(
             return
         _cancel_fired = True
         event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
-        cancel_event.set()
-        chat_task.cancel()
+        _event_ref[0].set()
+        _task_ref[0].cancel()
 
     def _stdin_handler():
-        nonlocal next_prompt_override, _cancel_fired
+        nonlocal next_prompt_override, _cancel_fired, _exit_fired
         ch = sys.stdin.read(1)
         # Tab completion
         if ch == '\t':
@@ -1185,8 +1216,10 @@ async def _run_chat_with_bar(
                     "Summarize what completed, what remains incomplete, any findings or blockers, and the best next step. "
                     "Do not rerun the stopped tool unless the user explicitly asks."
                 )
-            cancel_event.set()
-            chat_task.cancel()
+            elif cmd == "/exit":
+                _exit_fired = True
+            _event_ref[0].set()
+            _task_ref[0].cancel()
 
     event_handler.activate_bar()
     loop.add_signal_handler(signal.SIGINT, _sigint_handler)
@@ -1206,63 +1239,26 @@ async def _run_chat_with_bar(
         event_handler._output(
             f"{Colors.DIM}[status] Cleaning up cancelled task, then analysing...{Colors.RESET}"
         )
-        # Reset the stdin handler state for the follow-up chat.
+        # Reset state and swap the mutable refs so the SAME _stdin_handler
+        # targets the new task.  No need for a separate handler function.
         _cancel_fired = False
+        next_prompt_override_2 = next_prompt_override  # save before clearing
+        next_prompt_override = None
         cancel_event_2 = asyncio.Event()
         chat_task_2 = asyncio.create_task(
-            session.chat(next_prompt_override, cancel_event_2,
+            session.chat(next_prompt_override_2, cancel_event_2,
                          scope=scope, urgency=urgency)
         )
-        # Re-bind the stdin handler to the new task/event.
-        try:
-            loop.remove_reader(sys.stdin)
-        except Exception:
-            pass
-
-        def _stdin_handler_2():
-            nonlocal _cancel_fired
-            ch = sys.stdin.read(1)
-            line = event_handler._input_buffer.add_char(ch)
-            if line is None:
-                if ch == "\t":
-                    matches = event_handler._input_buffer.tab_complete()
-                    if matches:
-                        event_handler._output("  ".join(matches))
-                event_handler._redraw_prompt_line()
-                return
-            cmd = line.strip()
-            if not cmd:
-                event_handler._redraw_prompt_line()
-                return
-            if cmd not in ("/cancel", "/force_analyze"):
-                event_handler._redraw_prompt_line()
-                return
-            if _cancel_fired:
-                event_handler._output(
-                    f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}"
-                )
-                return
-            _cancel_fired = True
-            event_handler._output(
-                f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}"
-            )
-            cancel_event_2.set()
-            chat_task_2.cancel()
-
-        loop.add_reader(sys.stdin, _stdin_handler_2)
+        _task_ref[0] = chat_task_2
+        _event_ref[0] = cancel_event_2
+        event_handler._input_buffer.clear()
+        event_handler._echo_input()
         try:
             await chat_task_2
         except asyncio.CancelledError:
             pass
         except Exception:
             pass
-        finally:
-            try:
-                loop.remove_reader(sys.stdin)
-            except Exception:
-                pass
-        # Clear the override so the caller doesn't try to run it again.
-        next_prompt_override = None
 
     # ── Tear down ──────────────────────────────────────────────────────
     try:
@@ -1274,6 +1270,9 @@ async def _run_chat_with_bar(
     except Exception:
         pass
     event_handler.deactivate_bar()
+
+    if _exit_fired:
+        raise EOFError("User exited during running task")
 
     return next_prompt_override
 
@@ -1695,15 +1694,15 @@ def _list_runs(args: argparse.Namespace) -> int:
         print("No runs found.")
         return 0
 
-    print(f"{'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
-    print(f"{'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
-    for metadata in sessions:
+    print(f"{'Idx':>3} {'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
+    print(f"{'-'*3} {'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
+    for idx, metadata in enumerate(sessions):
         run_id = str(metadata.get("run_id") or "unknown")[:36]
         status = str(metadata.get("status") or "unknown")[:12]
         model = str(metadata.get("model") or "unknown")[:24]
         tool_count = metadata.get("total_tool_calls", metadata.get("available_tool_count", ""))
         transcript = _format_run_path(str(metadata.get("run_id") or "unknown"), "transcript.md")
-        print(f"{run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
+        print(f"{idx:>3} {run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
     return 0
 
 
