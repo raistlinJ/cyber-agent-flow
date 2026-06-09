@@ -618,9 +618,10 @@ class TerminalEventHandler:
         exit_code = event.get("exit_code", "?")
         duration_ms = event.get("duration_ms", "?")
         result = _truncate(str(event.get("result") or ""), self.tool_output_chars)
-        print(f"{Colors.ACCENT_PRIMARY}[result]{Colors.RESET} {tool} exit={exit_code} duration_ms={duration_ms}")
+        exit_color = Colors.ACCENT_SUCCESS if exit_code == 0 else Colors.ACCENT_ERROR
+        print(f"{Colors.ACCENT_PRIMARY}[result]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} exit={exit_color}{exit_code}{Colors.RESET} duration_ms={Colors.TEXT_PRIMARY}{duration_ms}{Colors.RESET}")
         if result.strip():
-            print(result)
+            print(f"{Colors.TEXT_SECONDARY}{result}{Colors.RESET}")
 
     def _prompt_choice(self, question: str, options: tuple[str, ...], default: str) -> str:
         if not sys.stdin.isatty():
@@ -835,7 +836,7 @@ async def _chat(args: argparse.Namespace) -> int:
                 next_session_refresh_at = now + session_refresh_interval_seconds
 
             try:
-                prompt_prefix = f"caf[{active_session_id}]> " if active_session_id else "caf> "
+                prompt_prefix = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
                 prompt = input(prompt_prefix).strip()
             except EOFError:
                 print()
@@ -895,25 +896,25 @@ async def _handle_repl_command(
         return False, current_scope, current_urgency, active_session_id
     if command == "/help":
         print(
-            "Commands:\n"
-            "  /help                       Show this help.\n"
-            "  /exit                       Stop the session.\n"
-            "  /enter SESSION_ID           Enter interactive session mode (like a tab).\n"
-            "  /back                       Return to main chat mode.\n"
-            "  /where                      Show current mode and selected session.\n"
-            "  /config                     Show current config values.\n"
-            "  /set KEY VALUE              Update settings from chat.\n"
-            "  /save-config [PATH]         Save current settings to JSON config file.\n"
-            "  /tools                      List available MCP tools.\n"
-            "  /scope VALUE|off            Set scope for later prompts.\n"
-            "  /urgency VALUE|off          Set urgency for later prompts.\n"
-            "  /sessions                   List preserved interactive sessions.\n"
-            "  /refresh-sessions           Refresh session IDs from backend for autocomplete.\n"
-            "  /read [SESSION_ID]          Read output (defaults to entered session).\n"
-            "  /write ...                  Send text: /write ID TEXT or /write TEXT in entered mode.\n"
-            "  /close [SESSION_ID]         Close session (defaults to entered session).\n"
-            "\n"
-            "When entered into a session via /enter, plain text is sent directly to that session."
+            f"{Colors.BOLD}Commands:{Colors.RESET}\n"
+            f"  {Colors.ACCENT_PRIMARY}/help{Colors.RESET}                       Show this help.\n"
+            f"  {Colors.ACCENT_PRIMARY}/exit{Colors.RESET}                       Stop the session.\n"
+            f"  {Colors.ACCENT_PRIMARY}/enter SESSION_ID{Colors.RESET}           Enter interactive session mode (like a tab).\n"
+            f"  {Colors.ACCENT_PRIMARY}/back{Colors.RESET}                       Return to main chat mode.\n"
+            f"  {Colors.ACCENT_PRIMARY}/where{Colors.RESET}                      Show current mode and selected session.\n"
+            f"  {Colors.ACCENT_PRIMARY}/config{Colors.RESET}                     Show current config values.\n"
+            f"  {Colors.ACCENT_PRIMARY}/set KEY VALUE{Colors.RESET}              Update settings from chat.\n"
+            f"  {Colors.ACCENT_PRIMARY}/save-config [PATH]{Colors.RESET}         Save current settings to JSON config file.\n"
+            f"  {Colors.ACCENT_PRIMARY}/tools{Colors.RESET}                      List available MCP tools.\n"
+            f"  {Colors.ACCENT_PRIMARY}/scope VALUE|off{Colors.RESET}            Set scope for later prompts.\n"
+            f"  {Colors.ACCENT_PRIMARY}/urgency VALUE|off{Colors.RESET}          Set urgency for later prompts.\n"
+            f"  {Colors.ACCENT_PRIMARY}/sessions{Colors.RESET}                   List preserved interactive sessions.\n"
+            f"  {Colors.ACCENT_PRIMARY}/refresh-sessions{Colors.RESET}           Refresh session IDs from backend for autocomplete.\n"
+            f"  {Colors.ACCENT_PRIMARY}/read [SESSION_ID]{Colors.RESET}          Read output (defaults to entered session).\n"
+            f"  {Colors.ACCENT_PRIMARY}/write ...{Colors.RESET}                  Send text: /write ID TEXT or /write TEXT in entered mode.\n"
+            f"  {Colors.ACCENT_PRIMARY}/close [SESSION_ID]{Colors.RESET}         Close session (defaults to entered session).\n"
+            f"\n"
+            f"{Colors.TEXT_SECONDARY}When entered into a session via /enter, plain text is sent directly to that session.{Colors.RESET}"
         )
         return True, current_scope, current_urgency, active_session_id
     if command == "/config":
