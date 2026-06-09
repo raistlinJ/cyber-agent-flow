@@ -813,17 +813,29 @@ class TerminalEventHandler:
         self._input_buffer.clear()
         self._echo_input()
 
+    def _print(self, *args, **kwargs) -> None:
+        """Like print() but routes through stream_out instead of sys.stdout."""
+        import io
+        buf = io.StringIO()
+        kwargs.setdefault("file", buf)
+        print(*args, **kwargs)
+        self.stream_out.write(buf.getvalue())
+        try:
+            self.stream_out.flush()
+        except Exception:
+            pass
+
     def _print_separator(self) -> None:
         """Print a separator line (used in normal REPL mode between output and prompt)."""
         _, w = self._term_size()
-        print(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
+        self._print(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
 
     # ── Output routing ────────────────────────────────────────────────
 
     def _output(self, text: str) -> None:
         """Print *text* in the scroll region; cursor returns to prompt."""
         if not self._bar_active:
-            print(text)
+            self._print(text)
             return
         h, _ = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
@@ -958,7 +970,7 @@ class TerminalEventHandler:
 
     def _prompt_choice(self, question: str, options: tuple[str, ...], default: str) -> str:
         if not self._is_tty():
-            self._output(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; choosing {default}.")
+            self._print(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; choosing {default}.")
             return default
 
         # Temporarily deactivate the bar so input() works normally
@@ -1011,6 +1023,7 @@ class TerminalEventHandler:
 
     def _prompt_wait_seconds(self, default: int) -> int:
         if not self._is_tty():
+            self._print(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; skipping prompt.")
             return default
         was_active = self._bar_active
         if was_active:
@@ -1330,7 +1343,7 @@ async def _run_prompt(args: argparse.Namespace, event_handler: TerminalEventHand
         )
         # Note: force_analyze follow-up is handled inside _run_chat_with_bar.
 
-        print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
+        event_handler._print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
         if session:
@@ -1376,7 +1389,7 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
     try:
         session = await _start_session(args, event_handler)
         _install_slash_completion(get_session_ids=lambda: sorted(known_session_ids))
-        print("Type /help for CLI commands, /exit to stop.")
+        event_handler._print("Type /help for CLI commands, /exit to stop.")
         while True:
             now = time.monotonic()
             if now >= next_session_refresh_at:
@@ -1400,12 +1413,13 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                     except Exception:
                         pass
                 event_handler._print_separator()
-                prompt = input(prompt_str).strip()
+                event_handler._print(prompt_str, end="", flush=True)
+                prompt = event_handler.stream_in.readline().strip()
             except EOFError:
-                print()
+                event_handler._print()
                 break
             except KeyboardInterrupt:
-                print("\nUse /exit to stop the session cleanly.")
+                event_handler._print("\nUse /exit to stop the session cleanly.")
                 continue
 
             if not prompt:
@@ -1431,7 +1445,7 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                     "interactive_session_write",
                     {"session_id": active_session_id, "input": prompt},
                 )
-                print(str(result.get("content") or result.get("error") or result))
+                event_handler._print(str(result.get("content") or result.get("error") or result))
             else:
                 override = await _run_chat_with_bar(
                     session, prompt, event_handler,
@@ -1439,7 +1453,7 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                 )
                 # Note: force_analyze follow-up is now handled INSIDE
                 # _run_chat_with_bar, so override is always None here.
-        print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
+        event_handler._print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
         if session:
@@ -1463,7 +1477,7 @@ async def _handle_repl_command(
     if command in {"/exit", "/quit"}:
         return False, current_scope, current_urgency, active_session_id
     if command == "/help":
-        print(
+        event_handler._print(
             f"{Colors.BOLD}Commands:{Colors.RESET}\n"
             f"  {Colors.ACCENT_PRIMARY}/help{Colors.RESET}                       Show this help.\n"
             f"  {Colors.ACCENT_PRIMARY}/exit{Colors.RESET}                       Stop the session.\n"
@@ -1488,12 +1502,12 @@ async def _handle_repl_command(
         )
         return True, current_scope, current_urgency, active_session_id
     if command == "/config":
-        print(json.dumps(session_config, indent=2, ensure_ascii=True))
+        event_handler._print(json.dumps(session_config, indent=2, ensure_ascii=True))
         return True, current_scope, current_urgency, active_session_id
     if command == "/set":
         if len(parts) < 3:
-            print("Usage: /set KEY VALUE")
-            print("Examples: /set urgency fast | /set scope_enabled false | /set tool_output_chars 12000")
+            event_handler._print("Usage: /set KEY VALUE")
+            event_handler._print("Examples: /set urgency fast | /set scope_enabled false | /set tool_output_chars 12000")
             return True, current_scope, current_urgency, active_session_id
 
         key = parts[1].strip().lower()
@@ -1504,15 +1518,15 @@ async def _handle_repl_command(
             if value == "off":
                 session_config["scope_enabled"] = False
                 current_scope = None
-                print("Scope disabled for this chat session.")
+                event_handler._print("Scope disabled for this chat session.")
                 return True, current_scope, current_urgency, active_session_id
             if value not in SCOPE_CHOICES:
-                print("scope must be one of: " + ", ".join(SCOPE_CHOICES) + " or off")
+                event_handler._print("scope must be one of: " + ", ".join(SCOPE_CHOICES) + " or off")
                 return True, current_scope, current_urgency, active_session_id
             session_config["scope"] = value
             session_config["scope_enabled"] = True
             current_scope = value
-            print(f"Scope set to {value}.")
+            event_handler._print(f"Scope set to {value}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key == "urgency":
@@ -1520,62 +1534,62 @@ async def _handle_repl_command(
             if value == "off":
                 session_config["urgency_enabled"] = False
                 current_urgency = None
-                print("Urgency disabled for this chat session.")
+                event_handler._print("Urgency disabled for this chat session.")
                 return True, current_scope, current_urgency, active_session_id
             if value not in URGENCY_CHOICES:
-                print("urgency must be one of: " + ", ".join(URGENCY_CHOICES) + " or off")
+                event_handler._print("urgency must be one of: " + ", ".join(URGENCY_CHOICES) + " or off")
                 return True, current_scope, current_urgency, active_session_id
             session_config["urgency"] = value
             session_config["urgency_enabled"] = True
             current_urgency = value
-            print(f"Urgency set to {value}.")
+            event_handler._print(f"Urgency set to {value}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key == "scope_enabled":
             try:
                 enabled = _to_bool(raw_value)
             except ValueError as exc:
-                print(str(exc))
+                event_handler._print(str(exc))
                 return True, current_scope, current_urgency, active_session_id
             session_config["scope_enabled"] = enabled
             current_scope = session_config.get("scope") if enabled else None
-            print(f"scope_enabled set to {enabled}.")
+            event_handler._print(f"scope_enabled set to {enabled}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key == "urgency_enabled":
             try:
                 enabled = _to_bool(raw_value)
             except ValueError as exc:
-                print(str(exc))
+                event_handler._print(str(exc))
                 return True, current_scope, current_urgency, active_session_id
             session_config["urgency_enabled"] = enabled
             current_urgency = session_config.get("urgency") if enabled else None
-            print(f"urgency_enabled set to {enabled}.")
+            event_handler._print(f"urgency_enabled set to {enabled}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key == "verbose":
             try:
                 enabled = _to_bool(raw_value)
             except ValueError as exc:
-                print(str(exc))
+                event_handler._print(str(exc))
                 return True, current_scope, current_urgency, active_session_id
             session_config["verbose"] = enabled
             event_handler.verbose = enabled
-            print(f"verbose set to {enabled}.")
+            event_handler._print(f"verbose set to {enabled}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key == "tool_output_chars":
             try:
                 chars = int(raw_value)
             except ValueError:
-                print("tool_output_chars must be an integer")
+                event_handler._print("tool_output_chars must be an integer")
                 return True, current_scope, current_urgency, active_session_id
             if chars < 0:
-                print("tool_output_chars must be >= 0")
+                event_handler._print("tool_output_chars must be >= 0")
                 return True, current_scope, current_urgency, active_session_id
             session_config["tool_output_chars"] = chars
             event_handler.tool_output_chars = chars
-            print(f"tool_output_chars set to {chars}.")
+            event_handler._print(f"tool_output_chars set to {chars}.")
             return True, current_scope, current_urgency, active_session_id
 
         if key in {
@@ -1588,23 +1602,23 @@ async def _handle_repl_command(
                 try:
                     session_config["ssl_verify"] = _to_bool(raw_value)
                 except ValueError as exc:
-                    print(str(exc))
+                    event_handler._print(str(exc))
                     return True, current_scope, current_urgency, active_session_id
             elif key in {"context_window", "max_turns", "tool_timeout"}:
                 try:
                     session_config[key] = int(raw_value)
                 except ValueError:
-                    print(f"{key} must be an integer")
+                    event_handler._print(f"{key} must be an integer")
                     return True, current_scope, current_urgency, active_session_id
             elif key in {"allow", "disallow"}:
                 values = _split_entries([raw_value], ["*"] if key == "allow" else [])
                 session_config["network_policy"][key] = values
             else:
                 session_config[key] = raw_value
-            print(restart_required_message)
+            event_handler._print(restart_required_message)
             return True, current_scope, current_urgency, active_session_id
 
-        print("Unsupported key. Try /config to inspect available settings.")
+        event_handler._print("Unsupported key. Try /config to inspect available settings.")
         return True, current_scope, current_urgency, active_session_id
     if command == "/save-config":
         target_path = _resolve_path(parts[1]) if len(parts) > 1 else _resolve_path(config_target_path)
@@ -1612,34 +1626,34 @@ async def _handle_repl_command(
         with target_path.open("w") as config_file:
             json.dump(session_config, config_file, indent=2)
             config_file.write("\n")
-        print(f"Saved config to {target_path}")
+        event_handler._print(f"Saved config to {target_path}")
         return True, current_scope, current_urgency, active_session_id
     if command in {"/back", "/main"}:
         if active_session_id:
-            print(f"Returned to main chat mode from {active_session_id}.")
+            event_handler._print(f"Returned to main chat mode from {active_session_id}.")
         else:
-            print("Already in main chat mode.")
+            event_handler._print("Already in main chat mode.")
         return True, current_scope, current_urgency, None
     if command == "/where":
         if active_session_id:
-            print(f"Mode: interactive session ({active_session_id})")
+            event_handler._print(f"Mode: interactive session ({active_session_id})")
         else:
-            print("Mode: main chat")
+            event_handler._print("Mode: main chat")
         return True, current_scope, current_urgency, active_session_id
     if command == "/enter":
         if len(parts) != 2:
-            print("Usage: /enter SESSION_ID")
+            event_handler._print("Usage: /enter SESSION_ID")
             return True, current_scope, current_urgency, active_session_id
         selected = parts[1]
         known_session_ids.add(selected)
-        print(f"Entered interactive session mode: {selected}")
+        event_handler._print(f"Entered interactive session mode: {selected}")
         return True, current_scope, current_urgency, selected
     if command == "/tools":
-        print("Available tools: " + ", ".join(session.tool_names))
+        event_handler._print("Available tools: " + ", ".join(session.tool_names))
         return True, current_scope, current_urgency, active_session_id
     if command == "/scope":
         if len(parts) != 2 or (parts[1] != "off" and parts[1] not in SCOPE_CHOICES):
-            print("Usage: /scope broad|medium-broad|medium|medium-narrow|narrow|off")
+            event_handler._print("Usage: /scope broad|medium-broad|medium|medium-narrow|narrow|off")
             return True, current_scope, current_urgency, active_session_id
         if parts[1] == "off":
             current_scope = None
@@ -1648,11 +1662,11 @@ async def _handle_repl_command(
             current_scope = parts[1]
             session_config["scope"] = parts[1]
             session_config["scope_enabled"] = True
-        print(f"Scope set to {current_scope or 'off'}.")
+        event_handler._print(f"Scope set to {current_scope or 'off'}.")
         return True, current_scope, current_urgency, active_session_id
     if command == "/urgency":
         if len(parts) != 2 or (parts[1] != "off" and parts[1] not in URGENCY_CHOICES):
-            print("Usage: /urgency stealthy|methodical|balanced|fast|speed|off")
+            event_handler._print("Usage: /urgency stealthy|methodical|balanced|fast|speed|off")
             return True, current_scope, current_urgency, active_session_id
         if parts[1] == "off":
             current_urgency = None
@@ -1661,7 +1675,7 @@ async def _handle_repl_command(
             current_urgency = parts[1]
             session_config["urgency"] = parts[1]
             session_config["urgency_enabled"] = True
-        print(f"Urgency set to {current_urgency or 'off'}.")
+        event_handler._print(f"Urgency set to {current_urgency or 'off'}.")
         return True, current_scope, current_urgency, active_session_id
     if command == "/sessions":
         try:
@@ -1671,29 +1685,29 @@ async def _handle_repl_command(
             if content:
                 for sid in _extract_session_ids_from_text(content):
                     known_session_ids.add(sid)
-                print(content)
+                event_handler._print(content)
             elif error:
-                print(f"{Colors.ACCENT_WARNING}[sessions] Error: {error}{Colors.RESET}")
+                event_handler._print(f"{Colors.ACCENT_WARNING}[sessions] Error: {error}{Colors.RESET}")
             else:
-                print("No preserved interactive sessions are currently available.")
+                event_handler._print("No preserved interactive sessions are currently available.")
         except Exception as exc:
-            print(f"{Colors.ACCENT_WARNING}[sessions] Could not list sessions: {exc}{Colors.RESET}")
+            event_handler._print(f"{Colors.ACCENT_WARNING}[sessions] Could not list sessions: {exc}{Colors.RESET}")
         return True, current_scope, current_urgency, active_session_id
     if command == "/refresh-sessions":
         try:
             count = await _refresh_known_session_ids(session, known_session_ids)
-            print(f"Refreshed {count} session ID(s): {', '.join(sorted(known_session_ids)) or '(none)'}")
+            event_handler._print(f"Refreshed {count} session ID(s): {', '.join(sorted(known_session_ids)) or '(none)'}")
         except Exception as exc:
-            print(f"Could not refresh sessions: {exc}")
+            event_handler._print(f"Could not refresh sessions: {exc}")
         return True, current_scope, current_urgency, active_session_id
     if command == "/read":
         target_session_id = parts[1] if len(parts) == 2 else active_session_id
         if not target_session_id:
-            print("Usage: /read SESSION_ID  (or /enter SESSION_ID first)")
+            event_handler._print("Usage: /read SESSION_ID  (or /enter SESSION_ID first)")
             return True, current_scope, current_urgency, active_session_id
         known_session_ids.add(target_session_id)
         result = await session.call_tool_direct("interactive_session_read", {"session_id": target_session_id})
-        print(str(result.get("content") or result.get("error") or result))
+        event_handler._print(str(result.get("content") or result.get("error") or result))
         return True, current_scope, current_urgency, active_session_id
     if command == "/write":
         if len(parts) >= 3:
@@ -1703,44 +1717,44 @@ async def _handle_repl_command(
             target_session_id = active_session_id
             user_input = parts[1]
         else:
-            print("Usage: /write SESSION_ID TEXT  (or /enter SESSION_ID then /write TEXT)")
+            event_handler._print("Usage: /write SESSION_ID TEXT  (or /enter SESSION_ID then /write TEXT)")
             return True, current_scope, current_urgency, active_session_id
         known_session_ids.add(target_session_id)
         result = await session.call_tool_direct("interactive_session_write", {"session_id": target_session_id, "input": user_input})
-        print(str(result.get("content") or result.get("error") or result))
+        event_handler._print(str(result.get("content") or result.get("error") or result))
         return True, current_scope, current_urgency, active_session_id
     if command == "/close":
         target_session_id = parts[1] if len(parts) == 2 else active_session_id
         if not target_session_id:
-            print("Usage: /close SESSION_ID  (or /enter SESSION_ID first)")
+            event_handler._print("Usage: /close SESSION_ID  (or /enter SESSION_ID first)")
             return True, current_scope, current_urgency, active_session_id
         result = await session.call_tool_direct("interactive_session_close", {"session_id": target_session_id})
-        print(str(result.get("content") or result.get("error") or result))
+        event_handler._print(str(result.get("content") or result.get("error") or result))
         if bool(result.get("success")):
             known_session_ids.discard(target_session_id)
         if target_session_id == active_session_id:
             active_session_id = None
         return True, current_scope, current_urgency, active_session_id
 
-    print(f"Unknown command: {command}. Type /help for commands.")
+    event_handler._print(f"Unknown command: {command}. Type /help for commands.")
     return True, current_scope, current_urgency, active_session_id
 
 
 def _list_runs(args: argparse.Namespace) -> int:
     sessions = load_session_list(str(PROJECT_DIR))[: max(args.limit, 0)]
     if not sessions:
-        print("No runs found.")
+        event_handler._print("No runs found.")
         return 0
 
-    print(f"{'Idx':>3} {'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
-    print(f"{'-'*3} {'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
+    event_handler._print(f"{'Idx':>3} {'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
+    event_handler._print(f"{'-'*3} {'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
     for idx, metadata in enumerate(sessions):
         run_id = str(metadata.get("run_id") or "unknown")[:36]
         status = str(metadata.get("status") or "unknown")[:12]
         model = str(metadata.get("model") or "unknown")[:24]
         tool_count = metadata.get("total_tool_calls", metadata.get("available_tool_count", ""))
         transcript = _format_run_path(str(metadata.get("run_id") or "unknown"), "transcript.md")
-        print(f"{idx:>3} {run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
+        event_handler._print(f"{idx:>3} {run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
     return 0
 
 
