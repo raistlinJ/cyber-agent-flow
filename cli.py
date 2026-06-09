@@ -1197,16 +1197,83 @@ async def _run_chat_with_bar(
         pass
     except Exception:
         pass  # Don't let unexpected errors leak out
-    finally:
-        try:
-            loop.remove_signal_handler(signal.SIGINT)
-        except Exception:
-            pass
+
+    # ── Handle force_analyze follow-up INSIDE the bar ──────────────────
+    # If the user chose /force_analyze, chain the analysis chat immediately
+    # without tearing down the bar. This avoids the flash/gap where the
+    # prompt disappears while the _chat_lock drains.
+    if next_prompt_override:
+        event_handler._output(
+            f"{Colors.DIM}[status] Cleaning up cancelled task, then analysing...{Colors.RESET}"
+        )
+        # Reset the stdin handler state for the follow-up chat.
+        _cancel_fired = False
+        cancel_event_2 = asyncio.Event()
+        chat_task_2 = asyncio.create_task(
+            session.chat(next_prompt_override, cancel_event_2,
+                         scope=scope, urgency=urgency)
+        )
+        # Re-bind the stdin handler to the new task/event.
         try:
             loop.remove_reader(sys.stdin)
         except Exception:
             pass
-        event_handler.deactivate_bar()
+
+        def _stdin_handler_2():
+            nonlocal _cancel_fired
+            ch = sys.stdin.read(1)
+            line = event_handler._input_buffer.add_char(ch)
+            if line is None:
+                if ch == "\t":
+                    matches = event_handler._input_buffer.tab_complete()
+                    if matches:
+                        event_handler._output("  ".join(matches))
+                event_handler._redraw_prompt_line()
+                return
+            cmd = line.strip()
+            if not cmd:
+                event_handler._redraw_prompt_line()
+                return
+            if cmd not in ("/cancel", "/force_analyze"):
+                event_handler._redraw_prompt_line()
+                return
+            if _cancel_fired:
+                event_handler._output(
+                    f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}"
+                )
+                return
+            _cancel_fired = True
+            event_handler._output(
+                f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}"
+            )
+            cancel_event_2.set()
+            chat_task_2.cancel()
+
+        loop.add_reader(sys.stdin, _stdin_handler_2)
+        try:
+            await chat_task_2
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.remove_reader(sys.stdin)
+            except Exception:
+                pass
+        # Clear the override so the caller doesn't try to run it again.
+        next_prompt_override = None
+
+    # ── Tear down ──────────────────────────────────────────────────────
+    try:
+        loop.remove_signal_handler(signal.SIGINT)
+    except Exception:
+        pass
+    try:
+        loop.remove_reader(sys.stdin)
+    except Exception:
+        pass
+    event_handler.deactivate_bar()
 
     return next_prompt_override
 
@@ -1220,17 +1287,11 @@ async def _run_prompt(args: argparse.Namespace) -> int:
     try:
         session = await _start_session(args, event_handler)
 
-        override = await _run_chat_with_bar(
+        await _run_chat_with_bar(
             session, prompt, event_handler,
             scope=_effective_scope(args), urgency=_effective_urgency(args),
         )
-
-        if override:
-            await asyncio.sleep(0.1)
-            await _run_chat_with_bar(
-                session, override, event_handler,
-                scope=_effective_scope(args), urgency=_effective_urgency(args),
-            )
+        # Note: force_analyze follow-up is handled inside _run_chat_with_bar.
 
         print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
@@ -1339,14 +1400,8 @@ async def _chat(args: argparse.Namespace) -> int:
                     session, prompt, event_handler,
                     scope=current_scope, urgency=current_urgency,
                 )
-
-                if override:
-                    await asyncio.sleep(0.1)
-                    await _run_chat_with_bar(
-                        session, override, event_handler,
-                        scope=current_scope, urgency=current_urgency,
-                    )
-                    
+                # Note: force_analyze follow-up is now handled INSIDE
+                # _run_chat_with_bar, so override is always None here.
         print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
