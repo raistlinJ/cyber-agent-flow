@@ -1277,6 +1277,10 @@ async def _run_chat_with_bar(
 
     if reader_task:
         reader_task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(reader_task), timeout=0.5)
+        except Exception:
+            pass
     elif not is_async_stream:
         try:
             loop.remove_reader(event_handler.stream_in)
@@ -1287,10 +1291,8 @@ async def _run_chat_with_bar(
         event_handler._output(
             f"{Colors.DIM}[status] Cleaning up cancelled task, then analysing...{Colors.RESET}"
         )
-        # Reset state and swap the mutable refs so the SAME _stdin_handler
-        # targets the new task.  No need for a separate handler function.
         _cancel_fired = False
-        next_prompt_override_2 = next_prompt_override  # save before clearing
+        next_prompt_override_2 = next_prompt_override
         next_prompt_override = None
         cancel_event_2 = asyncio.Event()
         chat_task_2 = asyncio.create_task(
@@ -1301,6 +1303,14 @@ async def _run_chat_with_bar(
         _event_ref[0] = cancel_event_2
         event_handler._input_buffer.clear()
         event_handler._echo_input()
+
+        # Restart reader so user can cancel the analysis too
+        reader_task_2 = None
+        if is_async_stream:
+            reader_task_2 = asyncio.create_task(_async_ssh_reader())
+        else:
+            loop.add_reader(event_handler.stream_in, _sync_stdin_handler)
+
         try:
             await chat_task_2
         except asyncio.CancelledError:
@@ -1308,16 +1318,21 @@ async def _run_chat_with_bar(
         except Exception:
             pass
 
+        if reader_task_2:
+            reader_task_2.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(reader_task_2), timeout=0.5)
+            except Exception:
+                pass
+        elif not is_async_stream:
+            try:
+                loop.remove_reader(event_handler.stream_in)
+            except Exception:
+                pass
+
     # ── Tear down ──────────────────────────────────────────────────────
     try:
         loop.remove_signal_handler(signal.SIGINT)
-    except Exception:
-        pass
-    try:
-        try:
-            loop.remove_reader(event_handler.stream_in)
-        except Exception:
-            pass
     except Exception:
         pass
     event_handler.deactivate_bar()
@@ -1399,10 +1414,8 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
         while True:
             now = time.monotonic()
             if now >= next_session_refresh_at:
-                try:
-                    await _refresh_known_session_ids(session, known_session_ids)
-                except Exception:
-                    pass
+                # Fire refresh in background so the prompt appears immediately
+                asyncio.create_task(_refresh_known_session_ids(session, known_session_ids))
                 next_session_refresh_at = now + session_refresh_interval_seconds
 
             try:
