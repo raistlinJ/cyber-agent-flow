@@ -1,6 +1,8 @@
 # CyberAgentFlow
 
-A privacy-preserving, fully localized agentic penetration testing platform. CyberAgentFlow bridges the gap between Large Language Models (LLMs) and native cybersecurity toolchains via the Model Context Protocol (MCP).
+A privacy-preserving, fully localized agentic penetration testing platform designed for deep telemetry and methodology research. CyberAgentFlow bridges the gap between Large Language Models (LLMs) and native cybersecurity toolchains via the Model Context Protocol (MCP).
+
+More than just a command-execution wrapper, CyberAgentFlow acts as a **cybersecurity workflow engine**. It meticulously collects data across live engagements—including LLM reasoning trajectories, raw tool outputs, network captures, and analyst keystrokes. This rich telemetry enables security teams to analyze operator workflows, identify bottlenecks, and continuously engineer improvements (such as custom MCP tools and tailored prompt strategies) both *during* live cyber analysis events and *after* in post-mortem reviews.
 
 Unlike cloud-dependent conversational hacking tools, this platform ensures that your proprietary network layouts, vulnerability telemetry, and zero-day discoveries **never leave your perimeter** — everything is orchestrated through a local LLM instance (such as Ollama).
 
