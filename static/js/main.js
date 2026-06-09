@@ -2806,6 +2806,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const cmdType = kaliCommandType.value;
         const contextWindow = parseInt(document.getElementById('context-window').value, 10);
         const maxTurns = parseInt(maxTurnsInput.value, 10);
+        const toolTimeout = parseInt(toolTimeoutInput?.value || 120, 10);
         const keyloggerEnabled = Boolean(keyloggerEnableToggle?.checked);
         const networkCaptureEnabled = Boolean(logNetworkCaptureToggle?.checked);
         const syscallLoggerEnabled = Boolean(logSyscallsToggle?.checked);
