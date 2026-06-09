@@ -37,7 +37,7 @@ else
     echo "[cyber-agentflow] Verifying installed Python dependencies..."
     if ! "$PYTHON_BIN" -c "import flask, requests, mcp, ollama, pynput" >/dev/null 2>&1; then
         echo "[cyber-agentflow] ERROR: Required Python dependencies are missing from $VENV_DIR"
-        echo "[cyber-agentflow] Run ./start_local.sh --build once while online to install them."
+        echo "[cyber-agentflow] Run ./start_ws.sh --build once while online to install them."
         exit 1
     fi
 fi

@@ -112,7 +112,7 @@ fi
 echo ""
 echo "[prerequisites] Installation complete!"
 echo "[prerequisites] To enable the system keylogger in the WebUI:"
-echo "[prerequisites]   1. Start the WebUI: ./start_local.sh"
+echo "[prerequisites]   1. Start the WebUI: ./start_ws.sh"
 echo "[prerequisites]   2. Go to Configuration tab"
 echo "[prerequisites]   3. Enable 'Keylogging' toggle"
 echo ""

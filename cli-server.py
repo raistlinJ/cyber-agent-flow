@@ -88,6 +88,9 @@ async def handle_client(process: asyncssh.SSHServerProcess, base_args: argparse.
         import shlex
         try:
             cmd_parts = shlex.split(client_cmd)
+            # If the user only provided flags (e.g. --context-window), default to chat command
+            if cmd_parts and cmd_parts[0] not in ("chat", "run", "list-runs"):
+                cmd_parts.insert(0, "chat")
             args = parser.parse_args(cmd_parts)
         except SystemExit as e:
             process.stdout.write(f"Command parse error. Exit code {e.code}\n")
@@ -105,6 +108,12 @@ async def handle_client(process: asyncssh.SSHServerProcess, base_args: argparse.
     for k, v in vars(base_args).items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
+            
+    # Reconstruct prompt_text as cli._resolve_session_args does
+    prompt_parts = list(getattr(args, "prompt", []) or [])
+    if prompt_parts and prompt_parts[0] == "--":
+        prompt_parts = prompt_parts[1:]
+    args.prompt_text = " ".join(prompt_parts).strip() if prompt_parts else ""
             
     # Re-validate session args
     try:

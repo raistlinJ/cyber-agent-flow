@@ -105,7 +105,7 @@ See [docs/configuration.md](docs/configuration.md) for all available options.
 ## Running the WebUI
 
 ```bash
-./start_local.sh
+./start_ws.sh
 ```
 
 This bootstraps the virtualenv if needed and starts the Flask server. By default it listens on **`http://localhost:5055`**.

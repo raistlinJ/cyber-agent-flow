@@ -87,6 +87,9 @@ Clients can append arguments after `--` to override the server's default config 
 # Use a different model for this session
 ssh -p 2222 kali@your-server-ip -- --model qwen3-coder
 
+# Increase the context window size
+ssh -p 2222 kali@your-server-ip -- --context-window 16384
+
 # Enable verbose logging for this session only
 ssh -p 2222 kali@your-server-ip -- --verbose
 
@@ -156,3 +159,6 @@ This is a `RuntimeWarning` indicating that the async SSH streams are not being a
 
 ### "asyncssh: module not found"
 The `asyncssh` package is not installed in the current environment. Run `./start_server.sh --build` to automatically install it into the project's virtual environment.
+
+### "cli-server.py: error: argument command: invalid choice"
+If you pass arguments via SSH (e.g., `ssh -p 2222 user@host -- --context-window 16384`) and receive an `invalid choice` error, you are likely running an older version of the code that required you to explicitly pass the `chat` subcommand first (`ssh ... -- chat --context-window ...`). Update to the latest code, which automatically defaults to `chat` when only flags are provided.
