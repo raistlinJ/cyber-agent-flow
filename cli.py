@@ -587,7 +587,7 @@ class TerminalEventHandler:
     """
 
     _SEPARATOR_CHAR = "─"
-    _RESERVED_LINES = 2  # separator + input line
+    _RESERVED_LINES = 3  # status + separator + input line
 
     def __init__(self, *, tool_output_chars: int = 6000, verbose: bool = False, known_session_ids: set[str] | None = None):
         self.session: MCPSession | None = None
@@ -617,13 +617,11 @@ class TerminalEventHandler:
         scroll_end = max(h - self._RESERVED_LINES, 1)
         # Set scroll region to top portion
         sys.stdout.write(f"\033[1;{scroll_end}r")
-        # Draw separator on row H-1
-        sys.stdout.write(f"\033[{h - 1};1H\033[K")
-        sys.stdout.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
-        # Draw prompt on row H
-        self._redraw_bar()
-        # Move cursor back into scroll region
-        sys.stdout.write(f"\033[{scroll_end};1H")
+        # Draw the 3 fixed bottom lines
+        self._draw_bottom_area()
+        # Position cursor at the prompt line for user input
+        sys.stdout.write(f"\033[{h};1H")
+        sys.stdout.write(self.prompt_prefix)
         sys.stdout.flush()
         self._ensure_timer_started()
 
@@ -635,55 +633,74 @@ class TerminalEventHandler:
         h, _ = self._term_size()
         # Reset scroll region to full terminal
         sys.stdout.write("\033[r")
-        # Clear the separator and prompt lines
+        # Clear the 3 bottom lines
+        sys.stdout.write(f"\033[{h - 2};1H\033[K")
         sys.stdout.write(f"\033[{h - 1};1H\033[K")
         sys.stdout.write(f"\033[{h};1H\033[K")
         # Move cursor to a clean position
-        sys.stdout.write(f"\033[{h - 1};1H")
+        sys.stdout.write(f"\033[{h - 2};1H")
         sys.stdout.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             self._timer_task = None
 
-    def _redraw_bar(self) -> None:
-        """Redraw the prompt line at the very bottom of the terminal."""
+    def _draw_bottom_area(self) -> None:
+        """Draw all 3 fixed lines: status (H-2), separator (H-1), prompt (H)."""
         h, w = self._term_size()
-        sys.stdout.write(f"\033[s")  # save cursor
-        # Redraw separator
+        # Row H-2: Tool status
+        sys.stdout.write(f"\033[{h - 2};1H\033[K")
+        self._write_status_content()
+        # Row H-1: Separator
         sys.stdout.write(f"\033[{h - 1};1H\033[K")
         sys.stdout.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
-        # Redraw prompt with status
+        # Row H: Prompt
         sys.stdout.write(f"\033[{h};1H\033[K")
+        sys.stdout.write(self.prompt_prefix)
+
+    def _write_status_content(self) -> None:
+        """Write the status text (no cursor movement, no flush)."""
         if self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
             sys.stdout.write(
-                f"{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} "
-                f"for {elapsed}s… type /cancel or /force_analyze]{Colors.RESET}"
+                f" {Colors.ACCENT_PRIMARY}⏱{Colors.RESET} "
+                f"{Colors.TEXT_PRIMARY}{self._active_tool_name}{Colors.RESET} "
+                f"{Colors.DIM}{elapsed}s "
+                f"│ /cancel  /force_analyze{Colors.RESET}"
             )
         else:
-            sys.stdout.write(f"{self.prompt_prefix}{Colors.DIM}waiting…{Colors.RESET}")
-        sys.stdout.write(f"\033[u")  # restore cursor
+            sys.stdout.write(f" {Colors.DIM}waiting…{Colors.RESET}")
+
+    def _update_status_line(self) -> None:
+        """Update just the tool status line (H-2) without touching the prompt."""
+        h, _ = self._term_size()
+        sys.stdout.write("\033[s")  # save cursor
+        sys.stdout.write(f"\033[{h - 2};1H\033[K")
+        self._write_status_content()
+        sys.stdout.write("\033[u")  # restore cursor
+        sys.stdout.flush()
+
+    def _redraw_prompt_line(self) -> None:
+        """Redraw the prompt line (H) and position cursor there for typing."""
+        h, _ = self._term_size()
+        sys.stdout.write(f"\033[{h};1H\033[K")
+        sys.stdout.write(self.prompt_prefix)
         sys.stdout.flush()
 
     # ── Output routing ────────────────────────────────────────────────
 
     def _output(self, text: str) -> None:
-        """Print *text* to the correct area depending on bar state."""
+        """Print *text* in the scroll region; cursor returns to prompt."""
         if not self._bar_active:
             print(text)
             return
         h, _ = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
-        # Save cursor, move to bottom of scroll region, print (causes scroll)
-        sys.stdout.write(f"\033[s")
-        sys.stdout.write(f"\033[{scroll_end};1H")
-        # Each line of text needs a newline first to scroll the region up
+        sys.stdout.write("\033[s")  # save cursor (at prompt line)
+        sys.stdout.write(f"\033[{scroll_end};1H")  # move to bottom of scroll region
         for line in text.split("\n"):
-            sys.stdout.write(f"\n\033[K{line}")
-        sys.stdout.write(f"\033[u")  # restore cursor
+            sys.stdout.write(f"\n\033[K{line}")  # newline scrolls, then write
+        sys.stdout.write("\033[u")  # restore cursor to prompt
         sys.stdout.flush()
-        # Redraw the bar since the scroll may have shifted things
-        self._redraw_bar()
 
     def _output_err(self, text: str) -> None:
         """Print error text (routes to scroll region when bar active)."""
@@ -696,7 +713,7 @@ class TerminalEventHandler:
             while True:
                 await asyncio.sleep(1.0)
                 if self._bar_active:
-                    self._redraw_bar()
+                    self._update_status_line()
                 elif self._active_tool_name:
                     elapsed = int(time.monotonic() - self._tool_start_time)
                     sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
@@ -784,9 +801,11 @@ class TerminalEventHandler:
                 self.known_session_ids.discard(str(session_id).strip())
             self._output(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET} closed.")
 
-        # When bar is active, the timer loop handles the status line.
+        # When bar is active, update the status line immediately.
         # When bar is NOT active, draw an inline status after output.
-        if not self._bar_active and self._active_tool_name:
+        if self._bar_active:
+            self._update_status_line()
+        elif self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
             sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
             sys.stdout.flush()
@@ -998,6 +1017,7 @@ async def _run_prompt(args: argparse.Namespace) -> int:
         def _stdin_handler():
             nonlocal next_prompt_override, _cancel_fired
             line = sys.stdin.readline()
+            event_handler._redraw_prompt_line()  # clean up after Enter
             cmd = line.strip().lower()
             if cmd in {"/force_analyze", "/cancel", "/exit"}:
                 if _cancel_fired:
@@ -1155,6 +1175,7 @@ async def _chat(args: argparse.Namespace) -> int:
                 def _stdin_handler():
                     nonlocal next_prompt_override, _cancel_fired
                     line = sys.stdin.readline()
+                    event_handler._redraw_prompt_line()  # clean up after Enter
                     cmd = line.strip().lower()
                     if cmd in {"/force_analyze", "/cancel", "/exit"}:
                         if _cancel_fired:
