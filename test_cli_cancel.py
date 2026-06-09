@@ -555,3 +555,207 @@ class TestConfigLoading:
         resolved = dict(cli.BUILTIN_SESSION_DEFAULTS)
         with pytest.raises(ValueError, match="Unsupported"):
             cli._apply_config_value(resolved, "unknown_key", "value")
+
+
+# ---------------------------------------------------------------------------
+# 11. _InputBuffer character-by-character input
+# ---------------------------------------------------------------------------
+
+class TestInputBuffer:
+    def _make(self):
+        import cli
+        return cli._InputBuffer()
+
+    def test_regular_chars_build_text(self):
+        buf = self._make()
+        assert buf.add_char("h") is None
+        assert buf.add_char("i") is None
+        assert buf.text == "hi"
+
+    def test_enter_returns_line_and_clears(self):
+        buf = self._make()
+        buf.add_char("/")
+        buf.add_char("c")
+        buf.add_char("a")
+        line = buf.add_char("\n")
+        assert line == "/ca"
+        assert buf.text == ""
+
+    def test_carriage_return_also_submits(self):
+        buf = self._make()
+        buf.add_char("x")
+        assert buf.add_char("\r") == "x"
+
+    def test_backspace_deletes_last_char(self):
+        buf = self._make()
+        buf.add_char("a")
+        buf.add_char("b")
+        buf.add_char("\x7f")  # backspace
+        assert buf.text == "a"
+
+    def test_backspace_on_empty_is_noop(self):
+        buf = self._make()
+        buf.add_char("\x7f")
+        assert buf.text == ""
+
+    def test_ctrl_h_also_deletes(self):
+        buf = self._make()
+        buf.add_char("x")
+        buf.add_char("\x08")  # ctrl-h
+        assert buf.text == ""
+
+    def test_ctrl_u_clears_line(self):
+        buf = self._make()
+        buf.add_char("h")
+        buf.add_char("e")
+        buf.add_char("l")
+        buf.add_char("\x15")  # ctrl-u
+        assert buf.text == ""
+
+    def test_ctrl_w_deletes_last_word(self):
+        buf = self._make()
+        for ch in "/force ":
+            buf.add_char(ch)
+        buf.add_char("x")
+        buf.add_char("\x17")  # ctrl-w
+        assert buf.text == "/force "
+
+    def test_ctrl_w_on_single_word_clears_all(self):
+        buf = self._make()
+        for ch in "/cancel":
+            buf.add_char(ch)
+        buf.add_char("\x17")
+        assert buf.text == ""
+
+    def test_escape_sequence_swallowed(self):
+        """Arrow keys (\033[A) should be silently consumed."""
+        buf = self._make()
+        buf.add_char("x")
+        buf.add_char("\033")  # ESC
+        buf.add_char("[")    # bracket
+        buf.add_char("A")    # up arrow
+        assert buf.text == "x"  # no extra characters
+
+    def test_escape_sequence_with_tilde(self):
+        """Delete key (\033[3~) should be consumed."""
+        buf = self._make()
+        buf.add_char("y")
+        buf.add_char("\033")
+        buf.add_char("[")
+        buf.add_char("3")
+        buf.add_char("~")
+        assert buf.text == "y"
+
+    def test_non_printable_ignored(self):
+        buf = self._make()
+        buf.add_char("a")
+        buf.add_char("\x01")  # ctrl-a
+        buf.add_char("\x05")  # ctrl-e
+        assert buf.text == "a"
+
+    def test_clear_resets_everything(self):
+        buf = self._make()
+        buf.add_char("x")
+        buf.add_char("\033")  # start escape
+        buf.clear()
+        assert buf.text == ""
+        assert buf._in_escape is False
+
+
+# ---------------------------------------------------------------------------
+# 12. _InputBuffer tab completion
+# ---------------------------------------------------------------------------
+
+class TestInputBufferTabCompletion:
+    def _make(self):
+        import cli
+        return cli._InputBuffer()
+
+    def test_tab_on_empty_shows_all_completions(self):
+        buf = self._make()
+        matches = buf.tab_complete()
+        assert matches is not None
+        assert "/cancel" in matches
+        assert "/force_analyze" in matches
+        assert "/exit" in matches
+
+    def test_tab_unique_match_completes_fully(self):
+        buf = self._make()
+        for ch in "/ca":
+            buf.add_char(ch)
+        matches = buf.tab_complete()
+        assert matches is None  # uniquely completed
+        assert buf.text == "/cancel"
+
+    def test_tab_ambiguous_match_extends_common_prefix(self):
+        buf = self._make()
+        buf.add_char("/")
+        matches = buf.tab_complete()
+        # All start with "/" so prefix is "/" — no extension possible
+        assert matches is not None
+        assert len(matches) >= 2
+
+    def test_tab_no_match_returns_none(self):
+        buf = self._make()
+        for ch in "/zzz":
+            buf.add_char(ch)
+        matches = buf.tab_complete()
+        assert matches is None
+        assert buf.text == "/zzz"  # unchanged
+
+    def test_tab_force_prefix_completes(self):
+        buf = self._make()
+        for ch in "/f":
+            buf.add_char(ch)
+        matches = buf.tab_complete()
+        # Only /force_analyze starts with /f
+        assert matches is None
+        assert buf.text == "/force_analyze"
+
+    def test_tab_exit_prefix(self):
+        buf = self._make()
+        for ch in "/e":
+            buf.add_char(ch)
+        matches = buf.tab_complete()
+        assert matches is None
+        assert buf.text == "/exit"
+
+
+# ---------------------------------------------------------------------------
+# 13. Separator always visible
+# ---------------------------------------------------------------------------
+
+class TestSeparatorAlwaysVisible:
+    def test_print_separator_outputs_line(self, capsys):
+        import cli
+        handler = cli.TerminalEventHandler(tool_output_chars=4000)
+        handler._print_separator()
+        captured = capsys.readouterr()
+        assert "─" in captured.out
+
+    def test_deactivate_bar_preserves_separator_row(self):
+        """When deactivating, separator row (H-1) should NOT be cleared."""
+        import cli
+        handler = cli.TerminalEventHandler(tool_output_chars=4000)
+        old_stdout = sys.stdout
+        buf = io.StringIO()
+        sys.stdout = buf
+        try:
+            handler._bar_active = True
+            handler.deactivate_bar()
+            output = buf.getvalue()
+            # The separator at H-1 should not have \033[K (clear) applied to it
+            # during deactivation. We clear H-2 and H, but NOT H-1.
+            # Count how many clear-line sequences appear
+            clear_count = output.count("\\033[K") if "\\033[K" in output else output.count("\033[K")
+            # Should have 2 clears (status + prompt), not 3
+            assert clear_count == 2
+        finally:
+            sys.stdout = old_stdout
+
+    def test_handler_has_print_separator_method(self):
+        import cli
+        handler = cli.TerminalEventHandler(tool_output_chars=4000)
+        assert hasattr(handler, "_print_separator")
+        assert callable(handler._print_separator)
+

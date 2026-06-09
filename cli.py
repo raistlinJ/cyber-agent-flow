@@ -44,6 +44,13 @@ try:
 except Exception:
     readline = None
 
+try:
+    import termios
+    import tty
+    _HAS_TERMIOS = True
+except ImportError:
+    _HAS_TERMIOS = False
+
 from mcp_client import MCPSession
 from session_logger import load_session_list, make_run_id
 
@@ -567,23 +574,91 @@ def _format_run_path(run_id: str, filename: str = "") -> str:
     return str(path.relative_to(PROJECT_DIR))
 
 
+class _InputBuffer:
+    """Character buffer with tab-completion for slash commands during task execution."""
+
+    COMPLETIONS = ("/cancel", "/force_analyze", "/exit", "/help")
+
+    def __init__(self):
+        self.text = ""
+        self._in_escape = False
+
+    def add_char(self, ch: str) -> str | None:
+        """Process one character.  Returns the submitted line on Enter, else None."""
+        # Swallow ANSI escape sequences (arrow keys, etc.)
+        if self._in_escape:
+            if ch.isalpha() or ch == '~':
+                self._in_escape = False
+            return None
+        if ch == '\033':
+            self._in_escape = True
+            return None
+
+        if ch in ('\n', '\r'):
+            line = self.text
+            self.text = ""
+            return line
+        elif ch in ('\x7f', '\x08'):  # backspace / ctrl-h
+            if self.text:
+                self.text = self.text[:-1]
+            return None
+        elif ch == '\x15':  # Ctrl-U  – clear line
+            self.text = ""
+            return None
+        elif ch == '\x17':  # Ctrl-W  – delete last word
+            self.text = self.text.rstrip()
+            if ' ' in self.text:
+                self.text = self.text[:self.text.rfind(' ') + 1]
+            else:
+                self.text = ""
+            return None
+        elif ch.isprintable() and ord(ch) >= 32:
+            self.text += ch
+            return None
+        return None
+
+    def tab_complete(self) -> list[str] | None:
+        """Try to complete.  Returns a list of matches to display, or None if uniquely completed."""
+        if not self.text:
+            return list(self.COMPLETIONS)
+        matches = [c for c in self.COMPLETIONS if c.startswith(self.text)]
+        if len(matches) == 1:
+            self.text = matches[0]
+            return None  # completed
+        elif matches:
+            prefix = os.path.commonprefix(matches)
+            if len(prefix) > len(self.text):
+                self.text = prefix
+            return matches
+        return None
+
+    def clear(self):
+        self.text = ""
+        self._in_escape = False
+
+
 class TerminalEventHandler:
     """Handles agent events and renders them in the terminal.
 
     When the persistent prompt is activated (during task execution), the
     terminal is split into two regions using ANSI scroll regions:
 
-        ┌─────────────────────────────┐
-        │  (output scrolls here)      │  <- scroll region rows 1..H-2
-        │  [tool] bash {"cmd":"..."}  │
-        │  [result] ...               │
-        ├─────────────────────────────┤
-        │  ──────────────────────────  │  <- separator row H-1
-        │  caf> [running bash 5s...]  │  <- input row H
-        └─────────────────────────────┘
+        ┌─────────────────────────────────────────┐
+        │  (output scrolls here)                  │  ← scroll region rows 1..H-3
+        │  [tool] bash {"cmd":"..."}              │
+        │  [result] ...                           │
+        ├─────────────────────────────────────────┤
+        │  ⏱ bash 5s │ /cancel  /force_analyze    │  ← status row H-2
+        │  ─────────────────────────────────────── │  ← separator row H-1
+        │  caf> /canc█                            │  ← input row H (cursor here)
+        └─────────────────────────────────────────┘
+
+    During task execution the terminal is placed in cbreak mode (no echo,
+    character-at-a-time input) so we can manage cursor position, echo typed
+    text at the prompt line, and provide tab-completion for slash commands.
 
     All output is routed through ``_output()`` which writes inside the
-    scroll region so the bottom bar stays fixed.
+    scroll region and uses save/restore cursor to keep the prompt intact.
     """
 
     _SEPARATOR_CHAR = "─"
@@ -600,6 +675,9 @@ class TerminalEventHandler:
         self.prompt_prefix = f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
         # Persistent prompt state
         self._bar_active = False
+        # Character-by-character input buffer (used during task execution)
+        self._input_buffer = _InputBuffer()
+        self._old_term_settings: list | None = None
 
     # ── Persistent bottom-bar management ──────────────────────────────
 
@@ -613,6 +691,7 @@ class TerminalEventHandler:
         if self._bar_active:
             return
         self._bar_active = True
+        self._input_buffer.clear()
         h, w = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
         # Set scroll region to top portion
@@ -623,6 +702,13 @@ class TerminalEventHandler:
         sys.stdout.write(f"\033[{h};1H")
         sys.stdout.write(self.prompt_prefix)
         sys.stdout.flush()
+        # Switch to cbreak mode so we get characters one-at-a-time with no echo
+        if _HAS_TERMIOS and sys.stdin.isatty():
+            try:
+                self._old_term_settings = termios.tcgetattr(sys.stdin)
+                tty.setcbreak(sys.stdin.fileno())
+            except Exception:
+                self._old_term_settings = None
         self._ensure_timer_started()
 
     def deactivate_bar(self) -> None:
@@ -630,15 +716,22 @@ class TerminalEventHandler:
         if not self._bar_active:
             return
         self._bar_active = False
+        # Restore terminal settings BEFORE any I/O so readline works again
+        if self._old_term_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term_settings)
+            except Exception:
+                pass
+            self._old_term_settings = None
+        self._input_buffer.clear()
         h, _ = self._term_size()
         # Reset scroll region to full terminal
         sys.stdout.write("\033[r")
-        # Clear the 3 bottom lines
+        # Clear status and prompt lines, keep separator
         sys.stdout.write(f"\033[{h - 2};1H\033[K")
-        sys.stdout.write(f"\033[{h - 1};1H\033[K")
         sys.stdout.write(f"\033[{h};1H\033[K")
-        # Move cursor to a clean position
-        sys.stdout.write(f"\033[{h - 2};1H")
+        # Move cursor just below the separator
+        sys.stdout.write(f"\033[{h};1H")
         sys.stdout.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
@@ -662,13 +755,13 @@ class TerminalEventHandler:
         if self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
             sys.stdout.write(
-                f" {Colors.ACCENT_PRIMARY}⏱{Colors.RESET} "
+                f" {Colors.ACCENT_PRIMARY}\u23f1{Colors.RESET} "
                 f"{Colors.TEXT_PRIMARY}{self._active_tool_name}{Colors.RESET} "
                 f"{Colors.DIM}{elapsed}s "
-                f"│ /cancel  /force_analyze{Colors.RESET}"
+                f"\u2502 /cancel  /force_analyze{Colors.RESET}"
             )
         else:
-            sys.stdout.write(f" {Colors.DIM}waiting…{Colors.RESET}")
+            sys.stdout.write(f" {Colors.DIM}waiting\u2026{Colors.RESET}")
 
     def _update_status_line(self) -> None:
         """Update just the tool status line (H-2) without touching the prompt."""
@@ -679,12 +772,27 @@ class TerminalEventHandler:
         sys.stdout.write("\033[u")  # restore cursor
         sys.stdout.flush()
 
-    def _redraw_prompt_line(self) -> None:
-        """Redraw the prompt line (H) and position cursor there for typing."""
+    def _echo_input(self) -> None:
+        """Redraw the prompt line with the current input buffer text."""
+        if not self._bar_active:
+            return
         h, _ = self._term_size()
-        sys.stdout.write(f"\033[{h};1H\033[K")
-        sys.stdout.write(self.prompt_prefix)
+        buf_text = self._input_buffer.text
+        sys.stdout.write(f"\033[{h};1H\033[K")  # move to row H, clear
+        sys.stdout.write(f"{self.prompt_prefix}{buf_text}")
         sys.stdout.flush()
+
+    def _redraw_prompt_line(self) -> None:
+        """Redraw the prompt line (H), clearing any typed text."""
+        if not self._bar_active:
+            return
+        self._input_buffer.clear()
+        self._echo_input()
+
+    def _print_separator(self) -> None:
+        """Print a separator line (used in normal REPL mode between output and prompt)."""
+        _, w = self._term_size()
+        print(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
 
     # ── Output routing ────────────────────────────────────────────────
 
@@ -1016,9 +1124,21 @@ async def _run_prompt(args: argparse.Namespace) -> int:
             
         def _stdin_handler():
             nonlocal next_prompt_override, _cancel_fired
-            line = sys.stdin.readline()
-            event_handler._redraw_prompt_line()  # clean up after Enter
+            ch = sys.stdin.read(1)
+            # Tab completion
+            if ch == '\t':
+                matches = event_handler._input_buffer.tab_complete()
+                event_handler._echo_input()
+                if matches:
+                    event_handler._output(f"{Colors.DIM}  {' '.join(matches)}{Colors.RESET}")
+                return
+            line = event_handler._input_buffer.add_char(ch)
+            event_handler._echo_input()
+            if line is None:
+                return  # still typing
             cmd = line.strip().lower()
+            if not cmd:
+                return
             if cmd in {"/force_analyze", "/cancel", "/exit"}:
                 if _cancel_fired:
                     event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
@@ -1122,6 +1242,7 @@ async def _chat(args: argparse.Namespace) -> int:
             try:
                 prompt_str = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
                 event_handler.prompt_prefix = prompt_str
+                event_handler._print_separator()
                 prompt = input(prompt_str).strip()
             except EOFError:
                 print()
@@ -1174,9 +1295,21 @@ async def _chat(args: argparse.Namespace) -> int:
                     
                 def _stdin_handler():
                     nonlocal next_prompt_override, _cancel_fired
-                    line = sys.stdin.readline()
-                    event_handler._redraw_prompt_line()  # clean up after Enter
+                    ch = sys.stdin.read(1)
+                    # Tab completion
+                    if ch == '\t':
+                        matches = event_handler._input_buffer.tab_complete()
+                        event_handler._echo_input()
+                        if matches:
+                            event_handler._output(f"{Colors.DIM}  {' '.join(matches)}{Colors.RESET}")
+                        return
+                    line = event_handler._input_buffer.add_char(ch)
+                    event_handler._echo_input()
+                    if line is None:
+                        return  # still typing
                     cmd = line.strip().lower()
+                    if not cmd:
+                        return
                     if cmd in {"/force_analyze", "/cancel", "/exit"}:
                         if _cancel_fired:
                             event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
