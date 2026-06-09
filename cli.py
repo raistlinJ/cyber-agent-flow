@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import shutil
 import sys
 import time
 from typing import Any
@@ -567,6 +568,27 @@ def _format_run_path(run_id: str, filename: str = "") -> str:
 
 
 class TerminalEventHandler:
+    """Handles agent events and renders them in the terminal.
+
+    When the persistent prompt is activated (during task execution), the
+    terminal is split into two regions using ANSI scroll regions:
+
+        ┌─────────────────────────────┐
+        │  (output scrolls here)      │  <- scroll region rows 1..H-2
+        │  [tool] bash {"cmd":"..."}  │
+        │  [result] ...               │
+        ├─────────────────────────────┤
+        │  ──────────────────────────  │  <- separator row H-1
+        │  caf> [running bash 5s...]  │  <- input row H
+        └─────────────────────────────┘
+
+    All output is routed through ``_output()`` which writes inside the
+    scroll region so the bottom bar stays fixed.
+    """
+
+    _SEPARATOR_CHAR = "─"
+    _RESERVED_LINES = 2  # separator + input line
+
     def __init__(self, *, tool_output_chars: int = 6000, verbose: bool = False, known_session_ids: set[str] | None = None):
         self.session: MCPSession | None = None
         self.tool_output_chars = tool_output_chars
@@ -576,12 +598,106 @@ class TerminalEventHandler:
         self._tool_start_time: float = 0.0
         self._timer_task: asyncio.Task | None = None
         self.prompt_prefix = f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
+        # Persistent prompt state
+        self._bar_active = False
+
+    # ── Persistent bottom-bar management ──────────────────────────────
+
+    def _term_size(self) -> tuple[int, int]:
+        """Return (lines, columns)."""
+        ts = shutil.get_terminal_size()
+        return ts.lines, ts.columns
+
+    def activate_bar(self) -> None:
+        """Enter split-terminal mode: scroll region on top, fixed bar at bottom."""
+        if self._bar_active:
+            return
+        self._bar_active = True
+        h, w = self._term_size()
+        scroll_end = max(h - self._RESERVED_LINES, 1)
+        # Set scroll region to top portion
+        sys.stdout.write(f"\033[1;{scroll_end}r")
+        # Draw separator on row H-1
+        sys.stdout.write(f"\033[{h - 1};1H\033[K")
+        sys.stdout.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
+        # Draw prompt on row H
+        self._redraw_bar()
+        # Move cursor back into scroll region
+        sys.stdout.write(f"\033[{scroll_end};1H")
+        sys.stdout.flush()
+        self._ensure_timer_started()
+
+    def deactivate_bar(self) -> None:
+        """Exit split-terminal mode and restore normal scrolling."""
+        if not self._bar_active:
+            return
+        self._bar_active = False
+        h, _ = self._term_size()
+        # Reset scroll region to full terminal
+        sys.stdout.write("\033[r")
+        # Clear the separator and prompt lines
+        sys.stdout.write(f"\033[{h - 1};1H\033[K")
+        sys.stdout.write(f"\033[{h};1H\033[K")
+        # Move cursor to a clean position
+        sys.stdout.write(f"\033[{h - 1};1H")
+        sys.stdout.flush()
+        if self._timer_task and not self._timer_task.done():
+            self._timer_task.cancel()
+            self._timer_task = None
+
+    def _redraw_bar(self) -> None:
+        """Redraw the prompt line at the very bottom of the terminal."""
+        h, w = self._term_size()
+        sys.stdout.write(f"\033[s")  # save cursor
+        # Redraw separator
+        sys.stdout.write(f"\033[{h - 1};1H\033[K")
+        sys.stdout.write(f"{Colors.DIM}{self._SEPARATOR_CHAR * w}{Colors.RESET}")
+        # Redraw prompt with status
+        sys.stdout.write(f"\033[{h};1H\033[K")
+        if self._active_tool_name:
+            elapsed = int(time.monotonic() - self._tool_start_time)
+            sys.stdout.write(
+                f"{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} "
+                f"for {elapsed}s… type /cancel or /force_analyze]{Colors.RESET}"
+            )
+        else:
+            sys.stdout.write(f"{self.prompt_prefix}{Colors.DIM}waiting…{Colors.RESET}")
+        sys.stdout.write(f"\033[u")  # restore cursor
+        sys.stdout.flush()
+
+    # ── Output routing ────────────────────────────────────────────────
+
+    def _output(self, text: str) -> None:
+        """Print *text* to the correct area depending on bar state."""
+        if not self._bar_active:
+            print(text)
+            return
+        h, _ = self._term_size()
+        scroll_end = max(h - self._RESERVED_LINES, 1)
+        # Save cursor, move to bottom of scroll region, print (causes scroll)
+        sys.stdout.write(f"\033[s")
+        sys.stdout.write(f"\033[{scroll_end};1H")
+        # Each line of text needs a newline first to scroll the region up
+        for line in text.split("\n"):
+            sys.stdout.write(f"\n\033[K{line}")
+        sys.stdout.write(f"\033[u")  # restore cursor
+        sys.stdout.flush()
+        # Redraw the bar since the scroll may have shifted things
+        self._redraw_bar()
+
+    def _output_err(self, text: str) -> None:
+        """Print error text (routes to scroll region when bar active)."""
+        self._output(text)
+
+    # ── Timer ─────────────────────────────────────────────────────────
 
     async def _timer_loop(self) -> None:
         try:
             while True:
                 await asyncio.sleep(1.0)
-                if self._active_tool_name:
+                if self._bar_active:
+                    self._redraw_bar()
+                elif self._active_tool_name:
                     elapsed = int(time.monotonic() - self._tool_start_time)
                     sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
                     sys.stdout.flush()
@@ -589,12 +705,12 @@ class TerminalEventHandler:
             pass
 
     def _clear_timer_line(self) -> None:
-        if self._active_tool_name:
+        if not self._bar_active and self._active_tool_name:
             sys.stdout.write("\r\033[K")
             sys.stdout.flush()
 
     def _ensure_timer_started(self) -> None:
-        if self._timer_task is None:
+        if self._timer_task is None or self._timer_task.done():
             try:
                 asyncio.get_running_loop()
                 self._timer_task = asyncio.create_task(self._timer_loop())
@@ -604,12 +720,14 @@ class TerminalEventHandler:
     def bind(self, session: MCPSession) -> None:
         self.session = session
 
+    # ── Event dispatch ────────────────────────────────────────────────
+
     def __call__(self, event: dict[str, Any]) -> None:
         self._clear_timer_line()
         self._ensure_timer_started()
-        
+
         event_type = str(event.get("type") or "")
-        
+
         if event_type == "tool_call":
             self._active_tool_name = str(event.get("tool") or "tool")
             self._tool_start_time = time.monotonic()
@@ -621,27 +739,27 @@ class TerminalEventHandler:
         elif event_type == "service_started":
             tools = event.get("tools") or []
             run_id = event.get("run_id") or "unknown"
-            print(f"\n{Colors.ACCENT_SUCCESS}[started]{Colors.RESET} run_id={Colors.TEXT_PRIMARY}{run_id}{Colors.RESET} tools={Colors.TEXT_PRIMARY}{len(tools)}{Colors.RESET}")
+            self._output(f"\n{Colors.ACCENT_SUCCESS}[started]{Colors.RESET} run_id={Colors.TEXT_PRIMARY}{run_id}{Colors.RESET} tools={Colors.TEXT_PRIMARY}{len(tools)}{Colors.RESET}")
         elif event_type == "service_stopped":
-            print(f"\n{Colors.ACCENT_WARNING}[stopped]{Colors.RESET} Session stopped.")
+            self._output(f"\n{Colors.ACCENT_WARNING}[stopped]{Colors.RESET} Session stopped.")
         elif event_type == "response":
             text = str(event.get("text") or "").strip()
             if text:
-                print(f"\n{Colors.ACCENT_PRIMARY}Assistant:{Colors.RESET}\n{text}\n")
+                self._output(f"\n{Colors.ACCENT_PRIMARY}Assistant:{Colors.RESET}\n{text}\n")
         elif event_type == "tool_call":
             tool = event.get("tool") or "tool"
             args = _compact_json(event.get("args") or {})
-            print(f"\n{Colors.ACCENT_PRIMARY}[tool]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} {Colors.TEXT_SECONDARY}{args}{Colors.RESET}")
+            self._output(f"\n{Colors.ACCENT_PRIMARY}[tool]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} {Colors.TEXT_SECONDARY}{args}{Colors.RESET}")
         elif event_type == "tool_result":
             self._print_tool_result(event)
         elif event_type == "error":
-            print(f"\n{Colors.ACCENT_ERROR}[error] {event.get('message') or 'Unknown error.'}{Colors.RESET}", file=sys.stderr)
+            self._output_err(f"\n{Colors.ACCENT_ERROR}[error] {event.get('message') or 'Unknown error.'}{Colors.RESET}")
         elif event_type == "context_usage":
             if self.verbose:
                 used = event.get("used", "?")
                 budget = event.get("budget", "?")
                 model_max = event.get("model_max", "?")
-                print(f"{Colors.TEXT_SECONDARY}[context] used={used} budget={budget} model_max={model_max}{Colors.RESET}")
+                self._output(f"{Colors.TEXT_SECONDARY}[context] used={used} budget={budget} model_max={model_max}{Colors.RESET}")
         elif event_type == "post_tool_reply_decision":
             self._resolve_post_tool_reply(event)
         elif event_type == "dangerous_tool_approval":
@@ -649,31 +767,33 @@ class TerminalEventHandler:
         elif event_type == "tool_timeout_decision":
             self._resolve_tool_timeout(event)
         elif event_type == "chat_done":
-            print(f"{Colors.ACCENT_SUCCESS}[done]{Colors.RESET} {Colors.BOLD}{event.get('message') or 'Ready for next prompt.'}{Colors.RESET}")
+            self._output(f"{Colors.ACCENT_SUCCESS}[done]{Colors.RESET} {Colors.BOLD}{event.get('message') or 'Ready for next prompt.'}{Colors.RESET}")
         elif event_type == "isess_created":
             session_id = event.get("session_id") or "unknown"
             session_kind = event.get("session_kind") or "interactive"
             if self.known_session_ids is not None and str(session_id).strip():
                 self.known_session_ids.add(str(session_id).strip())
-            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Preserved {session_kind} session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET}.")
+            self._output(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Preserved {session_kind} session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET}.")
         elif event_type == "isess_output":
             session_id = event.get("session_id") or "unknown"
             output = str(event.get("output") or "")
-            print(f"\n{Colors.ACCENT_PRIMARY}[interactive:{Colors.TEXT_PRIMARY}{session_id}{Colors.ACCENT_PRIMARY}]{Colors.RESET}\n{output}")
+            self._output(f"\n{Colors.ACCENT_PRIMARY}[interactive:{Colors.TEXT_PRIMARY}{session_id}{Colors.ACCENT_PRIMARY}]{Colors.RESET}\n{output}")
         elif event_type == "isess_closed":
             session_id = event.get("session_id") or "unknown"
             if self.known_session_ids is not None and str(session_id).strip():
                 self.known_session_ids.discard(str(session_id).strip())
-            print(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET} closed.")
+            self._output(f"{Colors.ACCENT_PRIMARY}[interactive]{Colors.RESET} Session {Colors.TEXT_PRIMARY}{session_id}{Colors.RESET} closed.")
 
-        if self._active_tool_name:
+        # When bar is active, the timer loop handles the status line.
+        # When bar is NOT active, draw an inline status after output.
+        if not self._bar_active and self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
             sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
             sys.stdout.flush()
 
     def _print_status(self, message: str) -> None:
         if message:
-            print(f"{Colors.TEXT_SECONDARY}[status]{Colors.RESET} {message}")
+            self._output(f"{Colors.TEXT_SECONDARY}[status]{Colors.RESET} {message}")
 
     def _print_tool_result(self, event: dict[str, Any]) -> None:
         tool = event.get("tool") or "tool"
@@ -681,70 +801,86 @@ class TerminalEventHandler:
         duration_ms = event.get("duration_ms", "?")
         result = _truncate(str(event.get("result") or ""), self.tool_output_chars)
         exit_color = Colors.ACCENT_SUCCESS if exit_code == 0 else Colors.ACCENT_ERROR
-        print(f"{Colors.ACCENT_PRIMARY}[result]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} exit={exit_color}{exit_code}{Colors.RESET} duration_ms={Colors.TEXT_PRIMARY}{duration_ms}{Colors.RESET}")
+        self._output(f"{Colors.ACCENT_PRIMARY}[result]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} exit={exit_color}{exit_code}{Colors.RESET} duration_ms={Colors.TEXT_PRIMARY}{duration_ms}{Colors.RESET}")
         if result.strip():
-            print(f"{Colors.TEXT_SECONDARY}{result}{Colors.RESET}")
+            self._output(f"{Colors.TEXT_SECONDARY}{result}{Colors.RESET}")
 
     def _prompt_choice(self, question: str, options: tuple[str, ...], default: str) -> str:
         if not sys.stdin.isatty():
-            print(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; choosing {default}.")
+            self._output(f"{Colors.TEXT_SECONDARY}[decision]{Colors.RESET} Non-interactive input; choosing {default}.")
             return default
 
+        # Temporarily deactivate the bar so input() works normally
+        was_active = self._bar_active
+        if was_active:
+            self.deactivate_bar()
+
         option_text = "/".join(options)
-        while True:
-            answer = input(f"{Colors.TEXT_PRIMARY}{question}{Colors.RESET} ({Colors.ACCENT_PRIMARY}{option_text}{Colors.RESET}) [{Colors.ACCENT_SUCCESS}{default}{Colors.RESET}]: ").strip().lower()
-            if not answer:
-                return default
-            matches = [option for option in options if option.startswith(answer)]
-            if len(matches) == 1:
-                return matches[0]
-            print(f"Please choose one of: {', '.join(options)}")
+        try:
+            while True:
+                answer = input(f"{Colors.TEXT_PRIMARY}{question}{Colors.RESET} ({Colors.ACCENT_PRIMARY}{option_text}{Colors.RESET}) [{Colors.ACCENT_SUCCESS}{default}{Colors.RESET}]: ").strip().lower()
+                if not answer:
+                    return default
+                matches = [option for option in options if option.startswith(answer)]
+                if len(matches) == 1:
+                    return matches[0]
+                print(f"Please choose one of: {', '.join(options)}")
+        finally:
+            if was_active:
+                self.activate_bar()
 
     def _resolve_post_tool_reply(self, event: dict[str, Any]) -> None:
-        print(f"\n{Colors.ACCENT_WARNING}[decision]{Colors.RESET} {event.get('message') or 'Retry the final answer or cancel?'}")
+        self._output(f"\n{Colors.ACCENT_WARNING}[decision]{Colors.RESET} {event.get('message') or 'Retry the final answer or cancel?'}")
         action = self._prompt_choice("Decision", ("retry", "cancel"), "cancel")
         if self.session and not self.session.resolve_post_tool_reply_decision(action):
-            print(f"{Colors.ACCENT_WARNING}[decision]{Colors.RESET} Could not apply post-tool reply decision.", file=sys.stderr)
+            self._output_err(f"{Colors.ACCENT_WARNING}[decision]{Colors.RESET} Could not apply post-tool reply decision.")
 
     def _resolve_dangerous_tool(self, event: dict[str, Any]) -> None:
         tool = event.get("tool") or "shell_dangerous"
         command = str(event.get("command") or "")
-        print(f"\n{Colors.ACCENT_ERROR}[approval]{Colors.RESET} {event.get('message') or 'Approval required.'}")
-        print(f"Tool: {tool}")
+        self._output(f"\n{Colors.ACCENT_ERROR}[approval]{Colors.RESET} {event.get('message') or 'Approval required.'}")
+        self._output(f"Tool: {tool}")
         if command:
-            print(f"Command: {command}")
+            self._output(f"Command: {command}")
         action = self._prompt_choice("Approve execution", ("approve", "cancel"), "cancel")
         if self.session and not self.session.resolve_dangerous_tool_approval(action):
-            print(f"{Colors.ACCENT_ERROR}[approval]{Colors.RESET} Could not apply dangerous-tool decision.", file=sys.stderr)
+            self._output_err(f"{Colors.ACCENT_ERROR}[approval]{Colors.RESET} Could not apply dangerous-tool decision.")
 
     def _resolve_tool_timeout(self, event: dict[str, Any]) -> None:
-        print(f"\n{Colors.ACCENT_WARNING}[timeout]{Colors.RESET} {event.get('message') or 'Tool reached a timeout checkpoint.'}")
+        self._output(f"\n{Colors.ACCENT_WARNING}[timeout]{Colors.RESET} {event.get('message') or 'Tool reached a timeout checkpoint.'}")
         command = str(event.get("command") or "")
         if command:
-            print(f"Command: {command}")
+            self._output(f"Command: {command}")
         action = self._prompt_choice("Timeout action", ("wait", "background", "kill"), "wait")
         wait_seconds = None
         if action == "wait":
             wait_seconds = self._prompt_wait_seconds(default=60)
         if self.session and not self.session.resolve_tool_timeout_decision(action, wait_seconds=wait_seconds):
-            print(f"{Colors.ACCENT_WARNING}[timeout]{Colors.RESET} Could not apply timeout decision.", file=sys.stderr)
+            self._output_err(f"{Colors.ACCENT_WARNING}[timeout]{Colors.RESET} Could not apply timeout decision.")
 
     def _prompt_wait_seconds(self, default: int) -> int:
         if not sys.stdin.isatty():
             return default
+        was_active = self._bar_active
+        if was_active:
+            self.deactivate_bar()
         allowed_text = ", ".join(str(value) for value in TIMEOUT_WAIT_CHOICES)
-        while True:
-            answer = input(f"Ask again after seconds ({allowed_text}) [{default}]: ").strip()
-            if not answer:
-                return default
-            try:
-                wait_seconds = int(answer)
-            except ValueError:
-                print("Enter a number from the allowed list.")
-                continue
-            if wait_seconds in TIMEOUT_WAIT_CHOICES:
-                return wait_seconds
-            print(f"Choose one of: {allowed_text}")
+        try:
+            while True:
+                answer = input(f"Ask again after seconds ({allowed_text}) [{default}]: ").strip()
+                if not answer:
+                    return default
+                try:
+                    wait_seconds = int(answer)
+                except ValueError:
+                    print("Enter a number from the allowed list.")
+                    continue
+                if wait_seconds in TIMEOUT_WAIT_CHOICES:
+                    return wait_seconds
+                print(f"Choose one of: {allowed_text}")
+        finally:
+            if was_active:
+                self.activate_bar()
 
 
 def _add_session_args(parser: argparse.ArgumentParser) -> None:
@@ -844,21 +980,31 @@ async def _run_prompt(args: argparse.Namespace) -> int:
         cancel_event = asyncio.Event()
         loop = asyncio.get_running_loop()
         next_prompt_override: str | None = None
+        _cancel_fired = False
         
         chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=_effective_scope(args), urgency=_effective_urgency(args)))
         
         def _sigint_handler():
-            print(f"\n{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling chat...{Colors.RESET}")
+            nonlocal _cancel_fired
+            if _cancel_fired:
+                # Already cancelled; swallow repeat presses
+                event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+                return
+            _cancel_fired = True
+            event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
             cancel_event.set()
             chat_task.cancel()
-            loop.remove_signal_handler(signal.SIGINT)
             
         def _stdin_handler():
-            nonlocal next_prompt_override
+            nonlocal next_prompt_override, _cancel_fired
             line = sys.stdin.readline()
             cmd = line.strip().lower()
             if cmd in {"/force_analyze", "/cancel", "/exit"}:
-                print(f"\n{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling chat...{Colors.RESET}")
+                if _cancel_fired:
+                    event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+                    return
+                _cancel_fired = True
+                event_handler._output(f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}")
                 if cmd == "/force_analyze":
                     tool = event_handler._active_tool_name or "tool"
                     next_prompt_override = (
@@ -869,8 +1015,8 @@ async def _run_prompt(args: argparse.Namespace) -> int:
                     )
                 cancel_event.set()
                 chat_task.cancel()
-                loop.remove_reader(sys.stdin)
                 
+        event_handler.activate_bar()
         loop.add_signal_handler(signal.SIGINT, _sigint_handler)
         loop.add_reader(sys.stdin, _stdin_handler)
         try:
@@ -878,14 +1024,24 @@ async def _run_prompt(args: argparse.Namespace) -> int:
         except asyncio.CancelledError:
             pass
         finally:
-            loop.remove_signal_handler(signal.SIGINT)
+            try:
+                loop.remove_signal_handler(signal.SIGINT)
+            except Exception:
+                pass
             try:
                 loop.remove_reader(sys.stdin)
             except Exception:
                 pass
+            event_handler.deactivate_bar()
                 
         if next_prompt_override:
-            await session.chat(next_prompt_override, scope=_effective_scope(args), urgency=_effective_urgency(args))
+            # Brief pause to let the _chat_lock release from the cancelled task
+            await asyncio.sleep(0.1)
+            event_handler.activate_bar()
+            try:
+                await session.chat(next_prompt_override, scope=_effective_scope(args), urgency=_effective_urgency(args))
+            finally:
+                event_handler.deactivate_bar()
             
         print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
@@ -982,21 +1138,30 @@ async def _chat(args: argparse.Namespace) -> int:
                 cancel_event = asyncio.Event()
                 loop = asyncio.get_running_loop()
                 next_prompt_override: str | None = None
+                _cancel_fired = False
                 
                 chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=current_scope, urgency=current_urgency))
                 
                 def _sigint_handler():
-                    print(f"\n{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling chat...{Colors.RESET}")
+                    nonlocal _cancel_fired
+                    if _cancel_fired:
+                        event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+                        return
+                    _cancel_fired = True
+                    event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
                     cancel_event.set()
                     chat_task.cancel()
-                    loop.remove_signal_handler(signal.SIGINT)
                     
                 def _stdin_handler():
-                    nonlocal next_prompt_override
+                    nonlocal next_prompt_override, _cancel_fired
                     line = sys.stdin.readline()
                     cmd = line.strip().lower()
                     if cmd in {"/force_analyze", "/cancel", "/exit"}:
-                        print(f"\n{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling chat...{Colors.RESET}")
+                        if _cancel_fired:
+                            event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+                            return
+                        _cancel_fired = True
+                        event_handler._output(f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}")
                         if cmd == "/force_analyze":
                             tool = event_handler._active_tool_name or "tool"
                             next_prompt_override = (
@@ -1007,8 +1172,8 @@ async def _chat(args: argparse.Namespace) -> int:
                             )
                         cancel_event.set()
                         chat_task.cancel()
-                        loop.remove_reader(sys.stdin)
 
+                event_handler.activate_bar()
                 loop.add_signal_handler(signal.SIGINT, _sigint_handler)
                 loop.add_reader(sys.stdin, _stdin_handler)
                 try:
@@ -1016,14 +1181,24 @@ async def _chat(args: argparse.Namespace) -> int:
                 except asyncio.CancelledError:
                     pass
                 finally:
-                    loop.remove_signal_handler(signal.SIGINT)
+                    try:
+                        loop.remove_signal_handler(signal.SIGINT)
+                    except Exception:
+                        pass
                     try:
                         loop.remove_reader(sys.stdin)
                     except Exception:
                         pass
+                    event_handler.deactivate_bar()
                         
                 if next_prompt_override:
-                    await session.chat(next_prompt_override, scope=current_scope, urgency=current_urgency)
+                    # Brief pause to let the _chat_lock release from the cancelled task
+                    await asyncio.sleep(0.1)
+                    event_handler.activate_bar()
+                    try:
+                        await session.chat(next_prompt_override, scope=current_scope, urgency=current_urgency)
+                    finally:
+                        event_handler.deactivate_bar()
                     
         print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0

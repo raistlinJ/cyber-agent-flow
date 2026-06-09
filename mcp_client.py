@@ -1396,6 +1396,7 @@ class MCPSession:
         self._logger: SessionLogger | None = None
         self._started = False
         self._chat_lock = asyncio.Lock()
+        self._current_tool_task: asyncio.Task | None = None
         self._pending_post_tool_reply = None
         self._pending_dangerous_tool_approval = None
         self._pending_tool_timeout_decision = None
@@ -2195,6 +2196,14 @@ class MCPSession:
                 # Top level task was aborted violently, cleanly exit
                 if cancel_event:
                     cancel_event.set()
+                # Cancel any running tool subtask
+                if hasattr(self, '_current_tool_task') and self._current_tool_task and not self._current_tool_task.done():
+                    self._current_tool_task.cancel()
+                    try:
+                        await self._current_tool_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    self._current_tool_task = None
                 _emit_chat_cancelled(self.event_callback)
             except Exception as e:
                 if _is_transient_transport_error(e):
@@ -2207,6 +2216,8 @@ class MCPSession:
                     })
                 print(f"Crash in agent loop: {type(e).__name__}: {e}")
                 traceback.print_exc()
+            finally:
+                self._current_tool_task = None
 
     async def _chat_with_transient_retry(self, *, messages: list[dict], tools, options: dict, turn_label: str):
         max_attempts = 2
@@ -2517,12 +2528,41 @@ class MCPSession:
                 t0 = time.time()
                 try:
                     tool_call_task = asyncio.create_task(self._session.call_tool(tool_name, tool_args))
+                    self._current_tool_task = tool_call_task
                     timeout_monitor_task = asyncio.create_task(
                         self._watch_tool_timeout_requests(tool_name, tool_args, tool_call_task)
                     )
                     try:
                         result = await tool_call_task
+                    except asyncio.CancelledError:
+                        # Tool was cancelled (user hit /cancel or Ctrl+C)
+                        duration_ms = int((time.time() - t0) * 1000)
+                        cancel_msg = f"Tool {tool_name} was cancelled by the user after {duration_ms}ms."
+                        self._logger.log_tool_call(
+                            name=tool_name,
+                            args=tool_args,
+                            result=cancel_msg,
+                            duration_ms=duration_ms,
+                            exit_code=-2,
+                            cancelled=True,
+                        )
+                        self.messages.append({
+                            "role": "tool",
+                            "content": cancel_msg,
+                            "name": tool_name,
+                            "tool_call_id": tool_call_id,
+                        })
+                        _emit(self.event_callback, "tool_result", {
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": cancel_msg,
+                            "exit_code": -2,
+                            "duration_ms": duration_ms,
+                        })
+                        _emit_chat_cancelled(self.event_callback)
+                        return
                     finally:
+                        self._current_tool_task = None
                         timeout_monitor_task.cancel()
                         try:
                             await timeout_monitor_task
