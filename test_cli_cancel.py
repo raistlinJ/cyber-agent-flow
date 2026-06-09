@@ -750,6 +750,28 @@ class TestSeparatorAlwaysVisible:
             assert "\033[?25h" in output
             # Should reset scroll region
             assert "\033[r" in output
+            # Should end with a newline to advance cursor past the old bar area
+            assert output.rstrip("\n").endswith("\n") or "\n" in output[-5:]
+        finally:
+            sys.stdout = old_stdout
+
+    def test_deactivate_bar_positions_cursor_before_scroll_reset(self):
+        """Cursor should move to scroll_end BEFORE resetting scroll region."""
+        import cli
+        handler = cli.TerminalEventHandler(tool_output_chars=4000)
+        old_stdout = sys.stdout
+        buf = io.StringIO()
+        sys.stdout = buf
+        try:
+            handler._bar_active = True
+            handler.deactivate_bar()
+            output = buf.getvalue()
+            # \033[<scroll_end>;1H must come BEFORE \033[r
+            r_idx = output.index("\033[r")
+            # There should be a cursor-move before the scroll reset
+            move_pattern = ";1H"
+            move_idx = output.index(move_pattern)
+            assert move_idx < r_idx, "Cursor must move to scroll_end before \\033[r reset"
         finally:
             sys.stdout = old_stdout
 

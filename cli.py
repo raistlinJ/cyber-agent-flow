@@ -717,23 +717,39 @@ class TerminalEventHandler:
         if not self._bar_active:
             return
         self._bar_active = False
-        # Restore terminal settings BEFORE any I/O so readline works again
+        # Restore terminal settings BEFORE any I/O so readline works again.
+        # Use TCSAFLUSH to discard any pending cbreak input.
         if self._old_term_settings is not None:
             try:
                 termios.tcsetattr(sys.stdin, termios.TCSAFLUSH, self._old_term_settings)
             except Exception:
                 pass
             self._old_term_settings = None
+        # Safety net: explicitly re-enable canonical mode + echo regardless
+        # of whether TCSAFLUSH succeeded. Ensures input() always works.
+        if _HAS_TERMIOS and sys.stdin.isatty():
+            try:
+                attrs = termios.tcgetattr(sys.stdin)
+                attrs[3] |= termios.ECHO | termios.ICANON
+                termios.tcsetattr(sys.stdin, termios.TCSANOW, attrs)
+            except Exception:
+                pass
         self._input_buffer.clear()
         h, _ = self._term_size()
         scroll_end = max(h - self._RESERVED_LINES, 1)
+        # Position cursor at last row of the scroll region BEFORE resetting,
+        # so the reset doesn't teleport the cursor to an unexpected position.
+        sys.stdout.write(f"\033[{scroll_end};1H")
         # Reset scroll region to full terminal
         sys.stdout.write("\033[r")
         # Ensure cursor is visible
         sys.stdout.write("\033[?25h")
-        # Move to just below old scroll content and clear to end of screen
-        sys.stdout.write(f"\033[{scroll_end + 1};1H")
-        sys.stdout.write("\033[J")
+        # Clear everything below the old scroll region (old bar area)
+        sys.stdout.write(f"\033[{scroll_end + 1};1H\033[J")
+        # Move cursor back to scroll_end and advance with a newline.
+        # This ensures the cursor lands right after the last output line,
+        # cleanly separated from the old bar area.
+        sys.stdout.write(f"\033[{scroll_end};1H\n")
         sys.stdout.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
@@ -1275,6 +1291,16 @@ async def _chat(args: argparse.Namespace) -> int:
             try:
                 prompt_str = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
                 event_handler.prompt_prefix = prompt_str
+                # Safety net: ensure terminal is in canonical (cooked) mode
+                # before blocking on input().  This catches any case where
+                # deactivate_bar() didn't fully restore the terminal.
+                if _HAS_TERMIOS and sys.stdin.isatty():
+                    try:
+                        _attrs = termios.tcgetattr(sys.stdin)
+                        _attrs[3] |= termios.ECHO | termios.ICANON
+                        termios.tcsetattr(sys.stdin, termios.TCSANOW, _attrs)
+                    except Exception:
+                        pass
                 event_handler._print_separator()
                 prompt = input(prompt_str).strip()
             except EOFError:
