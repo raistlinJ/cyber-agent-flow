@@ -234,7 +234,9 @@ def _apply_config_value(resolved: dict[str, Any], key: str, value: Any) -> None:
     elif key in {"ssl_verify", "scope_enabled", "urgency_enabled", "verbose"}:
         resolved[key] = bool(value)
     elif key == "api_key_env":
-        resolved["api_key"] = os.environ.get(str(value or ""), "")
+        env_val = os.environ.get(str(value or ""))
+        if env_val:
+            resolved["api_key"] = env_val
     elif key in {"provider", "url", "model", "api_key", "server_command", "tools_config", "scope", "urgency", "prompt"}:
         resolved[key] = None if value is None else str(value)
     else:
@@ -573,6 +575,7 @@ class TerminalEventHandler:
         self._active_tool_name: str | None = None
         self._tool_start_time: float = 0.0
         self._timer_task: asyncio.Task | None = None
+        self.prompt_prefix = f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
 
     async def _timer_loop(self) -> None:
         try:
@@ -580,7 +583,7 @@ class TerminalEventHandler:
                 await asyncio.sleep(1.0)
                 if self._active_tool_name:
                     elapsed = int(time.monotonic() - self._tool_start_time)
-                    sys.stdout.write(f"\r\033[K{Colors.DIM}  ... running {self._active_tool_name} for {elapsed}s{Colors.RESET}")
+                    sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
                     sys.stdout.flush()
         except asyncio.CancelledError:
             pass
@@ -665,7 +668,7 @@ class TerminalEventHandler:
 
         if self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
-            sys.stdout.write(f"\r\033[K{Colors.DIM}  ... running {self._active_tool_name} for {elapsed}s{Colors.RESET}")
+            sys.stdout.write(f"\r\033[K{self.prompt_prefix}{Colors.DIM}[running {self._active_tool_name} for {elapsed}s...]{Colors.RESET}")
             sys.stdout.flush()
 
     def _print_status(self, message: str) -> None:
@@ -941,8 +944,9 @@ async def _chat(args: argparse.Namespace) -> int:
                 next_session_refresh_at = now + session_refresh_interval_seconds
 
             try:
-                prompt_prefix = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
-                prompt = input(prompt_prefix).strip()
+                prompt_str = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
+                event_handler.prompt_prefix = prompt_str
+                prompt = input(prompt_str).strip()
             except EOFError:
                 print()
                 break
