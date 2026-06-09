@@ -1374,6 +1374,7 @@ class MCPSession:
         tool_timeout: int = 120,
         network_policy: dict | None = None,
         enabled_tool_guides: list[str] | None = None,
+        auto_approve_dangerous: bool = False,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
         self.ollama_url = _normalize_provider_base_url(self.llm_provider, ollama_url)
@@ -1388,6 +1389,7 @@ class MCPSession:
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
         self.enabled_tool_guides = list(enabled_tool_guides) if isinstance(enabled_tool_guides, list) else None
+        self.auto_approve_dangerous = bool(auto_approve_dangerous)
 
         # Internals
         self._exit_stack: AsyncExitStack | None = None
@@ -1823,6 +1825,19 @@ class MCPSession:
             self._pending_post_tool_reply = None
 
     async def _prompt_dangerous_tool_approval(self, tool_name: str, tool_args: dict, cancel_event: asyncio.Event | None) -> str:
+        # Auto-approve if --dangerous-no-prompt is active
+        if self.auto_approve_dangerous:
+            command_text = (tool_args or {}).get("args", "") if isinstance(tool_args, dict) else str(tool_args)
+            _emit(self.event_callback, "status", {
+                "message": f"Auto-approving {tool_name}: {command_text[:120]} (--dangerous-no-prompt)"
+            })
+            if self._logger:
+                self._logger.log_human_decision(
+                    f"AUTO-APPROVED (--dangerous-no-prompt): {tool_name}: {command_text}",
+                    category="dangerous_tool_approval",
+                )
+            return "approve"
+
         loop = asyncio.get_running_loop()
         decision_future = loop.create_future()
         command_text = (tool_args or {}).get("args", "") if isinstance(tool_args, dict) else str(tool_args)

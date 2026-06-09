@@ -322,6 +322,7 @@ def _resolve_session_args(args: argparse.Namespace) -> argparse.Namespace:
     merged.no_urgency = not bool(resolved["urgency_enabled"])
     merged.tool_output_chars = resolved["tool_output_chars"]
     merged.verbose = bool(resolved["verbose"])
+    merged.dangerous_no_prompt = bool(getattr(args, "dangerous_no_prompt", False))
     merged.prompt_text = str(resolved.get("prompt") or "").strip()
     return merged
 
@@ -1031,6 +1032,8 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-urgency", action="store_true", help="Do not inject urgency guidance.")
     parser.add_argument("--tool-output-chars", type=int, help="Maximum tool output chars printed to terminal; full output is logged.")
     parser.add_argument("--verbose", action="store_true", help="Print context usage events.")
+    parser.add_argument("--dangerous-no-prompt", action="store_true", default=False,
+                        help="Auto-approve dangerous commands without prompting the user. Use with caution.")
 
 
 def _create_parser() -> argparse.ArgumentParser:
@@ -1042,7 +1045,7 @@ def _create_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Run one prompt, then stop the session.")
     _add_session_args(run_parser)
-    run_parser.add_argument("prompt", nargs=argparse.REMAINDER, help="Prompt to send to the agent.")
+    run_parser.add_argument("prompt", nargs="*", help="Prompt to send to the agent. Use -- before the prompt if it contains dashes.")
 
     list_parser = subparsers.add_parser("list-runs", help="List saved run metadata.")
     list_parser.add_argument("--limit", type=int, default=20, help="Maximum number of runs to show.")
@@ -1076,6 +1079,10 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
     enabled_tool_guides = _copy_tools_config_if_requested(args.tools_config)
     server_type = "apt" if "/usr/share/mcp-kali-server/mcp_server.py" in args.server_command else "cli"
     run_id = make_run_id(server_type)
+    auto_approve = bool(getattr(args, "dangerous_no_prompt", False))
+    if auto_approve:
+        print(f"{Colors.ACCENT_ERROR}[WARNING]{Colors.RESET} {Colors.BOLD}--dangerous-no-prompt is active.{Colors.RESET} "
+              f"Dangerous commands will be executed {Colors.ACCENT_ERROR}without user confirmation{Colors.RESET}.")
     session = MCPSession(
         ollama_url=args.url,
         llm_provider=args.provider,
@@ -1090,6 +1097,7 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
         tool_timeout=args.tool_timeout,
         network_policy=args.network_policy,
         enabled_tool_guides=enabled_tool_guides,
+        auto_approve_dangerous=auto_approve,
     )
     event_handler.bind(session)
     await session.start()
