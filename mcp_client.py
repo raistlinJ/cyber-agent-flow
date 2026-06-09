@@ -2200,7 +2200,9 @@ class MCPSession:
                 if hasattr(self, '_current_tool_task') and self._current_tool_task and not self._current_tool_task.done():
                     self._current_tool_task.cancel()
                     try:
-                        await self._current_tool_task
+                        await asyncio.wait_for(asyncio.shield(self._current_tool_task), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        print(f"[cancel] Tool subtask did not finish within 3s, moving on.")
                     except (asyncio.CancelledError, Exception):
                         pass
                     self._current_tool_task = None

@@ -719,20 +719,20 @@ class TerminalEventHandler:
         # Restore terminal settings BEFORE any I/O so readline works again
         if self._old_term_settings is not None:
             try:
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_term_settings)
+                termios.tcsetattr(sys.stdin, termios.TCSAFLUSH, self._old_term_settings)
             except Exception:
                 pass
             self._old_term_settings = None
         self._input_buffer.clear()
         h, _ = self._term_size()
+        scroll_end = max(h - self._RESERVED_LINES, 1)
         # Reset scroll region to full terminal
         sys.stdout.write("\033[r")
-        # Clear all 3 bottom lines (status, separator, prompt)
-        sys.stdout.write(f"\033[{h - 2};1H\033[K")
-        sys.stdout.write(f"\033[{h - 1};1H\033[K")
-        sys.stdout.write(f"\033[{h};1H\033[K")
-        # Move cursor to a clean position
-        sys.stdout.write(f"\033[{h - 2};1H")
+        # Ensure cursor is visible
+        sys.stdout.write("\033[?25h")
+        # Move to just below old scroll content and clear to end of screen
+        sys.stdout.write(f"\033[{scroll_end + 1};1H")
+        sys.stdout.write("\033[J")
         sys.stdout.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
@@ -1171,6 +1171,8 @@ async def _run_chat_with_bar(
         await chat_task
     except asyncio.CancelledError:
         pass
+    except Exception:
+        pass  # Don't let unexpected errors leak out
     finally:
         try:
             loop.remove_signal_handler(signal.SIGINT)
@@ -1536,10 +1538,20 @@ async def _handle_repl_command(
         print(f"Urgency set to {current_urgency or 'off'}.")
         return True, current_scope, current_urgency, active_session_id
     if command == "/sessions":
-        result = await session.call_tool_direct("interactive_session_list", {})
-        for sid in _extract_session_ids_from_text(str(result.get("content") or "")):
-            known_session_ids.add(sid)
-        print(str(result.get("content") or result.get("error") or result))
+        try:
+            result = await session.call_tool_direct("interactive_session_list", {})
+            content = result.get("content", "")
+            error = result.get("error", "")
+            if content:
+                for sid in _extract_session_ids_from_text(content):
+                    known_session_ids.add(sid)
+                print(content)
+            elif error:
+                print(f"{Colors.ACCENT_WARNING}[sessions] Error: {error}{Colors.RESET}")
+            else:
+                print("No preserved interactive sessions are currently available.")
+        except Exception as exc:
+            print(f"{Colors.ACCENT_WARNING}[sessions] Could not list sessions: {exc}{Colors.RESET}")
         return True, current_scope, current_urgency, active_session_id
     if command == "/refresh-sessions":
         try:

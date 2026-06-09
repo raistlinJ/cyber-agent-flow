@@ -734,8 +734,7 @@ class TestSeparatorAlwaysVisible:
         assert "─" in captured.out
 
     def test_deactivate_bar_clears_all_bottom_lines(self):
-        """When deactivating, all 3 bottom lines should be cleared.
-        The REPL's _print_separator() draws a fresh one before the next prompt."""
+        """When deactivating, everything below scroll region should be cleared with CSI J."""
         import cli
         handler = cli.TerminalEventHandler(tool_output_chars=4000)
         old_stdout = sys.stdout
@@ -745,9 +744,12 @@ class TestSeparatorAlwaysVisible:
             handler._bar_active = True
             handler.deactivate_bar()
             output = buf.getvalue()
-            # All 3 lines should be cleared (status + separator + prompt)
-            clear_count = output.count("\\033[K") if "\\033[K" in output else output.count("\033[K")
-            assert clear_count == 3
+            # Should use \033[J (clear to end of screen) to wipe old bar area
+            assert "\033[J" in output
+            # Should make cursor visible
+            assert "\033[?25h" in output
+            # Should reset scroll region
+            assert "\033[r" in output
         finally:
             sys.stdout = old_stdout
 
