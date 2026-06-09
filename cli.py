@@ -1278,8 +1278,8 @@ async def _run_chat_with_bar(
     if reader_task:
         reader_task.cancel()
         try:
-            await asyncio.wait_for(asyncio.shield(reader_task), timeout=0.5)
-        except Exception:
+            await reader_task
+        except BaseException:
             pass
     elif not is_async_stream:
         try:
@@ -1321,8 +1321,8 @@ async def _run_chat_with_bar(
         if reader_task_2:
             reader_task_2.cancel()
             try:
-                await asyncio.wait_for(asyncio.shield(reader_task_2), timeout=0.5)
-            except Exception:
+                await reader_task_2
+            except BaseException:
                 pass
         elif not is_async_stream:
             try:
