@@ -141,3 +141,18 @@ screen -S caf-server
 The SSH server uses the exact same `cli.py` code path, `MCPSession` engine, `mcp_kali.py` tool server, and transcript format as the local CLI. The only difference is that stdin/stdout are routed through the SSH channel instead of the local terminal. All slash commands, tab completion, `/force_analyze`, `/cancel`, `--continue`, and session transcripts work identically.
 
 See the [CLI documentation](cli.md) for the full list of in-session commands and options.
+
+
+## Troubleshooting
+
+### "Session stops immediately after `/force_analyze`"
+This was a bug with how Python 3.8+ handles `CancelledError` during reader teardown. It has been fixed in the latest version. Ensure you have pulled the latest code.
+
+### "Prompt appears on server console, not client"
+This means you likely ran `cli-server.py` directly with an older version of the codebase, or I/O isn't routing correctly. Update to the latest code and run `./start_server.sh --port 2222 --password admin` instead.
+
+### "coroutine 'SSHReader.readline' was never awaited"
+This is a `RuntimeWarning` indicating that the async SSH streams are not being awaited properly. It is usually caused by running an older version of `cli.py` or a mismatched `asyncssh` installation. Run `./start_server.sh --build` to reinstall dependencies into the virtual environment, and ensure you have the latest code.
+
+### "asyncssh: module not found"
+The `asyncssh` package is not installed in the current environment. Run `./start_server.sh --build` to automatically install it into the project's virtual environment.

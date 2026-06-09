@@ -38,6 +38,7 @@ The CyberAgentFlow CLI runs entirely in your terminal with no browser required. 
 - **Persistent split-screen bottom bar** — a live status line and `caf>` input prompt remain visible even while a tool is executing in the background
 - **Real-time character-by-character input** — slash commands can be entered mid-run without waiting for the current task to finish
 - **Full session transcript saving** — every run is automatically saved under `runs/` in both human-readable Markdown and structured JSONL formats
+- **SSH-accessible** — the same split-screen UI, slash commands, and tab completion work identically when connecting via the SSH server (see [docs/server.md](server.md))
 
 ---
 
@@ -55,13 +56,13 @@ Run the setup script once before using the CLI:
 ./install_prerequisites.sh
 ```
 
-This script creates the `venv/` virtual environment and installs all required system and Python dependencies automatically.
+This script creates the `venv/` virtual environment and installs all required system and Python dependencies (including `asyncssh`, `pytest`, and all packages in `requirements.txt`) automatically.
 
 ---
 
 ## Quick Start
 
-All CLI commands are launched via `./start_cli.sh`. The entry point accepts a subcommand followed by optional flags and arguments.
+All CLI commands are launched via `./start_cli.sh`. The entry point accepts a subcommand followed by optional flags and arguments. The `venv/` and all Python dependencies are created automatically on first run — no `--build` flag is needed.
 
 ```bash
 # Start an interactive chat session
@@ -109,12 +110,15 @@ Idx  Run ID                    Started              Turns  Model
 **Step 2 — Resume by index or by run ID prefix:**
 
 ```bash
-# Resume using the Idx column
+# Resume using the Idx column (0 = most recent, ascending by age)
 ./start_cli.sh chat --continue 3
 
 # Or resume using a run ID prefix (any unambiguous prefix works)
 ./start_cli.sh chat --continue 2026-06-01
 ```
+
+> [!NOTE]
+> The `Idx` column shown by `list-runs` is 0-based and ordered from newest (0) to oldest. Pass the exact integer shown in the `Idx` column to `--continue` to restore that session.
 
 ---
 
@@ -192,7 +196,7 @@ The config file is a JSON object. All keys are optional; omitted keys fall back 
 | `provider` | string | API provider identifier |
 | `url` | string | API base URL |
 | `model` | string | Model name |
-| `api_key_env` | string | Name of an environment variable holding the API key |
+| `api_key_env` | string | Name of an environment variable holding the API key (reads the key at runtime; the key is never stored in the config file or shell history) |
 | `ssl_verify` | bool | Whether to verify TLS certificates |
 | `server_command` | string | Command used to launch the MCP server |
 | `tools_config` | string | Path to the tool configuration JSON file |
@@ -233,7 +237,7 @@ All slash commands are available during an interactive `chat` session. Commands 
 | `/help` | Show all available slash commands |
 | `/exit` or `/quit` | Stop the session cleanly and save the transcript |
 | `/cancel` | Cancel the active background task immediately |
-| `/force_analyze` | Cancel the active task and queue an LLM analysis of the partial output collected so far |
+| `/force_analyze` | Cancel the active task and queue a full LLM analysis turn on the partial output collected so far. The analysis itself runs as a complete second turn — you can cancel it mid-way with `/cancel` if needed. |
 | `/scope VALUE\|off` | Set the scan scope for the next prompt (`broad` / `medium-broad` / `medium` / `medium-narrow` / `narrow` / `off`) |
 | `/urgency VALUE\|off` | Set the execution urgency (`stealthy` / `methodical` / `balanced` / `fast` / `speed` / `off`) |
 | `/set KEY VALUE` | Change a session setting live (e.g. `scope`, `urgency`, `verbose`, `tool_output_chars`) |
@@ -248,6 +252,9 @@ All slash commands are available during an interactive `chat` session. Commands 
 | `/read [SESSION_ID]` | Read buffered output from an interactive session |
 | `/write [SESSION_ID] TEXT` | Send text input to an interactive session |
 | `/close [SESSION_ID]` | Close and clean up an interactive session |
+
+> [!NOTE]
+> `/force_analyze` triggers a **full second LLM turn** that analyzes the partial output gathered before the cancellation. This is distinct from simply appending a message — the session engine performs a complete inference pass. You can interrupt the analysis at any time with `/cancel`.
 
 ### Tab Completion
 
@@ -288,6 +295,9 @@ During tool execution the terminal display is split into three regions:
 | **Input line** | The `caf>` prompt stays visible and interactive at all times |
 
 Because input is processed character-by-character, you can type `/cancel` or `/force_analyze` at any moment during tool execution without waiting for it to finish.
+
+> [!TIP]
+> The persistent bottom bar is **fully functional over SSH** when connecting via the SSH server. The server negotiates a PTY with the client, detects the terminal dimensions, and renders the split-screen layout correctly — including live status updates and real-time character input. Resize your terminal window and the layout adjusts automatically.
 
 ---
 
