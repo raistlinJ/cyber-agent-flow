@@ -142,7 +142,9 @@ async def handle_client(process: asyncssh.SSHServerProcess, base_args: argparse.
         elif args.command == "run":
             await cli._run_prompt(args, event_handler=event_handler, session=session)
     except Exception as e:
-        process.stdout.write(f"\nSession crashed: {e}\n")
+        import traceback
+        err = traceback.format_exc()
+        process.stdout.write(f"\nSession crashed: {e}\n{err}\n")
     finally:
         await session.stop()
         process.exit(0)
@@ -165,27 +167,28 @@ async def start_server(port: int, password: str, host_key: str = None):
     )
 
 if __name__ == '__main__':
-    parser = cli._create_parser()
-    # We add server-specific arguments to the base parser
-    # But wait, cli._create_parser requires a subcommand (chat/run).
-    # We will create a custom server parser that inherits the session args.
+    import traceback
+
     server_parser = argparse.ArgumentParser(description="CyberAgentFlow SSH Server")
     server_parser.add_argument("--port", type=int, default=2222, help="Port to listen on (default: 2222)")
     server_parser.add_argument("--password", type=str, default="admin", help="SSH login password (default: admin)")
-    server_parser.add_argument("--host-key", type=str, help="Path to SSH host private key (default: ephemeral key)")
+    server_parser.add_argument("--host-key", type=str, dest="host_key", help="Path to SSH host private key (default: ephemeral key)")
     cli._add_session_args(server_parser)
-    
+
     args = server_parser.parse_args()
-    
+
     # Use cli.py's internal config resolver to apply JSON + ENV vars
-    # We must temporarily pretend we have a command so _resolve_session_args doesn't fail
     args.command = "chat"
     args = cli._resolve_session_args(args)
     args.command = None
-    
-    loop = asyncio.get_event_loop()
+
+    async def _main():
+        await start_server(args.port, args.password, args.host_key)
+        # Keep the server running indefinitely
+        await asyncio.get_running_loop().create_future()
+
     try:
-        loop.run_until_complete(start_server(args.port, args.password, args.host_key))
-        loop.run_forever()
+        asyncio.run(_main())
     except KeyboardInterrupt:
         print("\nShutting down server.")
+

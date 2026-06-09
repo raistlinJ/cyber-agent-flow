@@ -1420,7 +1420,12 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                         pass
                 event_handler._print_separator()
                 event_handler._print(prompt_str, end="", flush=True)
-                prompt = event_handler.stream_in.readline().strip()
+                _rl = event_handler.stream_in.readline
+                if asyncio.iscoroutinefunction(_rl):
+                    line = await _rl()
+                else:
+                    line = _rl()
+                prompt = line.strip() if line else ""
             except EOFError:
                 event_handler._print()
                 break
