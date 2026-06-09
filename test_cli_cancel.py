@@ -733,8 +733,9 @@ class TestSeparatorAlwaysVisible:
         captured = capsys.readouterr()
         assert "─" in captured.out
 
-    def test_deactivate_bar_preserves_separator_row(self):
-        """When deactivating, separator row (H-1) should NOT be cleared."""
+    def test_deactivate_bar_clears_all_bottom_lines(self):
+        """When deactivating, all 3 bottom lines should be cleared.
+        The REPL's _print_separator() draws a fresh one before the next prompt."""
         import cli
         handler = cli.TerminalEventHandler(tool_output_chars=4000)
         old_stdout = sys.stdout
@@ -744,12 +745,9 @@ class TestSeparatorAlwaysVisible:
             handler._bar_active = True
             handler.deactivate_bar()
             output = buf.getvalue()
-            # The separator at H-1 should not have \033[K (clear) applied to it
-            # during deactivation. We clear H-2 and H, but NOT H-1.
-            # Count how many clear-line sequences appear
+            # All 3 lines should be cleared (status + separator + prompt)
             clear_count = output.count("\\033[K") if "\\033[K" in output else output.count("\033[K")
-            # Should have 2 clears (status + prompt), not 3
-            assert clear_count == 2
+            assert clear_count == 3
         finally:
             sys.stdout = old_stdout
 

@@ -727,11 +727,12 @@ class TerminalEventHandler:
         h, _ = self._term_size()
         # Reset scroll region to full terminal
         sys.stdout.write("\033[r")
-        # Clear status and prompt lines, keep separator
+        # Clear all 3 bottom lines (status, separator, prompt)
         sys.stdout.write(f"\033[{h - 2};1H\033[K")
+        sys.stdout.write(f"\033[{h - 1};1H\033[K")
         sys.stdout.write(f"\033[{h};1H\033[K")
-        # Move cursor just below the separator
-        sys.stdout.write(f"\033[{h};1H")
+        # Move cursor to a clean position
+        sys.stdout.write(f"\033[{h - 2};1H")
         sys.stdout.flush()
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
@@ -1095,6 +1096,95 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
     return session
 
 
+async def _run_chat_with_bar(
+    session: MCPSession,
+    prompt: str,
+    event_handler: TerminalEventHandler,
+    *,
+    cancel_event: asyncio.Event | None = None,
+    scope: str | None = None,
+    urgency: str | None = None,
+) -> str | None:
+    """Run a single chat turn with full bar UI, signal handling, and stdin reader.
+
+    Returns a ``next_prompt_override`` string if the user triggered
+    ``/force_analyze``, otherwise ``None``.
+    """
+    if cancel_event is None:
+        cancel_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    next_prompt_override: str | None = None
+    _cancel_fired = False
+
+    chat_task = asyncio.create_task(
+        session.chat(prompt, cancel_event=cancel_event, scope=scope, urgency=urgency)
+    )
+
+    def _sigint_handler():
+        nonlocal _cancel_fired
+        if _cancel_fired:
+            event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+            return
+        _cancel_fired = True
+        event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
+        cancel_event.set()
+        chat_task.cancel()
+
+    def _stdin_handler():
+        nonlocal next_prompt_override, _cancel_fired
+        ch = sys.stdin.read(1)
+        # Tab completion
+        if ch == '\t':
+            matches = event_handler._input_buffer.tab_complete()
+            event_handler._echo_input()
+            if matches:
+                event_handler._output(f"{Colors.DIM}  {' '.join(matches)}{Colors.RESET}")
+            return
+        line = event_handler._input_buffer.add_char(ch)
+        event_handler._echo_input()
+        if line is None:
+            return  # still typing
+        cmd = line.strip().lower()
+        if not cmd:
+            return
+        if cmd in {"/force_analyze", "/cancel", "/exit"}:
+            if _cancel_fired:
+                event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
+                return
+            _cancel_fired = True
+            event_handler._output(f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}")
+            if cmd == "/force_analyze":
+                tool = event_handler._active_tool_name or "tool"
+                next_prompt_override = (
+                    f"The user chose Stop And Analyze for the just-stopped tool {tool}.\n"
+                    "Analyze the partial output from the stopped tool in the immediately preceding tool results and conversation context. "
+                    "Summarize what completed, what remains incomplete, any findings or blockers, and the best next step. "
+                    "Do not rerun the stopped tool unless the user explicitly asks."
+                )
+            cancel_event.set()
+            chat_task.cancel()
+
+    event_handler.activate_bar()
+    loop.add_signal_handler(signal.SIGINT, _sigint_handler)
+    loop.add_reader(sys.stdin, _stdin_handler)
+    try:
+        await chat_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        try:
+            loop.remove_signal_handler(signal.SIGINT)
+        except Exception:
+            pass
+        try:
+            loop.remove_reader(sys.stdin)
+        except Exception:
+            pass
+        event_handler.deactivate_bar()
+
+    return next_prompt_override
+
+
 async def _run_prompt(args: argparse.Namespace) -> int:
     event_handler = TerminalEventHandler(tool_output_chars=args.tool_output_chars, verbose=args.verbose)
     session: MCPSession | None = None
@@ -1103,86 +1193,19 @@ async def _run_prompt(args: argparse.Namespace) -> int:
         raise ValueError("A prompt is required for the run command.")
     try:
         session = await _start_session(args, event_handler)
-        
-        cancel_event = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        next_prompt_override: str | None = None
-        _cancel_fired = False
-        
-        chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=_effective_scope(args), urgency=_effective_urgency(args)))
-        
-        def _sigint_handler():
-            nonlocal _cancel_fired
-            if _cancel_fired:
-                # Already cancelled; swallow repeat presses
-                event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
-                return
-            _cancel_fired = True
-            event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
-            cancel_event.set()
-            chat_task.cancel()
-            
-        def _stdin_handler():
-            nonlocal next_prompt_override, _cancel_fired
-            ch = sys.stdin.read(1)
-            # Tab completion
-            if ch == '\t':
-                matches = event_handler._input_buffer.tab_complete()
-                event_handler._echo_input()
-                if matches:
-                    event_handler._output(f"{Colors.DIM}  {' '.join(matches)}{Colors.RESET}")
-                return
-            line = event_handler._input_buffer.add_char(ch)
-            event_handler._echo_input()
-            if line is None:
-                return  # still typing
-            cmd = line.strip().lower()
-            if not cmd:
-                return
-            if cmd in {"/force_analyze", "/cancel", "/exit"}:
-                if _cancel_fired:
-                    event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
-                    return
-                _cancel_fired = True
-                event_handler._output(f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}")
-                if cmd == "/force_analyze":
-                    tool = event_handler._active_tool_name or "tool"
-                    next_prompt_override = (
-                        f"The user chose Stop And Analyze for the just-stopped tool {tool}.\n"
-                        "Analyze the partial output from the stopped tool in the immediately preceding tool results and conversation context. "
-                        "Summarize what completed, what remains incomplete, any findings or blockers, and the best next step. "
-                        "Do not rerun the stopped tool unless the user explicitly asks."
-                    )
-                cancel_event.set()
-                chat_task.cancel()
-                
-        event_handler.activate_bar()
-        loop.add_signal_handler(signal.SIGINT, _sigint_handler)
-        loop.add_reader(sys.stdin, _stdin_handler)
-        try:
-            await chat_task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            try:
-                loop.remove_signal_handler(signal.SIGINT)
-            except Exception:
-                pass
-            try:
-                loop.remove_reader(sys.stdin)
-            except Exception:
-                pass
-            event_handler.deactivate_bar()
-                
-        if next_prompt_override:
-            # Brief pause to let the _chat_lock release from the cancelled task
+
+        override = await _run_chat_with_bar(
+            session, prompt, event_handler,
+            scope=_effective_scope(args), urgency=_effective_urgency(args),
+        )
+
+        if override:
             await asyncio.sleep(0.1)
-            event_handler.activate_bar()
-            try:
-                await session.chat(next_prompt_override, scope=_effective_scope(args), urgency=_effective_urgency(args))
-            finally:
-                event_handler.deactivate_bar()
-            
+            await _run_chat_with_bar(
+                session, override, event_handler,
+                scope=_effective_scope(args), urgency=_effective_urgency(args),
+            )
+
         print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
@@ -1276,83 +1299,17 @@ async def _chat(args: argparse.Namespace) -> int:
                 )
                 print(str(result.get("content") or result.get("error") or result))
             else:
-                cancel_event = asyncio.Event()
-                loop = asyncio.get_running_loop()
-                next_prompt_override: str | None = None
-                _cancel_fired = False
-                
-                chat_task = asyncio.create_task(session.chat(prompt, cancel_event=cancel_event, scope=current_scope, urgency=current_urgency))
-                
-                def _sigint_handler():
-                    nonlocal _cancel_fired
-                    if _cancel_fired:
-                        event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
-                        return
-                    _cancel_fired = True
-                    event_handler._output(f"{Colors.ACCENT_WARNING}[status] Interrupt received, cancelling...{Colors.RESET}")
-                    cancel_event.set()
-                    chat_task.cancel()
-                    
-                def _stdin_handler():
-                    nonlocal next_prompt_override, _cancel_fired
-                    ch = sys.stdin.read(1)
-                    # Tab completion
-                    if ch == '\t':
-                        matches = event_handler._input_buffer.tab_complete()
-                        event_handler._echo_input()
-                        if matches:
-                            event_handler._output(f"{Colors.DIM}  {' '.join(matches)}{Colors.RESET}")
-                        return
-                    line = event_handler._input_buffer.add_char(ch)
-                    event_handler._echo_input()
-                    if line is None:
-                        return  # still typing
-                    cmd = line.strip().lower()
-                    if not cmd:
-                        return
-                    if cmd in {"/force_analyze", "/cancel", "/exit"}:
-                        if _cancel_fired:
-                            event_handler._output(f"{Colors.DIM}[status] Already cancelling, please wait...{Colors.RESET}")
-                            return
-                        _cancel_fired = True
-                        event_handler._output(f"{Colors.ACCENT_WARNING}[status] {cmd} received, cancelling...{Colors.RESET}")
-                        if cmd == "/force_analyze":
-                            tool = event_handler._active_tool_name or "tool"
-                            next_prompt_override = (
-                                f"The user chose Stop And Analyze for the just-stopped tool {tool}.\n"
-                                "Analyze the partial output from the stopped tool in the immediately preceding tool results and conversation context. "
-                                "Summarize what completed, what remains incomplete, any findings or blockers, and the best next step. "
-                                "Do not rerun the stopped tool unless the user explicitly asks."
-                            )
-                        cancel_event.set()
-                        chat_task.cancel()
+                override = await _run_chat_with_bar(
+                    session, prompt, event_handler,
+                    scope=current_scope, urgency=current_urgency,
+                )
 
-                event_handler.activate_bar()
-                loop.add_signal_handler(signal.SIGINT, _sigint_handler)
-                loop.add_reader(sys.stdin, _stdin_handler)
-                try:
-                    await chat_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    try:
-                        loop.remove_signal_handler(signal.SIGINT)
-                    except Exception:
-                        pass
-                    try:
-                        loop.remove_reader(sys.stdin)
-                    except Exception:
-                        pass
-                    event_handler.deactivate_bar()
-                        
-                if next_prompt_override:
-                    # Brief pause to let the _chat_lock release from the cancelled task
+                if override:
                     await asyncio.sleep(0.1)
-                    event_handler.activate_bar()
-                    try:
-                        await session.chat(next_prompt_override, scope=current_scope, urgency=current_urgency)
-                    finally:
-                        event_handler.deactivate_bar()
+                    await _run_chat_with_bar(
+                        session, override, event_handler,
+                        scope=current_scope, urgency=current_urgency,
+                    )
                     
         print(f"[chat] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
