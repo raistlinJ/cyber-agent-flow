@@ -1344,24 +1344,26 @@ async def _run_chat_with_bar(
 
 
 async def _run_prompt(args: argparse.Namespace, event_handler: TerminalEventHandler = None, session: MCPSession = None) -> int:
-    event_handler = TerminalEventHandler(tool_output_chars=args.tool_output_chars, verbose=args.verbose)
-    session: MCPSession | None = None
+    if event_handler is None:
+        event_handler = TerminalEventHandler(tool_output_chars=args.tool_output_chars, verbose=args.verbose)
     prompt = args.prompt_text
     if not prompt:
         raise ValueError("A prompt is required for the run command.")
+    
+    _owns_session = (session is None)
     try:
-        session = await _start_session(args, event_handler)
+        if session is None:
+            session = await _start_session(args, event_handler)
 
         await _run_chat_with_bar(
             session, prompt, event_handler,
             scope=_effective_scope(args), urgency=_effective_urgency(args),
         )
-        # Note: force_analyze follow-up is handled inside _run_chat_with_bar.
 
         event_handler._print(f"[run] Transcript: {_format_run_path(session.run_id, 'transcript.md')}")
         return 0
     finally:
-        if session:
+        if _owns_session and session:
             await session.stop()
 
 
