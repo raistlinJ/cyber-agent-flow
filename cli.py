@@ -1769,18 +1769,18 @@ async def _handle_repl_command(
 def _list_runs(args: argparse.Namespace) -> int:
     sessions = load_session_list(str(PROJECT_DIR))[: max(args.limit, 0)]
     if not sessions:
-        event_handler._print("No runs found.")
+        print("No runs found.")
         return 0
 
-    event_handler._print(f"{'Idx':>3} {'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
-    event_handler._print(f"{'-'*3} {'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
+    print(f"{'Idx':>3} {'Run ID':36} {'Status':12} {'Model':24} {'Tools':>5} Transcript")
+    print(f"{'-'*3} {'-' * 36} {'-' * 12} {'-' * 24} {'-' * 5} {'-' * 20}")
     for idx, metadata in enumerate(sessions):
         run_id = str(metadata.get("run_id") or "unknown")[:36]
         status = str(metadata.get("status") or "unknown")[:12]
         model = str(metadata.get("model") or "unknown")[:24]
         tool_count = metadata.get("total_tool_calls", metadata.get("available_tool_count", ""))
         transcript = _format_run_path(str(metadata.get("run_id") or "unknown"), "transcript.md")
-        event_handler._print(f"{idx:>3} {run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
+        print(f"{idx:>3} {run_id:36} {status:12} {model:24} {str(tool_count):>5} {transcript}")
     return 0
 
 
