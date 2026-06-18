@@ -7,3 +7,4 @@ asyncssh
 psutil
 pytest
 pytest-asyncio
+prompt_toolkit>=3.0.30

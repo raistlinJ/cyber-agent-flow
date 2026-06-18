@@ -13,150 +13,102 @@ logging.basicConfig(level=logging.INFO)
 import cli
 from mcp_client import MCPSession
 from session_logger import make_run_id
+from prompt_toolkit.contrib.ssh.server import PromptToolkitSSHSession
+from prompt_toolkit.shortcuts import print_formatted_text
 
-class StreamAdapter:
-    """Adapts an asyncssh process stream (which is a subclass of SSHWriter/SSHReader)
-    so that it can be used by TerminalEventHandler which expects a minimal file-like API."""
-    def __init__(self, process: asyncssh.SSHServerProcess):
-        self.process = process
+
+class CyberAgentFlowSSHSession(PromptToolkitSSHSession):
+    def __init__(self, base_args):
+        self.base_args = base_args
+        self.client_cmd = None
+        super().__init__(self.handle_client, enable_cpr=False)
+
+    def exec_requested(self, command: str) -> bool:
+        self.client_cmd = command
+        return True
+
+    async def handle_client(self):
+        # This runs inside the app_session context!
+        # sys.stdout and sys.stdin are redirected to the SSH stream!
+        print("Welcome to CyberAgentFlow SSH Server.")
         
-    def write(self, data: str):
-        # asyncssh process.stdout.write is actually synchronous
-        self.process.stdout.write(data)
+        # Parse the command provided by the client, or default to base args
+        parser = cli._create_parser()
         
-    def flush(self):
-        pass  # asyncssh handles flushing inherently
+        if self.client_cmd:
+            import shlex
+            try:
+                cmd_parts = shlex.split(self.client_cmd)
+                # If the user only provided flags (e.g. --context-window), default to chat command
+                if cmd_parts and cmd_parts[0] not in ("chat", "run", "list-runs"):
+                    cmd_parts.insert(0, "chat")
+                args = parser.parse_args(cmd_parts)
+            except SystemExit as e:
+                print(f"Command parse error. Exit code {e.code}")
+                return
+        else:
+            args = argparse.Namespace(**vars(self.base_args))
+            args.command = "chat"
+            
+        for k, v in vars(self.base_args).items():
+            if getattr(args, k, None) is None:
+                setattr(args, k, v)
+                
+        prompt_parts = list(getattr(args, "prompt", []) or [])
+        if prompt_parts and prompt_parts[0] == "--":
+            prompt_parts = prompt_parts[1:]
+        args.prompt_text = " ".join(prompt_parts).strip() if prompt_parts else ""
         
-    def isatty(self) -> bool:
-        # PTYs provide a terminal-like environment
-        return bool(self.process.get_terminal_type())
+        try:
+            cli._validate_session_args(args)
+        except ValueError as e:
+            print(f"Configuration error: {e}")
+            return
+
+        import sys
+        event_handler = cli.TerminalEventHandler(
+            tool_output_chars=args.tool_output_chars,
+            verbose=args.verbose,
+            stream_out=sys.stdout,
+            stream_in=sys.stdin
+        )
         
-    def fileno(self):
-        raise NotImplementedError("SSH streams do not have file descriptors.")
+        # prompt_toolkit handles terminal size natively, so we just return it
+        def _ssh_term_size():
+            from prompt_toolkit.application.current import get_app_session
+            output = get_app_session().output
+            size = output.get_size()
+            return size.rows, size.columns
+            
+        event_handler._term_size = _ssh_term_size
         
-    @property
-    def stream_in(self):
-        return self.process.stdin
-        
-    @property
-    def stream_out(self):
-        return self
+        try:
+            session = await cli._start_session(args, event_handler)
+        except Exception as e:
+            print(f"Failed to start session: {e}")
+            return
+            
+        try:
+            if args.command == "chat":
+                await cli._chat(args, event_handler=event_handler, session=session)
+            elif args.command == "run":
+                await cli._run_prompt(args, event_handler=event_handler, session=session)
+        except Exception as e:
+            import traceback
+            err = traceback.format_exc()
+            print(f"\nSession crashed: {e}\n{err}\n")
+        finally:
+            await session.stop()
 
 class SSHAgentServer(asyncssh.SSHServer):
     def __init__(self, password: str):
         self._password = password
-
-    def connection_made(self, conn: asyncssh.SSHServerConnection):
-        print(f"SSH connection received from {conn.get_extra_info('peername')[0]}.")
-
-    def connection_lost(self, exc: Exception):
-        if exc:
-            print(f"SSH connection error: {exc}")
-
-    def begin_auth(self, username: str):
-        # We allow any username for now, just check password
-        return True
 
     def password_auth_supported(self):
         return True
 
     def validate_password(self, username: str, password: str) -> bool:
         return password == self._password
-
-    def pty_requested(self, term_type: str, term_size: tuple[int, int, int, int], term_modes: dict) -> bool:
-        # We require a PTY for the terminal UI
-        return True
-        
-    def shell_requested(self) -> bool:
-        return True
-        
-    def exec_requested(self, command: str) -> bool:
-        return True
-
-async def handle_client(process: asyncssh.SSHServerProcess, base_args: argparse.Namespace):
-    """Handles an individual SSH client session."""
-    stream = StreamAdapter(process)
-    
-    # Send a welcome message
-    process.stdout.write("Welcome to CyberAgentFlow SSH Server.\n")
-    
-    # Parse the command provided by the client, or default to base args
-    client_cmd = process.command
-    parser = cli._create_parser()
-    
-    if client_cmd:
-        import shlex
-        try:
-            cmd_parts = shlex.split(client_cmd)
-            # If the user only provided flags (e.g. --context-window), default to chat command
-            if cmd_parts and cmd_parts[0] not in ("chat", "run", "list-runs"):
-                cmd_parts.insert(0, "chat")
-            args = parser.parse_args(cmd_parts)
-        except SystemExit as e:
-            process.stdout.write(f"Command parse error. Exit code {e.code}\n")
-            process.exit(1)
-            return
-    else:
-        # Default to a chat session using base args if no command passed
-        # We need to construct a valid Namespace for the chat command
-        # The easiest way is to clone base_args and set command='chat'
-        args = argparse.Namespace(**vars(base_args))
-        args.command = "chat"
-    
-    # Override settings from base_args if they aren't explicitly provided by client
-    # (Simplified merging: if a client didn't specify it, take it from base_args)
-    for k, v in vars(base_args).items():
-        if getattr(args, k, None) is None:
-            setattr(args, k, v)
-            
-    # Reconstruct prompt_text as cli._resolve_session_args does
-    prompt_parts = list(getattr(args, "prompt", []) or [])
-    if prompt_parts and prompt_parts[0] == "--":
-        prompt_parts = prompt_parts[1:]
-    args.prompt_text = " ".join(prompt_parts).strip() if prompt_parts else ""
-            
-    # Re-validate session args
-    try:
-        cli._validate_session_args(args)
-    except ValueError as e:
-        process.stdout.write(f"Configuration error: {e}\n")
-        process.exit(1)
-        return
-
-    # Start the session
-    try:
-        event_handler = cli.TerminalEventHandler(
-            tool_output_chars=args.tool_output_chars,
-            verbose=args.verbose,
-            stream_out=stream,
-            stream_in=process.stdin
-        )
-        
-        # We monkeypatch the _term_size method on this specific handler instance
-        # so it pulls the dimensions directly from the SSH PTY instead of the host OS
-        def _ssh_term_size():
-            width, height, _, _ = process.get_terminal_size()
-            return height or 24, width or 80
-        event_handler._term_size = _ssh_term_size
-        
-        session = await cli._start_session(args, event_handler)
-    except Exception as e:
-        process.stdout.write(f"Failed to start session: {e}\n")
-        process.exit(1)
-        return
-        
-    try:
-        if args.command == "chat":
-            await cli._chat(args, event_handler=event_handler, session=session)
-        elif args.command == "run":
-            await cli._run_prompt(args, event_handler=event_handler, session=session)
-    except Exception as e:
-        import traceback
-        err = traceback.format_exc()
-        process.stdout.write(f"\nSession crashed: {e}\n{err}\n")
-    finally:
-        await session.stop()
-        process.exit(0)
 
 async def start_server(port: int, password: str, host_key: str = None):
     # If no host key provided, we generate an ephemeral one for testing
@@ -172,7 +124,7 @@ async def start_server(port: int, password: str, host_key: str = None):
         '', port,
         server_host_keys=server_keys,
         server_factory=lambda: SSHAgentServer(password),
-        process_factory=lambda proc: handle_client(proc, args)
+        session_factory=lambda: CyberAgentFlowSSHSession(args)
     )
 
 if __name__ == '__main__':

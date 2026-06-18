@@ -16,6 +16,10 @@ import sys
 import time
 from typing import Any
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import ANSI
+
 # ANSI color codes for terminal output (matching web UI colors)
 class Colors:
     """ANSI color codes matching web UI CSS variables."""
@@ -460,6 +464,8 @@ def _completion_candidates(
                 return [v for v in (*URGENCY_CHOICES, "off") if v.startswith(text)]
             if key in {"verbose", "scope_enabled", "urgency_enabled", "ssl_verify"}:
                 return [v for v in ("true", "false") if v.startswith(text)]
+            if key == "provider":
+                return [v for v in ("ollama", "openai", "anthropic", "google") if v.startswith(text)]
             if key == "tools_config":
                 preferred = _config_path_suggestions(text)
                 fs = _filesystem_path_suggestions(text)
@@ -494,48 +500,36 @@ def _completion_candidates(
     return []
 
 
-def _install_slash_completion(get_session_ids=None) -> None:
-    if readline is None:
-        return
 
-    session_id_getter = get_session_ids or (lambda: [])
 
-    def _completer(text: str, state: int) -> str | None:
-        buffer = readline.get_line_buffer() or ""
-        start_idx = readline.get_begidx()
+
+class SlashCompleter(Completer):
+    """prompt_toolkit Completer that delegates to _completion_candidates()."""
+
+    def __init__(self, get_session_ids):
+        self.get_session_ids = get_session_ids
+
+    def get_completions(self, document, complete_event):
+        buffer = document.text
+        cursor = document.cursor_position
+
+        # Find start of the current token by looking for the last space before cursor
+        start_idx = buffer.rfind(' ', 0, cursor) + 1
+        text = buffer[start_idx:cursor]
+
         suggestions = _completion_candidates(
             buffer=buffer,
             text=text,
             start_idx=start_idx,
-            get_session_ids=session_id_getter,
+            get_session_ids=self.get_session_ids,
         )
+        for s in suggestions:
+            yield Completion(s, start_position=-len(text))
 
-        if state < len(suggestions):
-            return suggestions[state]
-        return None
 
-    try:
-        readline.parse_and_bind("tab: complete")
-    except Exception:
-        pass
-        
-    try:
-        readline.parse_and_bind("bind ^I rl_complete")
-    except Exception:
-        pass
-        
-    try:
-        # Show all options immediately on first tab if ambiguous
-        readline.parse_and_bind("set show-all-if-ambiguous on")
-    except Exception:
-        pass
-        
-    try:
-        # Do not include / in delimiters so /help, /exit, etc. complete as a single token
-        readline.set_completer_delims(" \t\n")
-        readline.set_completer(_completer)
-    except Exception:
-        pass
+def _install_slash_completion(get_session_ids=None) -> None:
+    """Legacy stub — tab completion is now handled by prompt_toolkit PromptSession."""
+    pass
 
 
 def _copy_tools_config_if_requested(path_text: str | None) -> list[str] | None:
@@ -1423,9 +1417,8 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
             try:
                 prompt_str = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
                 event_handler.prompt_prefix = prompt_str
+                
                 # Safety net: ensure terminal is in canonical (cooked) mode
-                # before blocking on input().  This catches any case where
-                # deactivate_bar() didn't fully restore the terminal.
                 if _HAS_TERMIOS and event_handler._is_tty():
                     try:
                         _attrs = termios.tcgetattr(event_handler.stream_in)
@@ -1434,12 +1427,16 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                     except Exception:
                         pass
                 event_handler._print_separator()
-                event_handler._print(prompt_str, end="", flush=True)
-                _rl = event_handler.stream_in.readline
-                if asyncio.iscoroutinefunction(_rl):
-                    line = await _rl()
-                else:
-                    line = _rl()
+                
+                if not hasattr(event_handler, "prompt_session"):
+                    # Create the PromptSession once per event_handler
+                    event_handler.prompt_session = PromptSession(
+                        completer=SlashCompleter(lambda: sorted(known_session_ids)),
+                        # output will automatically be correctly routed by prompt_toolkit 
+                        # in both local and SSH mode (when using PromptToolkitSSHSession)
+                    )
+                
+                line = await event_handler.prompt_session.prompt_async(ANSI(prompt_str))
                 prompt = line.strip() if line else ""
             except EOFError:
                 event_handler._print()
@@ -1531,9 +1528,21 @@ async def _handle_repl_command(
         event_handler._print(json.dumps(session_config, indent=2, ensure_ascii=True))
         return True, current_scope, current_urgency, active_session_id
     if command == "/set":
-        if len(parts) < 3:
-            event_handler._print("Usage: /set KEY VALUE")
-            event_handler._print("Examples: /set urgency fast | /set scope_enabled false | /set tool_output_chars 12000")
+        if len(parts) == 1:
+            event_handler._print(f"Possible keys: {', '.join(SETTABLE_CONFIG_KEYS)}")
+            return True, current_scope, current_urgency, active_session_id
+        if len(parts) == 2:
+            key = parts[1].strip().lower()
+            if key == "scope":
+                event_handler._print(f"Possible values for {key}: {', '.join(SCOPE_CHOICES)}, off")
+            elif key == "urgency":
+                event_handler._print(f"Possible values for {key}: {', '.join(URGENCY_CHOICES)}, off")
+            elif key in {"verbose", "scope_enabled", "urgency_enabled", "ssl_verify"}:
+                event_handler._print(f"Possible values for {key}: true, false")
+            elif key == "provider":
+                event_handler._print(f"Possible values for {key}: ollama, openai, anthropic, google")
+            else:
+                event_handler._print(f"Usage: /set {key} <value>")
             return True, current_scope, current_urgency, active_session_id
 
         key = parts[1].strip().lower()
