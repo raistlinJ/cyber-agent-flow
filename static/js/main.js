@@ -1402,6 +1402,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function attachModalToViewportRoot(modalOverlay) {
+        if (modalOverlay && modalOverlay.parentElement !== document.body) {
+            document.body.appendChild(modalOverlay);
+        }
+    }
+
     async function openAnalysisConfigModal({
         suggestedUrl = '',
         suggestedProvider = PROVIDERS.OLLAMA_DIRECT,
@@ -1420,6 +1426,7 @@ document.addEventListener('DOMContentLoaded', () => {
             closeAnalysisConfigModal(null);
         }
 
+        attachModalToViewportRoot(analysisConfigModalOverlay);
         _analysisConfigOptions = { includeSpan, fixedSpan };
         analysisConfigTitle.innerHTML = `<i class="ph ph-brain"></i> ${escapeHtml(title)}`;
         analysisConfigDescription.textContent = description;
@@ -1443,6 +1450,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : '<option value="" disabled selected>Fetch models to load options</option>';
         analysisModelSelect.disabled = !suggestedModel;
         updateAnalysisProviderUi();
+        analysisConfigModalOverlay.scrollTop = 0;
         analysisConfigModalOverlay.style.display = 'flex';
 
         return new Promise(resolve => {
@@ -4212,6 +4220,139 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function formatAnalysisDuration(ms) {
+        const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+        if (totalSeconds < 60) {
+            return `${totalSeconds}s`;
+        }
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes < 60) {
+            return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remainingMinutes = minutes % 60;
+        return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+    }
+
+    function elapsedFromTimestamp(timestamp, nowMs = Date.now()) {
+        const parsed = Date.parse(timestamp || '');
+        return Number.isFinite(parsed) ? Math.max(0, nowMs - parsed) : null;
+    }
+
+    function buildRunningAnalysisProgress(job, statusDetail) {
+        const nowMs = Date.now();
+        const elapsedMs = elapsedFromTimestamp(job.start_time, nowMs);
+        const staleMs = elapsedFromTimestamp(job.last_update_time, nowMs);
+        const elapsedText = elapsedMs === null ? 'Running' : `${formatAnalysisDuration(elapsedMs)} elapsed`;
+        const updateText = staleMs === null ? '' : `updated ${formatAnalysisDuration(staleMs)} ago`;
+        const rawDetail = String(statusDetail || '').trim();
+        const detailLower = rawDetail.toLowerCase();
+        const modelMatch = rawDetail.match(/(?:sent to|response from)\s+([^;]+?)(?:;|$)/i);
+        const modelLabel = modelMatch ? modelMatch[1].trim() : String(job.model || '').trim();
+        let meta = updateText ? `${elapsedText} · ${updateText}` : elapsedText;
+
+        let label = rawDetail || 'Working on analysis';
+        let stage = 'Running';
+        let percent = 18;
+
+        if (detailLower.includes('queued')) {
+            label = 'Queued for analysis';
+            stage = 'Stage 1 of 6';
+            percent = 6;
+        } else if (detailLower.includes('loading transcript')) {
+            label = 'Collecting transcript, annotations, and tool-call history';
+            stage = 'Stage 2 of 6';
+            percent = 14;
+        } else if (detailLower.includes('preparing prompts')) {
+            label = 'Preparing prompts and transcript context';
+            stage = 'Stage 3 of 6';
+            percent = 24;
+        } else if (detailLower.includes('prepared') && detailLower.includes('analysis context')) {
+            label = rawDetail;
+            stage = 'Stage 3 of 6';
+            percent = 30;
+        } else if (detailLower.includes('connecting to model provider')) {
+            label = 'Connecting to provider and building the model request';
+            stage = 'Stage 4 of 6';
+            percent = 36;
+        } else if (detailLower.includes('model is generating') || detailLower.includes('waiting for model response')) {
+            const waitMs = elapsedMs || 0;
+            let waitNote = 'prompt sent; the model may be loading context';
+            let waitPercent = 44;
+            if (waitMs >= 300000) {
+                waitNote = 'still waiting; a smaller or faster model may finish sooner';
+                waitPercent = 82;
+            } else if (waitMs >= 180000) {
+                waitNote = 'still waiting; the model is likely processing a large transcript';
+                waitPercent = 74;
+            } else if (waitMs >= 60000) {
+                waitNote = 'still generating; large sessions can take a few minutes';
+                waitPercent = 64;
+            } else if (waitMs >= 15000) {
+                waitNote = 'generating analysis from session evidence';
+                waitPercent = 54;
+            }
+            label = `${modelLabel ? `First pass running on ${modelLabel}` : 'First analysis pass running'}: ${waitNote}`;
+            stage = 'Stage 5 of 6';
+            percent = waitPercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in model step`;
+        } else if (detailLower.includes('processing model response')) {
+            label = 'Processing and validating the model response';
+            stage = 'Stage 6 of 6';
+            percent = 88;
+        } else if (detailLower.includes('structured rewrite')) {
+            label = detailLower.includes('off-format')
+                ? 'Initial pass missed the template; running a structured rewrite'
+                : 'Running structured rewrite';
+            stage = 'Rewrite pass';
+            percent = 72;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in rewrite step`;
+        } else if (detailLower.includes('template-only fallback')) {
+            label = 'Rewrite still missed the template; running template-only fallback';
+            stage = 'Fallback pass';
+            percent = 82;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in fallback step`;
+        } else if (detailLower.includes('finalizing')) {
+            label = 'Finalizing analysis result';
+            stage = 'Stage 6 of 6';
+            percent = 96;
+        }
+
+        return { label, stage, meta, percent };
+    }
+
+    function buildAnalysisProgressInfo(job, statusDetail, lastUpdateText) {
+        if (job.status === 'running') {
+            return buildRunningAnalysisProgress(job, statusDetail);
+        }
+
+        if (job.status === 'success') {
+            return {
+                label: statusDetail || 'Completed',
+                stage: 'Complete',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
+        if (job.status === 'failed') {
+            return {
+                label: statusDetail || 'Failed',
+                stage: 'Stopped',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
+        return {
+            label: statusDetail || job.status || 'Unknown',
+            stage: '',
+            meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+            percent: 0,
+        };
+    }
+
     function renderAnalysisJobs(jobs) {
         renderAnalysisJobsSummary(jobs);
 
@@ -4246,6 +4387,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusIcon = job.status === 'running' ? 'ph-spinner spinning' : (job.status === 'success' ? 'ph-check-circle' : 'ph-x-circle');
             const statusDetail = String(job.status_detail || '').trim();
             const lastUpdateText = job.last_update_time ? new Date(job.last_update_time).toLocaleTimeString() : '';
+            const progressInfo = buildAnalysisProgressInfo(job, statusDetail, lastUpdateText);
             const responsePreviewSource = String(job.response || job.result || job.result_preview || '').trim();
             const responsePreview = responsePreviewSource
                 ? escapeHtml(responsePreviewSource.replace(/\s+/g, ' ').slice(0, 280))
@@ -4278,8 +4420,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     ${(job.status === 'running' || statusDetail) ? `
                         <div class="job-progress ${job.status === 'running' ? 'job-progress-active' : ''}">
-                            <span class="job-progress-label">${escapeHtml(statusDetail || (job.status === 'running' ? 'Working' : job.status || 'Unknown'))}</span>
-                            ${lastUpdateText ? `<span class="job-progress-meta">Updated ${escapeHtml(lastUpdateText)}</span>` : ''}
+                            <div class="job-progress-main">
+                                <span class="job-progress-label">${escapeHtml(progressInfo.label)}</span>
+                                ${progressInfo.stage ? `<span class="job-progress-stage">${escapeHtml(progressInfo.stage)}</span>` : ''}
+                            </div>
+                            ${progressInfo.meta ? `<span class="job-progress-meta">${escapeHtml(progressInfo.meta)}</span>` : ''}
+                            ${job.status === 'running' ? `
+                                <div class="job-progress-bar" aria-hidden="true">
+                                    <span style="width: ${Math.max(4, Math.min(100, Number(progressInfo.percent || 0)))}%;"></span>
+                                </div>
+                            ` : ''}
                         </div>
                     ` : ''}
                     ${job.status === 'success' && responsePreview ? `

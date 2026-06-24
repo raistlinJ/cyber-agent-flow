@@ -2682,6 +2682,10 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
         llm_provider_override,
         ssl_verify_override,
     )
+    prompt_chars = len(str(request_data.get("system_prompt") or "")) + len(str(request_data.get("user_prompt") or ""))
+    requested_outputs = request_data.get("analysis_outputs") or []
+    outputs_label = ", ".join(requested_outputs) if requested_outputs else "core review"
+    _progress(f"Prepared {span_req} analysis context ({prompt_chars:,} prompt chars; outputs: {outputs_label})")
     _progress("Connecting to model provider and preparing analysis request")
     app.logger.debug(
         'Performing analysis run_id=%s span=%s provider=%s model=%s url=%s outputs=%s ssl_verify=%s auth=%s',
@@ -2698,7 +2702,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
         "temperature": 0.1,
     }
 
-    _progress(f"Waiting for model response from {request_data['model']}")
+    _progress(f"Initial analysis pass sent to {request_data['model']}; model is generating")
     resp = _analysis_chat_request(
         request_data["llm_provider"],
         request_data["ollama_url"],
@@ -2719,7 +2723,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
         response_text = _analysis_extract_response_text(request_data["llm_provider"], safe_resp) or response_text
 
     if not _analysis_response_is_valid(response_text, span_req, request_data.get("analysis_outputs"), request_data.get("meaningful_evidence", False)):
-        _progress("Model returned a non-analysis answer; requesting a structured rewrite")
+        _progress("Initial pass returned off-format output; requesting structured rewrite")
         rewrite_prompt = (
             "Your previous answer did not follow the required analysis format. Rewrite it now as a meta-analysis only. "
             "Do NOT continue the engagement. Do NOT answer the operator. Do NOT provide a recap of actions taken. "
@@ -2756,7 +2760,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             safe_resp = rewrite_safe_resp
 
     if not _analysis_response_is_valid(response_text, span_req, request_data.get("analysis_outputs"), request_data.get("meaningful_evidence", False)):
-        _progress("First rewrite still invalid; requesting a template-only analysis")
+        _progress("Structured rewrite still off-format; requesting template-only fallback")
         fallback_prompt = (
             "Start over from scratch. Ignore your previous answer. "
             "Return only the completed Markdown template below. Do not add any prose before the first heading or after the last section. "
