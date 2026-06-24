@@ -4166,7 +4166,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function buildAnalysisJobSummary(jobs) {
-        const counts = { all: jobs.length, initial: 0, rewrite: 0, fallback: 0, failed: 0 };
+        const counts = { all: jobs.length, initial: 0, rewrite: 0, fallback: 0, failed: 0, canceled: 0 };
         jobs.forEach(job => {
             const path = String(job.completion_path || '').toLowerCase();
             if (Object.prototype.hasOwnProperty.call(counts, path)) {
@@ -4194,6 +4194,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { key: 'rewrite', label: 'Rewrite Pass' },
             { key: 'fallback', label: 'Fallback Pass' },
             { key: 'failed', label: 'Failed' },
+            { key: 'canceled', label: 'Canceled' },
         ];
 
         analysisJobsSummary.style.display = 'flex';
@@ -4301,6 +4302,50 @@ document.addEventListener('DOMContentLoaded', () => {
             label = 'Processing and validating the model response';
             stage = 'Stage 6 of 6';
             percent = 88;
+        } else if (detailLower.includes('initial pass returned off-format')) {
+            label = 'Initial pass missed the required template; preparing a stricter rewrite prompt';
+            stage = 'Rewrite setup';
+            percent = 66;
+        } else if (detailLower.includes('structured rewrite sent')) {
+            const rewriteMs = staleMs || 0;
+            let rewriteNote = 'rewrite prompt sent; model is reorganizing the findings';
+            let rewritePercent = 72;
+            if (rewriteMs >= 180000) {
+                rewriteNote = 'still rewriting; checking structure can take longer on large transcripts';
+                rewritePercent = 84;
+            } else if (rewriteMs >= 60000) {
+                rewriteNote = 'still rewriting; model is aligning sections to the required template';
+                rewritePercent = 80;
+            } else if (rewriteMs >= 15000) {
+                rewriteNote = 'rewriting into the required sections and preserving evidence';
+                rewritePercent = 76;
+            }
+            label = `${modelLabel ? `Rewrite pass running on ${modelLabel}` : 'Rewrite pass running'}: ${rewriteNote}`;
+            stage = 'Rewrite pass';
+            percent = rewritePercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in rewrite pass`;
+        } else if (detailLower.includes('structured rewrite still off-format')) {
+            label = 'Structured rewrite still missed the template; preparing a template-only fallback';
+            stage = 'Fallback setup';
+            percent = 80;
+        } else if (detailLower.includes('template fallback sent')) {
+            const fallbackMs = staleMs || 0;
+            let fallbackNote = 'fallback prompt sent; model is filling only the required sections';
+            let fallbackPercent = 84;
+            if (fallbackMs >= 180000) {
+                fallbackNote = 'still filling the template; large evidence digests can take a while';
+                fallbackPercent = 94;
+            } else if (fallbackMs >= 60000) {
+                fallbackNote = 'still filling the template and checking required headings';
+                fallbackPercent = 90;
+            } else if (fallbackMs >= 15000) {
+                fallbackNote = 'building the strict fallback report from the evidence digest';
+                fallbackPercent = 88;
+            }
+            label = `${modelLabel ? `Fallback pass running on ${modelLabel}` : 'Fallback pass running'}: ${fallbackNote}`;
+            stage = 'Fallback pass';
+            percent = fallbackPercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in fallback pass`;
         } else if (detailLower.includes('structured rewrite')) {
             label = detailLower.includes('off-format')
                 ? 'Initial pass missed the template; running a structured rewrite'
@@ -4345,6 +4390,15 @@ document.addEventListener('DOMContentLoaded', () => {
             };
         }
 
+        if (job.status === 'canceled') {
+            return {
+                label: statusDetail || 'Canceled by user',
+                stage: 'Canceled',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
         return {
             label: statusDetail || job.status || 'Unknown',
             stage: '',
@@ -4384,7 +4438,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const completionPathLabel = formatAnalysisCompletionPath(job.completion_path);
             const date = new Date(job.start_time).toLocaleString();
             const statusClass = `status-${job.status}`;
-            const statusIcon = job.status === 'running' ? 'ph-spinner spinning' : (job.status === 'success' ? 'ph-check-circle' : 'ph-x-circle');
+            const statusIcon = job.status === 'running'
+                ? 'ph-spinner spinning'
+                : (job.status === 'success'
+                    ? 'ph-check-circle'
+                    : (job.status === 'canceled' ? 'ph-prohibit' : 'ph-x-circle'));
             const statusDetail = String(job.status_detail || '').trim();
             const lastUpdateText = job.last_update_time ? new Date(job.last_update_time).toLocaleTimeString() : '';
             const progressInfo = buildAnalysisProgressInfo(job, statusDetail, lastUpdateText);
@@ -4414,6 +4472,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <li data-action="view" data-job-id="${job.job_id}"><i class="ph ph-eye"></i> View</li>
                                     <li data-action="copy" data-job-id="${job.job_id}"><i class="ph ph-copy"></i> Copy Response</li>
                                     <li data-action="download" data-job-id="${job.job_id}"><i class="ph ph-download-simple"></i> Download</li>
+                                    ${job.status === 'running' ? `<li data-action="cancel" data-job-id="${job.job_id}" class="job-action-danger"><i class="ph ph-stop-circle"></i> Cancel</li>` : ''}
                                 </ul>
                             </div>
                         </div>
@@ -4488,6 +4547,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.copyAnalysisJobResponse(jobId);
                 } else if (action === 'download') {
                     window.downloadAnalysisJob(jobId);
+                } else if (action === 'cancel') {
+                    window.cancelAnalysisJob(jobId);
                 }
             });
         });
@@ -4535,6 +4596,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (value === 'failed') {
             return 'Failed';
+        }
+        if (value === 'canceled') {
+            return 'Canceled';
         }
         return '';
     }
@@ -4617,6 +4681,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.downloadAnalysisJob = function(jobId) {
         window.location.href = `/api/analysis/jobs/${jobId}/download`;
+    };
+
+    window.cancelAnalysisJob = async function(jobId) {
+        const confirmed = confirm(
+            'Cancel this analysis job?\n\nThe job will be marked canceled immediately. If the provider request returns later, its response will be ignored.'
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/analysis/jobs/${jobId}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || `Cancel failed (${res.status})`);
+            }
+
+            showAlert('Analysis job canceled.', 'success');
+            await loadAnalysisJobs();
+        } catch (err) {
+            showAlert('Failed to cancel analysis job: ' + err.message, 'error');
+        }
     };
 
     window.copyAnalysisJobResponse = async function(jobId) {

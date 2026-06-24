@@ -2595,10 +2595,12 @@ option {
 .job-attempt-chip-rewrite { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.22); color: #fcd34d; }
 .job-attempt-chip-fallback { background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.22); color: #bfdbfe; }
 .job-attempt-chip-failed { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.22); color: #fca5a5; }
+.job-attempt-chip-canceled { background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.22); color: #cbd5e1; }
 .job-status-badge { padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .status-running { background: rgba(59, 130, 246, 0.1); color: var(--accent-primary); border: 1px solid rgba(59, 130, 246, 0.2); }
 .status-success { background: rgba(16, 185, 129, 0.1); color: var(--status-success); border: 1px solid rgba(16, 185, 129, 0.2); }
 .status-failed { background: rgba(239, 68, 68, 0.1); color: var(--status-error); border: 1px solid rgba(239, 68, 68, 0.2); }
+.status-canceled { background: rgba(148, 163, 184, 0.1); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2); }
 .job-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; padding-top: 0.8rem; border-top: 1px solid rgba(255, 255, 255, 0.05); }
 .job-meta { font-size: 0.8rem; color: var(--text-secondary); display: flex; gap: 1rem; }
 .job-actions-dropdown { position: relative; }
@@ -2606,6 +2608,8 @@ option {
 .job-actions-toggle i:last-child { font-size: 0.9rem; }
 .job-actions-menu { top: calc(100% + 0.5rem); bottom: auto; right: 0; left: auto; margin-bottom: 0; min-width: 160px; transform-origin: top right; z-index: 300; }
 .job-actions-menu li { white-space: nowrap; }
+.job-actions-menu li.job-action-danger { color: #fca5a5; }
+.job-actions-menu li.job-action-danger:hover { background: rgba(239, 68, 68, 0.12); color: #fecaca; }
 
 @media (max-width: 720px) {
     .job-progress {

@@ -103,8 +103,11 @@ _INTERNAL_ARTIFACT_PREFIXES = (
     "litellm_json_tool_plan_raw",
 )
 _TOOL_TIMEOUT_WAIT_OPTIONS = {30, 60, 90, 120, 300}
-_DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 600
-_MAX_ANALYSIS_TIMEOUT_SECONDS = 3600
+_ANALYSIS_CONNECT_TIMEOUT_SECONDS = 10
+
+
+class AnalysisJobCancelled(Exception):
+    """Raised internally when a background analysis job has been canceled."""
 
 
 def _configure_logging():
@@ -319,43 +322,13 @@ def _build_llm_http_headers(provider: str, api_key: str | None) -> dict:
     return headers
 
 
-def _analysis_request_timeout_seconds() -> int:
-    raw_value = os.environ.get('MCP_ANALYSIS_TIMEOUT_SECONDS') or os.environ.get('MCP_ANALYSIS_TIMEOUT')
-    if raw_value is None:
-        return _DEFAULT_ANALYSIS_TIMEOUT_SECONDS
-
-    try:
-        timeout_seconds = int(raw_value)
-    except (TypeError, ValueError):
-        app.logger.warning(
-            'Invalid MCP_ANALYSIS_TIMEOUT_SECONDS=%r; using default %s seconds',
-            raw_value,
-            _DEFAULT_ANALYSIS_TIMEOUT_SECONDS,
-        )
-        return _DEFAULT_ANALYSIS_TIMEOUT_SECONDS
-
-    return max(1, min(timeout_seconds, _MAX_ANALYSIS_TIMEOUT_SECONDS))
+def _analysis_requests_timeout():
+    return (_ANALYSIS_CONNECT_TIMEOUT_SECONDS, None)
 
 
-def _analysis_timeout_message(timeout_seconds: int) -> str:
-    return (
-        f"Analysis model request timed out after {int(timeout_seconds)} seconds. "
-        "Increase MCP_ANALYSIS_TIMEOUT_SECONDS or choose a faster/smaller model."
-    )
-
-
-def _is_analysis_timeout_exception(exc: Exception) -> bool:
-    if isinstance(exc, requests.exceptions.Timeout):
-        return True
-
-    exc_type = type(exc)
-    module_name = getattr(exc_type, '__module__', '')
-    type_name = getattr(exc_type, '__name__', '')
-    if module_name.startswith('httpx') and 'Timeout' in type_name:
-        return True
-
-    text = str(exc).lower()
-    return 'read timeout' in text or 'read timed out' in text
+def _analysis_ollama_timeout():
+    import httpx
+    return httpx.Timeout(None, connect=float(_ANALYSIS_CONNECT_TIMEOUT_SECONDS))
 
 
 def _detect_model_arch(model_name: str, model_family: str = '') -> str:
@@ -525,63 +498,57 @@ def _analysis_chat_request(provider: str, host: str, api_key: str | None, model:
         **_build_llm_http_headers(provider, api_key),
     }
     options = options or {}
-    timeout_seconds = _analysis_request_timeout_seconds()
 
-    try:
-        if provider in {'litellm', 'openai'}:
-            payload = {
-                'model': model,
-                'messages': messages,
-            }
-            if 'temperature' in options:
-                payload['temperature'] = options['temperature']
-            response = requests.post(
-                f"{host.rstrip('/')}/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=timeout_seconds,
-                verify=ssl_verify,
-            )
-            response.raise_for_status()
-            return response.json() or {}
-
-        if provider == 'claude':
-            system_text, anthropic_messages = _analysis_to_anthropic_messages(messages)
-            payload = {
-                'model': model,
-                'messages': anthropic_messages,
-                'max_tokens': int(options.get('max_tokens') or 4096),
-            }
-            if system_text:
-                payload['system'] = system_text
-            if 'temperature' in options:
-                payload['temperature'] = options['temperature']
-            response = requests.post(
-                f"{host.rstrip('/')}/v1/messages",
-                headers=headers,
-                json=payload,
-                timeout=timeout_seconds,
-                verify=ssl_verify,
-            )
-            response.raise_for_status()
-            return response.json() or {}
-
-        import ollama
-        client = ollama.Client(
-            host=host,
-            headers=_build_llm_http_headers(provider, api_key),
-            timeout=timeout_seconds,
+    if provider in {'litellm', 'openai'}:
+        payload = {
+            'model': model,
+            'messages': messages,
+        }
+        if 'temperature' in options:
+            payload['temperature'] = options['temperature']
+        response = requests.post(
+            f"{host.rstrip('/')}/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=_analysis_requests_timeout(),
             verify=ssl_verify,
         )
-        return client.chat(
-            model=model,
-            messages=messages,
-            options=options,
+        response.raise_for_status()
+        return response.json() or {}
+
+    if provider == 'claude':
+        system_text, anthropic_messages = _analysis_to_anthropic_messages(messages)
+        payload = {
+            'model': model,
+            'messages': anthropic_messages,
+            'max_tokens': int(options.get('max_tokens') or 4096),
+        }
+        if system_text:
+            payload['system'] = system_text
+        if 'temperature' in options:
+            payload['temperature'] = options['temperature']
+        response = requests.post(
+            f"{host.rstrip('/')}/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=_analysis_requests_timeout(),
+            verify=ssl_verify,
         )
-    except Exception as exc:
-        if _is_analysis_timeout_exception(exc):
-            raise TimeoutError(_analysis_timeout_message(timeout_seconds)) from exc
-        raise
+        response.raise_for_status()
+        return response.json() or {}
+
+    import ollama
+    client = ollama.Client(
+        host=host,
+        headers=_build_llm_http_headers(provider, api_key),
+        timeout=_analysis_ollama_timeout(),
+        verify=ssl_verify,
+    )
+    return client.chat(
+        model=model,
+        messages=messages,
+        options=options,
+    )
 
 
 def _make_run_id(server_type: str) -> str:
@@ -907,16 +874,53 @@ def _analysis_response_is_valid(response_text: str, span_req: str, analysis_outp
 def _update_analysis_job_state(run_id: str, job_id: str, **updates):
     updates = {k: v for k, v in updates.items() if v is not None}
     if not updates:
-        return
+        return False
 
     updates["last_update_time"] = now_timestamp()
 
     with _analysis_lock:
         current = dict(_analysis_jobs.get(job_id, {}))
+        if current.get("status") == "canceled" and updates.get("status") != "canceled":
+            return False
         current.update(updates)
         _analysis_jobs[job_id] = current
 
     _write_analysis_job_record(run_id, job_id, current)
+    return True
+
+
+def _analysis_job_is_cancelled(job_id: str) -> bool:
+    with _analysis_lock:
+        current = _analysis_jobs.get(job_id) or {}
+        return current.get("status") == "canceled" or bool(current.get("cancel_requested"))
+
+
+def _raise_if_analysis_job_cancelled(job_id: str):
+    if _analysis_job_is_cancelled(job_id):
+        raise AnalysisJobCancelled()
+
+
+def _mark_analysis_job_cancelled(run_id: str, job_id: str, status_detail: str = "Canceled by user", base_record: dict | None = None):
+    now = now_timestamp()
+    with _analysis_lock:
+        current = dict(base_record or {})
+        current.update(_analysis_jobs.get(job_id, {}))
+        current.update({
+            "job_id": job_id,
+            "run_id": current.get("run_id") or run_id,
+            "status": "canceled",
+            "status_detail": status_detail,
+            "completion_path": "canceled",
+            "cancel_requested": True,
+            "cancel_time": current.get("cancel_time") or now,
+            "last_update_time": now,
+            "end_time": current.get("end_time") or now,
+            "error": None,
+        })
+        _analysis_jobs[job_id] = current
+
+    _write_analysis_job_record(run_id, job_id, current)
+    return current
 
 
 def _find_analysis_job_path(job_id: str) -> str | None:
@@ -2599,6 +2603,8 @@ def analyze_session(run_id):
         "result": None,
         "response": None,
         "error": None,
+        "cancel_requested": False,
+        "cancel_time": None,
         "system_prompt": None,
         "user_prompt": None,
     }
@@ -2609,7 +2615,15 @@ def analyze_session(run_id):
     _write_analysis_job_record(run_id, job_id, initial_record)
 
     def _job_wrapper():
+        def _job_cancelled():
+            return _analysis_job_is_cancelled(job_id)
+
+        def _job_progress(detail: str):
+            if not _job_cancelled():
+                _update_analysis_job_state(run_id, job_id, status_detail=detail)
+
         try:
+            _raise_if_analysis_job_cancelled(job_id)
             _update_analysis_job_state(run_id, job_id, status_detail="Preparing prompts and transcript context")
             details = _perform_llm_analysis(
                 run_id,
@@ -2620,8 +2634,11 @@ def analyze_session(run_id):
                 ssl_verify_override=ssl_verify_override,
                 model_override=model_override,
                 analysis_outputs=analysis_outputs,
-                progress_callback=lambda detail: _update_analysis_job_state(run_id, job_id, status_detail=detail),
+                progress_callback=_job_progress,
+                cancel_check=_job_cancelled,
             )
+            if _job_cancelled():
+                return
             completed_record = {
                 **_analysis_jobs.get(job_id, {}),
                 **details,
@@ -2643,7 +2660,13 @@ def analyze_session(run_id):
                 app.logger.error(f"Failed to create AI scaffolding for job {job_id}: {scaffold_err}")
                 
             app.logger.info('Analysis job completed job_id=%s completion_path=%s', job_id, details.get('completion_path'))
+        except AnalysisJobCancelled:
+            _mark_analysis_job_cancelled(run_id, job_id)
+            app.logger.info('Analysis job canceled job_id=%s', job_id)
         except Exception as e:
+            if _job_cancelled():
+                app.logger.info('Analysis job canceled after worker exception job_id=%s', job_id)
+                return
             app.logger.error(f"Analysis job {job_id} failed: {e}")
             failed_record = {
                 **_analysis_jobs.get(job_id, {}),
@@ -2661,10 +2684,15 @@ def analyze_session(run_id):
     threading.Thread(target=_job_wrapper, daemon=True).start()
     return jsonify({"success": True, "job_id": job_id})
 
-def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_override=None, analysis_outputs=None, api_key_override=None, llm_provider_override=None, ssl_verify_override=None, progress_callback=None):
+def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_override=None, analysis_outputs=None, api_key_override=None, llm_provider_override=None, ssl_verify_override=None, progress_callback=None, cancel_check=None):
     """Internal helper to do the actual provider-specific LLM work."""
 
+    def _check_cancelled():
+        if cancel_check and cancel_check():
+            raise AnalysisJobCancelled()
+
     def _progress(detail: str):
+        _check_cancelled()
         if progress_callback:
             try:
                 progress_callback(detail)
@@ -2703,6 +2731,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
     }
 
     _progress(f"Initial analysis pass sent to {request_data['model']}; model is generating")
+    _check_cancelled()
     resp = _analysis_chat_request(
         request_data["llm_provider"],
         request_data["ollama_url"],
@@ -2715,6 +2744,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
         chat_options,
         request_data.get("ssl_verify", True),
     )
+    _check_cancelled()
     completion_path = "initial"
     _progress("Processing model response")
     safe_resp = _to_json_safe(resp)
@@ -2739,6 +2769,8 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             "Previous invalid answer:\n"
             f"{response_text}"
         )
+        _progress(f"Structured rewrite sent to {request_data['model']}; model is reorganizing output into the required template")
+        _check_cancelled()
         rewrite_resp = _analysis_chat_request(
             request_data["llm_provider"],
             request_data["ollama_url"],
@@ -2753,6 +2785,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             chat_options,
             request_data.get("ssl_verify", True),
         )
+        _check_cancelled()
         completion_path = "rewrite"
         rewrite_safe_resp = _to_json_safe(rewrite_resp)
         if isinstance(rewrite_safe_resp, dict):
@@ -2773,6 +2806,8 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             f"Evidence digest:\n{request_data['evidence_digest']}\n\n"
             f"Template to fill:\n{request_data['output_template']}"
         )
+        _progress(f"Template fallback sent to {request_data['model']}; model is filling only the required sections")
+        _check_cancelled()
         fallback_resp = _analysis_chat_request(
             request_data["llm_provider"],
             request_data["ollama_url"],
@@ -2786,6 +2821,7 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             chat_options,
             request_data.get("ssl_verify", True),
         )
+        _check_cancelled()
         completion_path = "fallback"
         fallback_safe_resp = _to_json_safe(fallback_resp)
         if isinstance(fallback_safe_resp, dict):
@@ -2828,6 +2864,38 @@ def get_analysis_job(job_id):
         abort(404, description="Analysis job not found.")
 
     return jsonify(_public_analysis_job_record(_to_json_safe(record)))
+
+
+@app.route('/api/analysis/jobs/<job_id>/cancel', methods=['POST'])
+def cancel_analysis_job(job_id):
+    """Mark a running background analysis job as canceled."""
+    _validate_filename(job_id)
+
+    with _analysis_lock:
+        live_job = dict(_analysis_jobs.get(job_id, {}))
+
+    record = live_job or _load_analysis_job_record(job_id)
+    if not record:
+        abort(404, description="Analysis job not found.")
+
+    run_id = record.get("run_id")
+    if not run_id:
+        return jsonify({"success": False, "error": "Analysis job has no run_id."}), 400
+
+    status = str(record.get("status") or "").lower()
+    if status == "canceled":
+        return jsonify({"success": True, "job": _public_analysis_job_record(_to_json_safe(record))})
+    if status != "running":
+        return jsonify({"success": False, "error": f"Cannot cancel analysis job with status '{status or 'unknown'}'."}), 409
+
+    canceled_record = _mark_analysis_job_cancelled(
+        str(run_id),
+        job_id,
+        "Canceled by user; ignoring any late model response",
+        base_record=record,
+    )
+    app.logger.info('Analysis job cancel requested job_id=%s run_id=%s', job_id, run_id)
+    return jsonify({"success": True, "job": _public_analysis_job_record(_to_json_safe(canceled_record))})
 
 
 @app.route('/api/analysis/jobs/<job_id>/download', methods=['GET'])
