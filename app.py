@@ -103,6 +103,8 @@ _INTERNAL_ARTIFACT_PREFIXES = (
     "litellm_json_tool_plan_raw",
 )
 _TOOL_TIMEOUT_WAIT_OPTIONS = {30, 60, 90, 120, 300}
+_DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 600
+_MAX_ANALYSIS_TIMEOUT_SECONDS = 3600
 
 
 def _configure_logging():
@@ -317,6 +319,45 @@ def _build_llm_http_headers(provider: str, api_key: str | None) -> dict:
     return headers
 
 
+def _analysis_request_timeout_seconds() -> int:
+    raw_value = os.environ.get('MCP_ANALYSIS_TIMEOUT_SECONDS') or os.environ.get('MCP_ANALYSIS_TIMEOUT')
+    if raw_value is None:
+        return _DEFAULT_ANALYSIS_TIMEOUT_SECONDS
+
+    try:
+        timeout_seconds = int(raw_value)
+    except (TypeError, ValueError):
+        app.logger.warning(
+            'Invalid MCP_ANALYSIS_TIMEOUT_SECONDS=%r; using default %s seconds',
+            raw_value,
+            _DEFAULT_ANALYSIS_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_ANALYSIS_TIMEOUT_SECONDS
+
+    return max(1, min(timeout_seconds, _MAX_ANALYSIS_TIMEOUT_SECONDS))
+
+
+def _analysis_timeout_message(timeout_seconds: int) -> str:
+    return (
+        f"Analysis model request timed out after {int(timeout_seconds)} seconds. "
+        "Increase MCP_ANALYSIS_TIMEOUT_SECONDS or choose a faster/smaller model."
+    )
+
+
+def _is_analysis_timeout_exception(exc: Exception) -> bool:
+    if isinstance(exc, requests.exceptions.Timeout):
+        return True
+
+    exc_type = type(exc)
+    module_name = getattr(exc_type, '__module__', '')
+    type_name = getattr(exc_type, '__name__', '')
+    if module_name.startswith('httpx') and 'Timeout' in type_name:
+        return True
+
+    text = str(exc).lower()
+    return 'read timeout' in text or 'read timed out' in text
+
+
 def _detect_model_arch(model_name: str, model_family: str = '') -> str:
     normalized_name = str(model_name or '').strip().lower()
     normalized_family = str(model_family or '').strip().lower()
@@ -484,56 +525,63 @@ def _analysis_chat_request(provider: str, host: str, api_key: str | None, model:
         **_build_llm_http_headers(provider, api_key),
     }
     options = options or {}
+    timeout_seconds = _analysis_request_timeout_seconds()
 
-    if provider in {'litellm', 'openai'}:
-        payload = {
-            'model': model,
-            'messages': messages,
-        }
-        if 'temperature' in options:
-            payload['temperature'] = options['temperature']
-        response = requests.post(
-            f"{host.rstrip('/')}/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=120,
+    try:
+        if provider in {'litellm', 'openai'}:
+            payload = {
+                'model': model,
+                'messages': messages,
+            }
+            if 'temperature' in options:
+                payload['temperature'] = options['temperature']
+            response = requests.post(
+                f"{host.rstrip('/')}/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout_seconds,
+                verify=ssl_verify,
+            )
+            response.raise_for_status()
+            return response.json() or {}
+
+        if provider == 'claude':
+            system_text, anthropic_messages = _analysis_to_anthropic_messages(messages)
+            payload = {
+                'model': model,
+                'messages': anthropic_messages,
+                'max_tokens': int(options.get('max_tokens') or 4096),
+            }
+            if system_text:
+                payload['system'] = system_text
+            if 'temperature' in options:
+                payload['temperature'] = options['temperature']
+            response = requests.post(
+                f"{host.rstrip('/')}/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=timeout_seconds,
+                verify=ssl_verify,
+            )
+            response.raise_for_status()
+            return response.json() or {}
+
+        import ollama
+        client = ollama.Client(
+            host=host,
+            headers=_build_llm_http_headers(provider, api_key),
+            timeout=timeout_seconds,
             verify=ssl_verify,
         )
-        response.raise_for_status()
-        return response.json() or {}
-
-    if provider == 'claude':
-        system_text, anthropic_messages = _analysis_to_anthropic_messages(messages)
-        payload = {
-            'model': model,
-            'messages': anthropic_messages,
-            'max_tokens': int(options.get('max_tokens') or 4096),
-        }
-        if system_text:
-            payload['system'] = system_text
-        if 'temperature' in options:
-            payload['temperature'] = options['temperature']
-        response = requests.post(
-            f"{host.rstrip('/')}/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=120,
-            verify=ssl_verify,
+        return client.chat(
+            model=model,
+            messages=messages,
+            options=options,
         )
-        response.raise_for_status()
-        return response.json() or {}
-
-    import ollama
-    client = ollama.Client(
-        host=host,
-        headers=_build_llm_http_headers(provider, api_key),
-        verify=ssl_verify,
-    )
-    return client.chat(
-        model=model,
-        messages=messages,
-        options=options,
-    )
+    except Exception as exc:
+        if _is_analysis_timeout_exception(exc):
+            raise TimeoutError(_analysis_timeout_message(timeout_seconds)) from exc
+        raise
 
 
 def _make_run_id(server_type: str) -> str:
