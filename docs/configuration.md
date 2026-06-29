@@ -1,6 +1,6 @@
 # Configuration Guide
 
-CyberAgentFlow uses a JSON-based configuration system for both CLI and WebUI sessions. This document describes all available configuration options.
+CyberAgentFlow uses a JSON-based configuration system for both CLI, WebUI, and SSH Server sessions. This document describes all available configuration options.
 
 ## Configuration File Location
 
@@ -17,7 +17,7 @@ CyberAgentFlow uses a JSON-based configuration system for both CLI and WebUI ses
 | `url` | string | `"http://localhost:11434"` | Base URL for the LLM provider endpoint |
 | `model` | string | `""` | Model name to use (e.g., `llama3`, `llama3.1`, `claude-3-5-sonnet`) |
 | `api_key` | string | `""` | API key for authenticated providers (use `api_key_env` instead for security) |
-| `api_key_env` | string | `"MCP_API_KEY"` | Environment variable name containing the API key (safer than `api_key`) |
+| `api_key_env` | string | `"MCP_API_KEY"` | Environment variable name containing the API key (safer than embedding the key directly — see [Secure API Key Handling](#secure-api-key-handling)) |
 | `ssl_verify` | boolean | `true` | Enable SSL certificate verification for HTTPS endpoints |
 
 ### Server Settings
@@ -97,6 +97,8 @@ Controls how aggressively the agent operates.
 |-----|------|---------|-------------|
 | `verbose` | boolean | `false` | Enable verbose logging output |
 
+---
+
 ## Complete Example Configuration
 
 ```json
@@ -122,6 +124,8 @@ Controls how aggressively the agent operates.
   "verbose": false
 }
 ```
+
+---
 
 ## CLI Usage
 
@@ -177,6 +181,39 @@ CLI flags override values from the config file:
 **Save current session config:**
 In interactive chat, use: `/save-config configs/my-profile.json`
 
+---
+
+## Secure API Key Handling
+
+> [!CAUTION]
+> Passing `--api-key` directly on the command line embeds your credential in your shell history. Prefer one of the approaches below.
+
+The `api_key_env` configuration field instructs the CLI (and SSH server) to read the API key from a **named environment variable** at runtime, rather than embedding the key in a config file or command-line argument.
+
+**Option 1 — Environment variable (inline):**
+
+```bash
+MCP_API_KEY=sk-... ./start_cli.sh chat
+```
+
+**Option 2 — `api_key_env` in config file:**
+
+```json
+{
+  "api_key_env": "MCP_API_KEY"
+}
+```
+
+Export the key in your shell profile (e.g., `~/.bashrc` or `~/.zshrc`):
+
+```bash
+export MCP_API_KEY=sk-...
+```
+
+The CLI reads `$MCP_API_KEY` at startup. The key never appears in config files committed to version control or in process listings.
+
+---
+
 ## Environment Variables
 
 The following environment variables can be used as defaults:
@@ -185,8 +222,10 @@ The following environment variables can be used as defaults:
 |----------|---------------|
 | `MCP_LLM_PROVIDER` | `ollama_direct` |
 | `MCP_OLLAMA_URL` | `http://localhost:11434` |
-| `MCP_MODEL` | (empty - must be set via config or CLI) |
-| `MCP_API_KEY` | (empty - used when `api_key_env` references this) |
+| `MCP_MODEL` | (empty — must be set via config or CLI) |
+| `MCP_API_KEY` | (empty — used when `api_key_env` references this) |
+
+---
 
 ## WebUI Configuration
 
@@ -198,3 +237,57 @@ The WebUI uses the same configuration structure. Settings are saved per-session 
 4. Configure network policy
 5. Set scope and urgency defaults
 6. Enable keylogging and other loggers
+
+---
+
+## SSH Server Configuration
+
+The SSH server (`cli-server.py`, launched via `start_server.sh`) accepts all standard session config flags **plus** three server-specific flags:
+
+### SSH-Specific Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | `2222` | TCP port the SSH daemon listens on |
+| `--password` | `admin` | Shared password for all connecting clients |
+| `--host-key` | *(ephemeral)* | Path to a persistent SSH host private key file. If omitted, a new RSA key is generated on each startup — clients will see a "host key changed" warning on every reconnect. Generate once with `ssh-keygen -t ed25519 -f server_host_key -N ""` and reuse it. |
+
+These flags are **in addition to** all session-level flags (`--model`, `--config`, `--scope`, `--urgency`, `--allow`, `--disallow`, etc.) which set the default configuration applied to every new client session.
+
+### Config Loading Order
+
+The server resolves its configuration in the following precedence order (highest wins):
+
+1. **Explicit command-line flags** — values passed directly to `start_server.sh` / `cli-server.py`
+2. **Config file values** — loaded from the path given by `--config` (default: `configs/cli.json`)
+3. **Environment variables** — `MCP_LLM_PROVIDER`, `MCP_OLLAMA_URL`, `MCP_MODEL`, `MCP_API_KEY`
+4. **Built-in defaults** — hardcoded fallbacks in `cli.py`
+
+This is identical to the CLI resolution order (see `cli._resolve_session_args`).
+
+### Per-Connection Client Overrides
+
+When a client connects, they can append arguments after `--` in the SSH command to override the server's defaults **for their session only**:
+
+```bash
+# Use a different model for this connection
+ssh -p 2222 kali@host -- --model qwen3-coder
+
+# Enable verbose logging for this session only
+ssh -p 2222 kali@host -- --verbose
+
+# Narrow the network policy for this session
+ssh -p 2222 kali@host -- --allow 10.10.0.0/16 --disallow 10.10.0.1
+```
+
+Any flags not specified by the client fall back to the server's base configuration. The `--port`, `--password`, and `--host-key` flags are server-only and cannot be overridden per-connection.
+
+### `asyncssh` Dependency
+
+The SSH server requires the `asyncssh` Python package, which is listed in `requirements.txt`. It is installed automatically by `./install_prerequisites.sh` or by running:
+
+```bash
+./start_server.sh --build
+```
+
+If `asyncssh` is not present in the virtualenv, `cli-server.py` will fail to import and the server will not start. See the [SSH Server Troubleshooting](server.md#troubleshooting) section for details.

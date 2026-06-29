@@ -58,9 +58,10 @@ class SessionLogger:
         os.makedirs(self.tool_calls_dir, exist_ok=True)
         os.makedirs(self.artifacts_dir, exist_ok=True)
 
-        self._transcript_path = os.path.join(self.run_dir, "transcript.md")
         self._metadata_path = os.path.join(self.run_dir, "metadata.json")
+        self._transcript_path = os.path.join(self.run_dir, "transcript.md")
         self._annotations_path = os.path.join(self.run_dir, "annotations.jsonl")
+        self._messages_path = os.path.join(self.run_dir, "messages.json")
 
         # Write initial metadata
         self._metadata = {
@@ -241,6 +242,49 @@ class SessionLogger:
         ts = _now_formatted()
         with open(self._transcript_path, "a") as f:
             f.write(f"---\n\n**Session ended** [{ts}] — {self._tool_counter} tool call(s)\n")
+
+    def save_messages(self, messages: list[dict]):
+        """Persist the raw LLM messages array to disk to enable --continue."""
+        # Convert any objects (like TextBlock) to dicts if they aren't already
+        safe_messages = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            # Some anthropic content blocks are objects, but we can rely on standard dict formatting
+            # or just dump what we have. mcp_client ensures messages is a list of dicts.
+            # Convert inner content elements if they are not primitive types.
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                safe_content = []
+                for c in content:
+                    if hasattr(c, "model_dump"):
+                        safe_content.append(c.model_dump())
+                    elif hasattr(c, "type"):
+                        # Basic anthropic block compat
+                        d = {"type": getattr(c, "type", "text")}
+                        if hasattr(c, "text"): d["text"] = getattr(c, "text")
+                        if hasattr(c, "id"): d["id"] = getattr(c, "id")
+                        if hasattr(c, "name"): d["name"] = getattr(c, "name")
+                        if hasattr(c, "input"): d["input"] = getattr(c, "input")
+                        safe_content.append(d)
+                    else:
+                        safe_content.append(c)
+                safe_messages.append({**msg, "content": safe_content})
+            else:
+                safe_messages.append(msg)
+                
+        with open(self._messages_path, "w") as f:
+            json.dump(safe_messages, f, indent=2)
+
+    def load_messages(self) -> list[dict]:
+        """Load the raw LLM messages array from disk, if it exists."""
+        if not os.path.isfile(self._messages_path):
+            return []
+        try:
+            with open(self._messages_path) as f:
+                return json.load(f)
+        except Exception:
+            return []
 
     # ------------------------------------------------------------------
     # Internals

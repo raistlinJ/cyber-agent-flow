@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const analysisSslVerifyToggle = document.getElementById('analysis-ssl-verify-toggle');
     const analysisApiKeyInput = document.getElementById('analysis-api-key');
     const maxTurnsInput = document.getElementById('max-turns');
+    const toolTimeoutInput = document.getElementById('tool-timeout');
     const policyTargetsInput = document.getElementById('policy-targets');
     const policyEntryHint = document.getElementById('policy-entry-hint');
     const policyEntryTypeInputs = document.querySelectorAll('input[name="policy-entry-type"]');
@@ -699,6 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 modelLabel: selectedModelOption?.textContent || '',
                 contextWindow: document.getElementById('context-window')?.value || '8192',
                 maxTurns: maxTurnsInput?.value || '20',
+                toolTimeout: toolTimeoutInput?.value || '120',
                 kaliCommandType: kaliCommandType?.value || 'python',
                 policyEntryType: getSelectedPolicyEntryType(),
                 policyDraft: normalizePolicy(_policyDraft),
@@ -758,6 +760,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (maxTurnsInput && payload.maxTurns) {
                 maxTurnsInput.value = String(payload.maxTurns);
+            }
+            if (toolTimeoutInput && payload.toolTimeout) {
+                toolTimeoutInput.value = String(payload.toolTimeout);
             }
 
             if (kaliCommandType && payload.kaliCommandType) {
@@ -1067,7 +1072,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchBtn.disabled = false;
     }
 
-    const runtimeSettingElements = [providerSelect, ollamaUrlInput, sslVerifyToggle, modelSelect, maxTurnsInput, kaliCommandType, toolsJsonArea, document.getElementById('context-window')];
+    const runtimeSettingElements = [providerSelect, ollamaUrlInput, sslVerifyToggle, modelSelect, maxTurnsInput, toolTimeoutInput, kaliCommandType, toolsJsonArea, document.getElementById('context-window')];
     runtimeSettingElements.forEach(el => {
         if (!el) {
             return;
@@ -1397,6 +1402,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function attachModalToViewportRoot(modalOverlay) {
+        if (modalOverlay && modalOverlay.parentElement !== document.body) {
+            document.body.appendChild(modalOverlay);
+        }
+    }
+
     async function openAnalysisConfigModal({
         suggestedUrl = '',
         suggestedProvider = PROVIDERS.OLLAMA_DIRECT,
@@ -1415,6 +1426,7 @@ document.addEventListener('DOMContentLoaded', () => {
             closeAnalysisConfigModal(null);
         }
 
+        attachModalToViewportRoot(analysisConfigModalOverlay);
         _analysisConfigOptions = { includeSpan, fixedSpan };
         analysisConfigTitle.innerHTML = `<i class="ph ph-brain"></i> ${escapeHtml(title)}`;
         analysisConfigDescription.textContent = description;
@@ -1438,6 +1450,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : '<option value="" disabled selected>Fetch models to load options</option>';
         analysisModelSelect.disabled = !suggestedModel;
         updateAnalysisProviderUi();
+        analysisConfigModalOverlay.scrollTop = 0;
         analysisConfigModalOverlay.style.display = 'flex';
 
         return new Promise(resolve => {
@@ -2801,6 +2814,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const cmdType = kaliCommandType.value;
         const contextWindow = parseInt(document.getElementById('context-window').value, 10);
         const maxTurns = parseInt(maxTurnsInput.value, 10);
+        const toolTimeout = parseInt(toolTimeoutInput?.value || 120, 10);
         const keyloggerEnabled = Boolean(keyloggerEnableToggle?.checked);
         const networkCaptureEnabled = Boolean(logNetworkCaptureToggle?.checked);
         const syscallLoggerEnabled = Boolean(logSyscallsToggle?.checked);
@@ -2812,6 +2826,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 100) {
             showAlert('Max tool/model turns per prompt must be between 1 and 100.', 'error');
+            return;
+        }
+
+        if (!Number.isInteger(toolTimeout) || toolTimeout < 1 || toolTimeout > 3600) {
+            showAlert('Default tool timeout must be between 1 and 3600 seconds.', 'error');
             return;
         }
 
@@ -2851,7 +2870,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
             });
             const data = await response.json();
 
@@ -4147,7 +4166,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function buildAnalysisJobSummary(jobs) {
-        const counts = { all: jobs.length, initial: 0, rewrite: 0, fallback: 0, failed: 0 };
+        const counts = { all: jobs.length, initial: 0, rewrite: 0, fallback: 0, failed: 0, canceled: 0 };
         jobs.forEach(job => {
             const path = String(job.completion_path || '').toLowerCase();
             if (Object.prototype.hasOwnProperty.call(counts, path)) {
@@ -4175,6 +4194,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { key: 'rewrite', label: 'Rewrite Pass' },
             { key: 'fallback', label: 'Fallback Pass' },
             { key: 'failed', label: 'Failed' },
+            { key: 'canceled', label: 'Canceled' },
         ];
 
         analysisJobsSummary.style.display = 'flex';
@@ -4199,6 +4219,192 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderAnalysisJobs(jobs);
             });
         });
+    }
+
+    function formatAnalysisDuration(ms) {
+        const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+        if (totalSeconds < 60) {
+            return `${totalSeconds}s`;
+        }
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes < 60) {
+            return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remainingMinutes = minutes % 60;
+        return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+    }
+
+    function elapsedFromTimestamp(timestamp, nowMs = Date.now()) {
+        const parsed = Date.parse(timestamp || '');
+        return Number.isFinite(parsed) ? Math.max(0, nowMs - parsed) : null;
+    }
+
+    function buildRunningAnalysisProgress(job, statusDetail) {
+        const nowMs = Date.now();
+        const elapsedMs = elapsedFromTimestamp(job.start_time, nowMs);
+        const staleMs = elapsedFromTimestamp(job.last_update_time, nowMs);
+        const elapsedText = elapsedMs === null ? 'Running' : `${formatAnalysisDuration(elapsedMs)} elapsed`;
+        const updateText = staleMs === null ? '' : `updated ${formatAnalysisDuration(staleMs)} ago`;
+        const rawDetail = String(statusDetail || '').trim();
+        const detailLower = rawDetail.toLowerCase();
+        const modelMatch = rawDetail.match(/(?:sent to|response from)\s+([^;]+?)(?:;|$)/i);
+        const modelLabel = modelMatch ? modelMatch[1].trim() : String(job.model || '').trim();
+        let meta = updateText ? `${elapsedText} · ${updateText}` : elapsedText;
+
+        let label = rawDetail || 'Working on analysis';
+        let stage = 'Running';
+        let percent = 18;
+
+        if (detailLower.includes('queued')) {
+            label = 'Queued for analysis';
+            stage = 'Stage 1 of 6';
+            percent = 6;
+        } else if (detailLower.includes('loading transcript')) {
+            label = 'Collecting transcript, annotations, and tool-call history';
+            stage = 'Stage 2 of 6';
+            percent = 14;
+        } else if (detailLower.includes('preparing prompts')) {
+            label = 'Preparing prompts and transcript context';
+            stage = 'Stage 3 of 6';
+            percent = 24;
+        } else if (detailLower.includes('prepared') && detailLower.includes('analysis context')) {
+            label = rawDetail;
+            stage = 'Stage 3 of 6';
+            percent = 30;
+        } else if (detailLower.includes('connecting to model provider')) {
+            label = 'Connecting to provider and building the model request';
+            stage = 'Stage 4 of 6';
+            percent = 36;
+        } else if (detailLower.includes('model is generating') || detailLower.includes('waiting for model response')) {
+            const waitMs = elapsedMs || 0;
+            let waitNote = 'prompt sent; the model may be loading context';
+            let waitPercent = 44;
+            if (waitMs >= 300000) {
+                waitNote = 'still waiting; a smaller or faster model may finish sooner';
+                waitPercent = 82;
+            } else if (waitMs >= 180000) {
+                waitNote = 'still waiting; the model is likely processing a large transcript';
+                waitPercent = 74;
+            } else if (waitMs >= 60000) {
+                waitNote = 'still generating; large sessions can take a few minutes';
+                waitPercent = 64;
+            } else if (waitMs >= 15000) {
+                waitNote = 'generating analysis from session evidence';
+                waitPercent = 54;
+            }
+            label = `${modelLabel ? `First pass running on ${modelLabel}` : 'First analysis pass running'}: ${waitNote}`;
+            stage = 'Stage 5 of 6';
+            percent = waitPercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in model step`;
+        } else if (detailLower.includes('processing model response')) {
+            label = 'Processing and validating the model response';
+            stage = 'Stage 6 of 6';
+            percent = 88;
+        } else if (detailLower.includes('initial pass returned off-format')) {
+            label = 'Initial pass missed the required template; preparing a stricter rewrite prompt';
+            stage = 'Rewrite setup';
+            percent = 66;
+        } else if (detailLower.includes('structured rewrite sent')) {
+            const rewriteMs = staleMs || 0;
+            let rewriteNote = 'rewrite prompt sent; model is reorganizing the findings';
+            let rewritePercent = 72;
+            if (rewriteMs >= 180000) {
+                rewriteNote = 'still rewriting; checking structure can take longer on large transcripts';
+                rewritePercent = 84;
+            } else if (rewriteMs >= 60000) {
+                rewriteNote = 'still rewriting; model is aligning sections to the required template';
+                rewritePercent = 80;
+            } else if (rewriteMs >= 15000) {
+                rewriteNote = 'rewriting into the required sections and preserving evidence';
+                rewritePercent = 76;
+            }
+            label = `${modelLabel ? `Rewrite pass running on ${modelLabel}` : 'Rewrite pass running'}: ${rewriteNote}`;
+            stage = 'Rewrite pass';
+            percent = rewritePercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in rewrite pass`;
+        } else if (detailLower.includes('structured rewrite still off-format')) {
+            label = 'Structured rewrite still missed the template; preparing a template-only fallback';
+            stage = 'Fallback setup';
+            percent = 80;
+        } else if (detailLower.includes('template fallback sent')) {
+            const fallbackMs = staleMs || 0;
+            let fallbackNote = 'fallback prompt sent; model is filling only the required sections';
+            let fallbackPercent = 84;
+            if (fallbackMs >= 180000) {
+                fallbackNote = 'still filling the template; large evidence digests can take a while';
+                fallbackPercent = 94;
+            } else if (fallbackMs >= 60000) {
+                fallbackNote = 'still filling the template and checking required headings';
+                fallbackPercent = 90;
+            } else if (fallbackMs >= 15000) {
+                fallbackNote = 'building the strict fallback report from the evidence digest';
+                fallbackPercent = 88;
+            }
+            label = `${modelLabel ? `Fallback pass running on ${modelLabel}` : 'Fallback pass running'}: ${fallbackNote}`;
+            stage = 'Fallback pass';
+            percent = fallbackPercent;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in fallback pass`;
+        } else if (detailLower.includes('structured rewrite')) {
+            label = detailLower.includes('off-format')
+                ? 'Initial pass missed the template; running a structured rewrite'
+                : 'Running structured rewrite';
+            stage = 'Rewrite pass';
+            percent = 72;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in rewrite step`;
+        } else if (detailLower.includes('template-only fallback')) {
+            label = 'Rewrite still missed the template; running template-only fallback';
+            stage = 'Fallback pass';
+            percent = 82;
+            meta = staleMs === null ? elapsedText : `${elapsedText} · ${formatAnalysisDuration(staleMs)} in fallback step`;
+        } else if (detailLower.includes('finalizing')) {
+            label = 'Finalizing analysis result';
+            stage = 'Stage 6 of 6';
+            percent = 96;
+        }
+
+        return { label, stage, meta, percent };
+    }
+
+    function buildAnalysisProgressInfo(job, statusDetail, lastUpdateText) {
+        if (job.status === 'running') {
+            return buildRunningAnalysisProgress(job, statusDetail);
+        }
+
+        if (job.status === 'success') {
+            return {
+                label: statusDetail || 'Completed',
+                stage: 'Complete',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
+        if (job.status === 'failed') {
+            return {
+                label: statusDetail || 'Failed',
+                stage: 'Stopped',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
+        if (job.status === 'canceled') {
+            return {
+                label: statusDetail || 'Canceled by user',
+                stage: 'Canceled',
+                meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+                percent: 100,
+            };
+        }
+
+        return {
+            label: statusDetail || job.status || 'Unknown',
+            stage: '',
+            meta: lastUpdateText ? `Updated ${lastUpdateText}` : '',
+            percent: 0,
+        };
     }
 
     function renderAnalysisJobs(jobs) {
@@ -4232,9 +4438,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const completionPathLabel = formatAnalysisCompletionPath(job.completion_path);
             const date = new Date(job.start_time).toLocaleString();
             const statusClass = `status-${job.status}`;
-            const statusIcon = job.status === 'running' ? 'ph-spinner spinning' : (job.status === 'success' ? 'ph-check-circle' : 'ph-x-circle');
+            const statusIcon = job.status === 'running'
+                ? 'ph-spinner spinning'
+                : (job.status === 'success'
+                    ? 'ph-check-circle'
+                    : (job.status === 'canceled' ? 'ph-prohibit' : 'ph-x-circle'));
             const statusDetail = String(job.status_detail || '').trim();
             const lastUpdateText = job.last_update_time ? new Date(job.last_update_time).toLocaleTimeString() : '';
+            const progressInfo = buildAnalysisProgressInfo(job, statusDetail, lastUpdateText);
             const responsePreviewSource = String(job.response || job.result || job.result_preview || '').trim();
             const responsePreview = responsePreviewSource
                 ? escapeHtml(responsePreviewSource.replace(/\s+/g, ' ').slice(0, 280))
@@ -4261,14 +4472,23 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <li data-action="view" data-job-id="${job.job_id}"><i class="ph ph-eye"></i> View</li>
                                     <li data-action="copy" data-job-id="${job.job_id}"><i class="ph ph-copy"></i> Copy Response</li>
                                     <li data-action="download" data-job-id="${job.job_id}"><i class="ph ph-download-simple"></i> Download</li>
+                                    ${job.status === 'running' ? `<li data-action="cancel" data-job-id="${job.job_id}" class="job-action-danger"><i class="ph ph-stop-circle"></i> Cancel</li>` : ''}
                                 </ul>
                             </div>
                         </div>
                     </div>
                     ${(job.status === 'running' || statusDetail) ? `
                         <div class="job-progress ${job.status === 'running' ? 'job-progress-active' : ''}">
-                            <span class="job-progress-label">${escapeHtml(statusDetail || (job.status === 'running' ? 'Working' : job.status || 'Unknown'))}</span>
-                            ${lastUpdateText ? `<span class="job-progress-meta">Updated ${escapeHtml(lastUpdateText)}</span>` : ''}
+                            <div class="job-progress-main">
+                                <span class="job-progress-label">${escapeHtml(progressInfo.label)}</span>
+                                ${progressInfo.stage ? `<span class="job-progress-stage">${escapeHtml(progressInfo.stage)}</span>` : ''}
+                            </div>
+                            ${progressInfo.meta ? `<span class="job-progress-meta">${escapeHtml(progressInfo.meta)}</span>` : ''}
+                            ${job.status === 'running' ? `
+                                <div class="job-progress-bar" aria-hidden="true">
+                                    <span style="width: ${Math.max(4, Math.min(100, Number(progressInfo.percent || 0)))}%;"></span>
+                                </div>
+                            ` : ''}
                         </div>
                     ` : ''}
                     ${job.status === 'success' && responsePreview ? `
@@ -4327,6 +4547,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.copyAnalysisJobResponse(jobId);
                 } else if (action === 'download') {
                     window.downloadAnalysisJob(jobId);
+                } else if (action === 'cancel') {
+                    window.cancelAnalysisJob(jobId);
                 }
             });
         });
@@ -4374,6 +4596,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (value === 'failed') {
             return 'Failed';
+        }
+        if (value === 'canceled') {
+            return 'Canceled';
         }
         return '';
     }
@@ -4456,6 +4681,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.downloadAnalysisJob = function(jobId) {
         window.location.href = `/api/analysis/jobs/${jobId}/download`;
+    };
+
+    window.cancelAnalysisJob = async function(jobId) {
+        const confirmed = confirm(
+            'Cancel this analysis job?\n\nThe job will be marked canceled immediately. If the provider request returns later, its response will be ignored.'
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/analysis/jobs/${jobId}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || `Cancel failed (${res.status})`);
+            }
+
+            showAlert('Analysis job canceled.', 'success');
+            await loadAnalysisJobs();
+        } catch (err) {
+            showAlert('Failed to cancel analysis job: ' + err.message, 'error');
+        }
     };
 
     window.copyAnalysisJobResponse = async function(jobId) {

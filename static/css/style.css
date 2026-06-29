@@ -967,6 +967,8 @@ option {
     align-items: center;
     justify-content: center;
     padding: 1.5rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     animation: fadeIn var(--transition-fast);
 }
 
@@ -1016,6 +1018,22 @@ option {
 .modal-footer .btn {
     padding: 0.6rem 1.25rem;
     width: auto;
+}
+
+#analysis-config-modal-overlay .annotation-modal {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 3rem);
+}
+
+#analysis-config-modal-overlay .modal-header,
+#analysis-config-modal-overlay .modal-footer {
+    flex-shrink: 0;
+}
+
+#analysis-config-modal-overlay .modal-body {
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .tool-timeout-footer {
@@ -2556,10 +2574,14 @@ option {
 .job-card-controls { display: flex; align-items: center; gap: 0.75rem; position: relative; }
 .job-id { font-family: var(--font-mono); font-size: 0.75rem; opacity: 0.5; color: var(--text-secondary); }
 .job-title { font-weight: 600; font-size: 1rem; color: var(--text-primary); }
-.job-progress { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.7rem 0.9rem; border-radius: 12px; background: rgba(59, 130, 246, 0.06); border: 1px solid rgba(59, 130, 246, 0.12); }
+.job-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.55rem 1rem; padding: 0.7rem 0.9rem; border-radius: 12px; background: rgba(59, 130, 246, 0.06); border: 1px solid rgba(59, 130, 246, 0.12); }
 .job-progress-active { box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08); }
-.job-progress-label { font-size: 0.88rem; color: var(--text-primary); }
+.job-progress-main { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.job-progress-label { font-size: 0.88rem; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere; }
+.job-progress-stage { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
 .job-progress-meta { font-size: 0.76rem; color: var(--text-secondary); white-space: nowrap; }
+.job-progress-bar { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, 0.08); }
+.job-progress-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(59, 130, 246, 0.55), rgba(16, 185, 129, 0.75)); transition: width var(--transition-smooth); }
 .job-preview { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.9rem 1rem; border-radius: 12px; background: rgba(255, 255, 255, 0.025); border: 1px solid rgba(255, 255, 255, 0.06); }
 .job-preview-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
 .job-preview-text { margin: 0; font-size: 0.9rem; line-height: 1.55; color: var(--text-primary); }
@@ -2573,10 +2595,12 @@ option {
 .job-attempt-chip-rewrite { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.22); color: #fcd34d; }
 .job-attempt-chip-fallback { background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.22); color: #bfdbfe; }
 .job-attempt-chip-failed { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.22); color: #fca5a5; }
+.job-attempt-chip-canceled { background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.22); color: #cbd5e1; }
 .job-status-badge { padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .status-running { background: rgba(59, 130, 246, 0.1); color: var(--accent-primary); border: 1px solid rgba(59, 130, 246, 0.2); }
 .status-success { background: rgba(16, 185, 129, 0.1); color: var(--status-success); border: 1px solid rgba(16, 185, 129, 0.2); }
 .status-failed { background: rgba(239, 68, 68, 0.1); color: var(--status-error); border: 1px solid rgba(239, 68, 68, 0.2); }
+.status-canceled { background: rgba(148, 163, 184, 0.1); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2); }
 .job-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; padding-top: 0.8rem; border-top: 1px solid rgba(255, 255, 255, 0.05); }
 .job-meta { font-size: 0.8rem; color: var(--text-secondary); display: flex; gap: 1rem; }
 .job-actions-dropdown { position: relative; }
@@ -2584,6 +2608,18 @@ option {
 .job-actions-toggle i:last-child { font-size: 0.9rem; }
 .job-actions-menu { top: calc(100% + 0.5rem); bottom: auto; right: 0; left: auto; margin-bottom: 0; min-width: 160px; transform-origin: top right; z-index: 300; }
 .job-actions-menu li { white-space: nowrap; }
+.job-actions-menu li.job-action-danger { color: #fca5a5; }
+.job-actions-menu li.job-action-danger:hover { background: rgba(239, 68, 68, 0.12); color: #fecaca; }
+
+@media (max-width: 720px) {
+    .job-progress {
+        grid-template-columns: 1fr;
+    }
+
+    .job-progress-meta {
+        white-space: normal;
+    }
+}
 
 .analysis-response-layout {
     display: flex;
@@ -3377,4 +3413,3 @@ body.zen-mode .live-log-viewer {
     background: var(--panel-bg);
     color: var(--primary-color);
 }
-

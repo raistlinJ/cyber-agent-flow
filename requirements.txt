@@ -3,3 +3,8 @@ requests==2.31.0
 mcp
 ollama
 pynput>=1.7.6
+asyncssh
+psutil
+pytest
+pytest-asyncio
+prompt_toolkit>=3.0.30

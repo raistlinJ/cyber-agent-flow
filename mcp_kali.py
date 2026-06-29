@@ -2139,7 +2139,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 else:
                     return [TextContent(type="text", text=error_text)]
     elif name == "shell_sequence":
-        timeout_seconds = int(tool_config.get("timeout_seconds", 120) or 120)
+        default_timeout = int(os.environ.get("MCP_TOOL_TIMEOUT", 120))
+        timeout_seconds = int(tool_config.get("timeout_seconds", default_timeout) or default_timeout)
         output, exit_code, duration_ms = _run_shell_sequence(arguments, timeout_seconds, config=config)
         _logger.log_tool_call(
             name=name,
@@ -2246,7 +2247,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         
     try:
         t0 = time.time()
-        timeout_seconds = int(tool_config.get("timeout_seconds", 300) or 300)
+        default_timeout = int(os.environ.get("MCP_TOOL_TIMEOUT", 300))
+        timeout_seconds = int(tool_config.get("timeout_seconds", default_timeout) or default_timeout)
         first_checkpoint_seconds = int(
             tool_config.get("first_checkpoint_seconds", _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS)
             or _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS

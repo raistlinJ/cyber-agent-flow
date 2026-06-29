@@ -1371,8 +1371,10 @@ class MCPSession:
         event_callback=None,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         max_turns: int = DEFAULT_MAX_TURNS,
+        tool_timeout: int = 120,
         network_policy: dict | None = None,
         enabled_tool_guides: list[str] | None = None,
+        auto_approve_dangerous: bool = False,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
         self.ollama_url = _normalize_provider_base_url(self.llm_provider, ollama_url)
@@ -1382,10 +1384,12 @@ class MCPSession:
         self.server_command = server_command
         self.context_window = context_window
         self.max_turns = max_turns
+        self.tool_timeout = tool_timeout
         self.event_callback = event_callback
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
         self.enabled_tool_guides = list(enabled_tool_guides) if isinstance(enabled_tool_guides, list) else None
+        self.auto_approve_dangerous = bool(auto_approve_dangerous)
 
         # Internals
         self._exit_stack: AsyncExitStack | None = None
@@ -1394,6 +1398,7 @@ class MCPSession:
         self._logger: SessionLogger | None = None
         self._started = False
         self._chat_lock = asyncio.Lock()
+        self._current_tool_task: asyncio.Task | None = None
         self._pending_post_tool_reply = None
         self._pending_dangerous_tool_approval = None
         self._pending_tool_timeout_decision = None
@@ -1820,6 +1825,19 @@ class MCPSession:
             self._pending_post_tool_reply = None
 
     async def _prompt_dangerous_tool_approval(self, tool_name: str, tool_args: dict, cancel_event: asyncio.Event | None) -> str:
+        # Auto-approve if --dangerous-no-prompt is active
+        if self.auto_approve_dangerous:
+            command_text = (tool_args or {}).get("args", "") if isinstance(tool_args, dict) else str(tool_args)
+            _emit(self.event_callback, "status", {
+                "message": f"Auto-approving {tool_name}: {command_text[:120]} (--dangerous-no-prompt)"
+            })
+            if self._logger:
+                self._logger.log_human_decision(
+                    f"AUTO-APPROVED (--dangerous-no-prompt): {tool_name}: {command_text}",
+                    category="dangerous_tool_approval",
+                )
+            return "approve"
+
         loop = asyncio.get_running_loop()
         decision_future = loop.create_future()
         command_text = (tool_args or {}).get("args", "") if isinstance(tool_args, dict) else str(tool_args)
@@ -2047,10 +2065,20 @@ class MCPSession:
                 "llm_auth_enabled": bool(self.api_key),
                 "context_window": self.context_window,
                 "max_turns": self.max_turns,
+                "tool_timeout": self.tool_timeout,
                 "network_policy": self.network_policy,
             },
             event_callback=self.event_callback,
         )
+
+        # Load previous messages if we are continuing an interaction
+        loaded_messages = self._logger.load_messages()
+        if loaded_messages:
+            # Retain the fresh system prompt generated during __init__
+            fresh_system_prompt = self.messages[0]["content"] if (self.messages and self.messages[0].get("role") == "system") else None
+            self.messages = loaded_messages
+            if fresh_system_prompt and self.messages and self.messages[0].get("role") == "system":
+                self.messages[0]["content"] = fresh_system_prompt
 
         _emit(self.event_callback, "status", {
             "message": f"Starting session {self.run_id} (context: {self.context_window} tokens, max turns: {self.max_turns}) …"
@@ -2066,6 +2094,7 @@ class MCPSession:
                 "MCP_CURRENT_RUN_ID": self.run_id,
                 "MCP_MODEL": self.model,
                 "MCP_OLLAMA_URL": self.ollama_url,
+                "MCP_TOOL_TIMEOUT": str(self.tool_timeout),
                 "MCP_NETWORK_POLICY": json.dumps(self.network_policy),
             },
         )
@@ -2172,6 +2201,11 @@ class MCPSession:
         self._started = True
         return self.tool_names
 
+    def _save_messages(self):
+        """Helper to flush the current messages array to disk."""
+        if self._logger:
+            self._logger.save_messages(self.messages)
+
     async def chat(self, prompt: str, cancel_event: asyncio.Event | None = None, scope: str | None = None, urgency: str | None = None):
         """
         Send a user prompt into the running session. Runs the full agent loop
@@ -2191,6 +2225,16 @@ class MCPSession:
                 # Top level task was aborted violently, cleanly exit
                 if cancel_event:
                     cancel_event.set()
+                # Cancel any running tool subtask
+                if hasattr(self, '_current_tool_task') and self._current_tool_task and not self._current_tool_task.done():
+                    self._current_tool_task.cancel()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self._current_tool_task), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        print(f"[cancel] Tool subtask did not finish within 1s, moving on.")
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    self._current_tool_task = None
                 _emit_chat_cancelled(self.event_callback)
             except Exception as e:
                 if _is_transient_transport_error(e):
@@ -2203,6 +2247,9 @@ class MCPSession:
                     })
                 print(f"Crash in agent loop: {type(e).__name__}: {e}")
                 traceback.print_exc()
+            finally:
+                self._current_tool_task = None
+                self._save_messages()
 
     async def _chat_with_transient_retry(self, *, messages: list[dict], tools, options: dict, turn_label: str):
         max_attempts = 2
@@ -2229,6 +2276,7 @@ class MCPSession:
         """Core agent loop for a single chat turn."""
         self._logger.log_prompt(prompt)
         self.messages.append({"role": "user", "content": prompt})
+        self._save_messages()
         turn_tool_results: list[dict] = []
         provider_name = _normalize_provider_name(self.llm_provider)
 
@@ -2371,6 +2419,7 @@ class MCPSession:
                 assistant_message["tool_calls"] = clean_tcs
 
             self.messages.append(assistant_message)
+            self._save_messages()
 
             if content:
                 self._logger.log_response(content)
@@ -2381,6 +2430,7 @@ class MCPSession:
                     if _can_auto_finalize_benign_empty(turn_tool_results):
                         benign_content = _build_benign_empty_finalization(turn_tool_results)
                         self.messages.append({"role": "assistant", "content": benign_content})
+                        self._save_messages()
                         self._logger.log_response(benign_content)
                         _emit(self.event_callback, "chat_done", {
                             "message": "Finalized benign no-findings tool result without retry."
@@ -2390,6 +2440,7 @@ class MCPSession:
                     recovered_content = await self._retry_empty_reply_after_tools(prompt, turn_tool_results)
                     if recovered_content:
                         self.messages.append({"role": "assistant", "content": recovered_content})
+                        self._save_messages()
                         self._logger.log_response(recovered_content)
                         _emit(self.event_callback, "chat_done", {
                             "message": "Recovered final answer after automatic retry."
@@ -2401,6 +2452,7 @@ class MCPSession:
                         recovered_content = await self._retry_empty_reply_after_tools(prompt, turn_tool_results)
                         if recovered_content:
                             self.messages.append({"role": "assistant", "content": recovered_content})
+                            self._save_messages()
                             self._logger.log_response(recovered_content)
                             _emit(self.event_callback, "chat_done", {
                                 "message": "Recovered final answer after user-approved retry."
@@ -2424,6 +2476,7 @@ class MCPSession:
                     return
 
                 self.messages.pop()
+                self._save_messages()
 
                 detail = "Model returned an empty reply with no tool calls."
                 if self.tool_names:
@@ -2469,6 +2522,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     _emit(self.event_callback, "status", {"message": err_msg})
                     continue
 
@@ -2495,6 +2549,7 @@ class MCPSession:
                             "name": tool_name,
                             "tool_call_id": tool_call_id,
                         })
+                        self._save_messages()
                         turn_tool_results.append({
                             "tool": tool_name,
                             "args": tool_args,
@@ -2513,12 +2568,42 @@ class MCPSession:
                 t0 = time.time()
                 try:
                     tool_call_task = asyncio.create_task(self._session.call_tool(tool_name, tool_args))
+                    self._current_tool_task = tool_call_task
                     timeout_monitor_task = asyncio.create_task(
                         self._watch_tool_timeout_requests(tool_name, tool_args, tool_call_task)
                     )
                     try:
                         result = await tool_call_task
+                    except asyncio.CancelledError:
+                        # Tool was cancelled (user hit /cancel or Ctrl+C)
+                        duration_ms = int((time.time() - t0) * 1000)
+                        cancel_msg = f"Tool {tool_name} was cancelled by the user after {duration_ms}ms."
+                        self._logger.log_tool_call(
+                            name=tool_name,
+                            args=tool_args,
+                            result=cancel_msg,
+                            duration_ms=duration_ms,
+                            exit_code=-2,
+                            cancelled=True,
+                        )
+                        self.messages.append({
+                            "role": "tool",
+                            "content": cancel_msg,
+                            "name": tool_name,
+                            "tool_call_id": tool_call_id,
+                        })
+                        self._save_messages()
+                        _emit(self.event_callback, "tool_result", {
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": cancel_msg,
+                            "exit_code": -2,
+                            "duration_ms": duration_ms,
+                        })
+                        _emit_chat_cancelled(self.event_callback)
+                        return
                     finally:
+                        self._current_tool_task = None
                         timeout_monitor_task.cancel()
                         try:
                             await timeout_monitor_task
@@ -2592,6 +2677,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     turn_tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,
@@ -2627,6 +2713,7 @@ class MCPSession:
                         "name": tool_name,
                         "tool_call_id": tool_call_id,
                     })
+                    self._save_messages()
                     turn_tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,

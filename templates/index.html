@@ -222,13 +222,24 @@
                                         limit</span>
                                 </div>
 
-                                <div class="input-group">
-                                    <label for="max-turns">Max Tool/Model Turns Per Prompt</label>
-                                    <div class="input-with-icon">
-                                        <i class="ph ph-repeat"></i>
-                                        <input type="number" id="max-turns" min="1" max="100" step="1" value="20">
+                                <div style="display: flex; gap: 1rem; align-items: flex-start;">
+                                    <div class="input-group" style="flex: 1;">
+                                        <label for="max-turns">Max Tool/Model Turns Per Prompt</label>
+                                        <div class="input-with-icon">
+                                            <i class="ph ph-repeat"></i>
+                                            <input type="number" id="max-turns" min="1" max="100" step="1" value="20">
+                                        </div>
+                                        <span class="input-hint">Limits the LLM → tool → LLM loop for a single prompt before the turn is stopped.</span>
                                     </div>
-                                    <span class="input-hint">Limits the LLM → tool → LLM loop for a single prompt before the turn is stopped.</span>
+
+                                    <div class="input-group" style="flex: 1;">
+                                        <label for="tool-timeout">Default Tool Timeout (seconds)</label>
+                                        <div class="input-with-icon">
+                                            <i class="ph ph-hourglass"></i>
+                                            <input type="number" id="tool-timeout" min="1" max="3600" step="1" value="120">
+                                        </div>
+                                        <span class="input-hint">Default time before asking to keep waiting when a tool is running.</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
