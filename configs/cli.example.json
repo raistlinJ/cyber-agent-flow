@@ -3,7 +3,6 @@
   "url": "http://localhost:11434",
   "model": "llama3",
   "api_key": "",
-  "api_key_env": "MCP_API_KEY",
   "ssl_verify": true,
   "server_command": "venv/bin/python mcp_kali.py",
   "tools_config": "kali_tools.json",
