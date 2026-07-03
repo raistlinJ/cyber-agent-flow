@@ -4549,6 +4549,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.downloadAnalysisJob(jobId);
                 } else if (action === 'cancel') {
                     window.cancelAnalysisJob(jobId);
+                } else if (action === 'recommendations'){
+                    switchTab('recommendations-pane');
+                    window.refreshRecommendationsView();
                 }
             });
         });
