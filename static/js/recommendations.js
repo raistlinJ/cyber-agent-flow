@@ -172,6 +172,7 @@
             .filter(job => String(job.status || '').toLowerCase() === 'success');
 
         if (!activeSuccessfulJobs.length) {
+            emptyState.textContent = 'No successful analysis jobs found. Complete and wait for an analysis job from Past Sessions to populate this view.';
             emptyState.style.display = '';
             list.style.display = 'none';
             list.innerHTML = '';
