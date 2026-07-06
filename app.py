@@ -14,6 +14,7 @@ import logging
 import pty
 import subprocess
 import fcntl
+import shutil #this will be for the clear button to clear runs
 from datetime import datetime
 from timestamp_utils import now_timestamp
 
@@ -937,6 +938,33 @@ def _load_analysis_job_record(job_id: str):
         return None
     with open(record_path, 'r') as f:
         return json.load(f)
+
+def _load_all_analysis_job_records() -> dict:
+    """Scan runs/*/analysis_jobs/*.json and returns {job_id: record} for every persisted job."""
+    records = {}
+    if not os.path.isdir(RUNS_DIR):
+        return records
+    
+    for run_id in os.listdir(RUNS_DIR):
+        jobs_dir = _analysis_jobs_dir(run_id)
+        if not os.path.isdir(jobs_dir):
+            continue
+        for filename in os.listdir(jobs_dir):
+            if not filename.endswith('.json'):
+                continue
+            path = os.path.join(jobs_dir, filename)
+            try:
+                with open(path, 'r') as f:
+                    record = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(record, dict):
+                continue
+            job_id = record.get('job_id') or filename[:-5]
+            record.setdefault('job_id', job_id)
+            record.setdefault('run_id', run_id)
+            records[job_id] = record
+    return records
 
 
 def _load_run_metadata(run_id: str | None):
@@ -2835,18 +2863,32 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
         "completion_path": completion_path,
         "response": response_text,
     }
-
+#------------------------------------------------------------------------------------------REMOVE LATER
+#@app.route('/api/analysis/jobs', methods=['GET'])
+#def list_analysis_jobs():
+#    """Return all background analysis jobs."""
+#    with _analysis_lock:
+#        sorted_jobs = sorted(
+#            [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in _analysis_jobs.items()],
+#            key=lambda x: x["start_time"],
+#            reverse=True
+#        )
+#        return jsonify({"jobs": sorted_jobs})
 @app.route('/api/analysis/jobs', methods=['GET'])
 def list_analysis_jobs():
-    """Return all background analysis jobs."""
-    with _analysis_lock:
-        sorted_jobs = sorted(
-            [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in _analysis_jobs.items()],
-            key=lambda x: x["start_time"],
-            reverse=True
-        )
-        return jsonify({"jobs": sorted_jobs})
+    """Return all analysis jobs, backed by disk so history survives a restart."""
+    disk_jobs = _load_all_analysis_job_records()
 
+    with _analysis_lock:
+        for job_id, record in _analysis_jobs.items():
+            disk_jobs.setdefault(job_id, dict(record))
+
+    sorted_jobs = sorted(
+        [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in disk_jobs.items()],
+        key=lambda x: x.get("start_time") or "",
+        reverse=True
+    )
+    return jsonify({"jobs": sorted_jobs})
 
 @app.route('/api/analysis/jobs/<job_id>', methods=['GET'])
 def get_analysis_job(job_id):
@@ -2914,14 +2956,26 @@ def download_analysis_job(job_id):
         download_name=f"{job_id}.json",
         mimetype='application/json'
     )
-
+#----------------------------------------------------------------------REMOVE LATER
+#@app.route('/api/analysis/jobs/clear', methods=['POST'])
+#def clear_analysis_jobs():
+#    """Clear the job history."""
+#    with _analysis_lock:
+#        _analysis_jobs.clear()
+#        return jsonify({"success": True})
 @app.route('/api/analysis/jobs/clear', methods=['POST'])
 def clear_analysis_jobs():
-    """Clear the job history."""
+    """Clear the job history from memory and disk."""
     with _analysis_lock:
         _analysis_jobs.clear()
-        return jsonify({"success": True})
 
+    if os.path.isdir(RUNS_DIR):
+        for run_id in os.listdir(RUNS_DIR):
+            jobs_dir = _analysis_jobs_dir(run_id)
+            if os.path.isdir(jobs_dir):
+                shutil.rmtree(jobs_dir, ignore_errors=True)
+
+    return jsonify({"success": True})
 
 
 @app.route('/api/sessions/<run_id>/tool_calls', methods=['GET'])
