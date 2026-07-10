@@ -46,7 +46,7 @@
         const notesValue = localStorage.getItem(getNotesKey(job.job_id)) || '';
 
         return `
-            <details class="recommendation-session-card" ${index === 0 ? 'open' : ''} data-job-id="${escapeHtml(job.job_id)}">
+            <details class="recommendation-session-card" data-job-id="${escapeHtml(job.job_id)}">
                 <summary class="recommendation-session-summary">
                     <div class="session-card-left">
                         <div class="session-run-id">(${escapeHtml(runLabel)})</div>
@@ -61,40 +61,56 @@
                 </summary>
 
                 <div class="recommendation-session-body">
-                    <section class="recommendation-section">
-                        <div class="recommendation-section-header">
-                            <h3>ANALYSIS SUMMARY</h3>
-                            <span class="recommendation-section-tag">readonly</span>
+                    <div class="recommendation-top-row">
+                        <div class="recommendation-summary-col">
+                            <div class="recommendation-section-header">
+                                <h3>Analysis Summary</h3>
+                                <span class="recommendation-section-tag">readonly</span>
+                            </div>
+                            ${renderAnalysisSummary(job)}
                         </div>
-                        ${renderAnalysisSummary(job)}
-                    </section>
+
+                        <div class="recommendation-notes-col">
+                            <div class="recommendation-section-header">
+                                <h3>Analyst Notes</h3>
+                                <div class="recommendation-notes-actions">
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-edit-btn" data-job-id="${escapeHtml(job.job_id)}">
+                                        <i class="ph ph-pencil-simple"></i> Edit
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-save-btn" data-job-id="${escapeHtml(job.job_id)}" style="display:none;">
+                                        <i class="ph ph-floppy-disk"></i> Save
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-delete-btn" data-job-id="${escapeHtml(job.job_id)}">
+                                        <i class="ph ph-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea class="recommendation-notes" rows="6" disabled
+                                data-recommendation-notes-for="${escapeHtml(job.job_id)}"
+                                placeholder="Write analyst notes here...">${escapeHtml(notesValue)}</textarea>
+                        </div>
+                    </div>
 
                     <section class="recommendation-section">
-                        <div class="recommendation-section-header">
-                            <h3>ANALYST NOTES</h3>
-                            <span class="recommendation-section-tag">editable</span>
-                        </div>
-                        <textarea class="recommendation-notes" rows="4"
-                            data-recommendation-notes-for="${escapeHtml(job.job_id)}"
-                            placeholder="Write analyst notes here...">${escapeHtml(notesValue)}</textarea>
-                    </section>
-
-                    <section class="recommendation-section">
-                        <details class="config-collapse" open>
+                        <details class="config-collapse">
                             <summary>
                                 <span>MARKDOWN PLAYBOOK GENERATION</span>
                                 <i class="ph ph-caret-down collapse-caret"></i>
                             </summary>
                             <div class="recommendation-details-body">
-                                <div class="recommendation-detail-row">
-                                    <strong>Purpose:</strong> hardening + exploit documentation
-                                </div>
-                                <div class="recommendation-detail-row">
-                                    <strong>Reasoning:</strong> derived from the successful analysis job
-                                </div>
-                                <div class="recommendation-action-row">
-                                    <button type="button" class="btn btn-primary recommendation-approve-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="markdown">Approve</button>
-                                    <button type="button" class="btn btn-secondary recommendation-deny-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="markdown">Deny</button>
+                                <div class="recommendation-details-top">
+                                    <div class="recommendation-details-main">
+                                        <div class="recommendation-detail-row">
+                                            <strong>Purpose:</strong> hardening + exploit documentation
+                                        </div>
+                                        <div class="recommendation-detail-row">
+                                            <strong>Reasoning:</strong> derived from the successful analysis job
+                                        </div>
+                                    </div>
+                                    <div class="recommendation-action-row">
+                                        <button type="button" class="btn btn-primary recommendation-approve-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="markdown">Review</button>
+                                        <button type="button" class="btn btn-secondary recommendation-deny-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="markdown">Reject</button>
+                                    </div>
                                 </div>
                                 <div class="recommendation-hint">
                                     Triggers the same analysis-job workflow you already use.
@@ -110,15 +126,19 @@
                                 <i class="ph ph-caret-down collapse-caret"></i>
                             </summary>
                             <div class="recommendation-details-body">
-                                <div class="recommendation-detail-row">
-                                    <strong>Purpose:</strong> automate recon / exploit chain
-                                </div>
-                                <div class="recommendation-detail-row">
-                                    <strong>Reasoning:</strong> repeated pattern detected
-                                </div>
-                                <div class="recommendation-action-row">
-                                    <button type="button" class="btn btn-primary recommendation-approve-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="mcp">Approve</button>
-                                    <button type="button" class="btn btn-secondary recommendation-deny-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="mcp">Deny</button>
+                                <div class="recommendation-details-top">
+                                    <div class="recommendation-details-main">
+                                        <div class="recommendation-detail-row">
+                                            <strong>Purpose:</strong> automate recon / exploit chain
+                                        </div>
+                                        <div class="recommendation-detail-row">
+                                            <strong>Reasoning:</strong> repeated pattern detected
+                                        </div>
+                                    </div>
+                                    <div class="recommendation-action-row">
+                                        <button type="button" class="btn btn-primary recommendation-approve-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="mcp">Review</button>
+                                        <button type="button" class="btn btn-secondary recommendation-deny-btn" data-job-id="${escapeHtml(job.job_id)}" data-kind="mcp">Reject</button>
+                                    </div>
                                 </div>
                                 <div class="recommendation-hint">
                                     Uses the same executor path as analysis jobs.
@@ -131,26 +151,50 @@
         `;
     }
 
-    function bindNotesAutosave() {
-        document.querySelectorAll('.recommendation-notes').forEach(textarea => {
-            textarea.addEventListener('input', (event) => {
-                const jobId = event.target.getAttribute('data-recommendation-notes-for');
-                if (!jobId) return;
-                localStorage.setItem(getNotesKey(jobId), event.target.value);
+    function bindNotesControls() {
+        document.querySelectorAll('.recommendation-notes-edit-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const jobId = button.dataset.jobId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
+                if (!textarea) return;
+                textarea.disabled = false;
+                textarea.focus();
+                button.style.display = 'none';
+                if (saveBtn) saveBtn.style.display = '';
+            });
+        });
+
+        document.querySelectorAll('.recommendation-notes-save-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const jobId = button.dataset.jobId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
+                if (!textarea) return;
+                localStorage.setItem(getNotesKey(jobId), textarea.value);
+                textarea.disabled = true;
+                button.style.display = 'none';
+                if (editBtn) editBtn.style.display = '';
+            });
+        });
+
+        document.querySelectorAll('.recommendation-notes-delete-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const jobId = button.dataset.jobId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
+                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
+                localStorage.removeItem(getNotesKey(jobId));
+                if (textarea) {
+                    textarea.value = '';
+                    textarea.disabled = true;
+                }
+                if (saveBtn) saveBtn.style.display = 'none';
+                if (editBtn) editBtn.style.display = '';
             });
         });
     }
-//--------------------------------------------------------------------------------------------------TO BE REMOVED
-//    function bindActionButtons() {
-//        document.querySelectorAll('.recommendation-approve-btn').forEach(button => {
-//            button.addEventListener('click', () => {
-//                const jobId = button.dataset.jobId;
-//                const kind = button.dataset.kind;
-//                window.dispatchEvent(new CustomEvent('recommendations:approve', {
-//                    detail: { jobId, kind }
-//                }));
-//            });
-//        });
+
     function bindActionButtons() {
         document.querySelectorAll('.recommendation-approve-btn').forEach(button => {
             button.addEventListener('click', () => {
@@ -159,13 +203,11 @@
                 const runId = job && job.run_id;
 
                 if (!runId) {
-                    console.error('Approve clicked with no run_id for job', jobId);
+                    console.error('Review clicked with no run_id for job', jobId);
                     return;
                 }
 
                 if (typeof window.openAssetConfigModal === 'function') {
-                    // "hello world" placeholder asset name — Stage 1 will replace this
-                    // with a real asset name pulled from /api/sessions/<run_id>/scaffolding
                     window.openAssetConfigModal('hello_world_test', runId);
                 } else {
                     console.error('openAssetConfigModal is not available — check main.js load order.');
@@ -206,7 +248,7 @@
             .map((job, index) => renderRecommendationCard(job, index))
             .join('');
 
-        bindNotesAutosave();
+        bindNotesControls();
         bindActionButtons();
     }
 
