@@ -43,7 +43,8 @@
     function renderRecommendationCard(job, index) {
         const runLabel = job.run_id || job.session_id || job.job_id || `Session_${index + 1}`;
         const statusLabel = String(job.status || 'unknown').toUpperCase();
-        const notesValue = localStorage.getItem(getNotesKey(job.job_id)) || '';
+        // const notesValue = localStorage.getItem(getNotesKey(job.job_id)) || '';----------------------------REMOVE LATER
+        const notesValue = job.analyst_notes || '';
 
         return `
             <details class="recommendation-session-card" data-job-id="${escapeHtml(job.job_id)}">
@@ -150,13 +151,56 @@
             </details>
         `;
     }
+//--------------------------------------------------------------------------------------REMOVE LATER    
+    // function bindNotesControls() {
+    //     document.querySelectorAll('.recommendation-notes-edit-btn').forEach(button => {
+    //         button.addEventListener('click', () => {
+    //             const jobId = button.dataset.jobId;
+    //             const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+    //             const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
+    //             if (!textarea) return;
+    //             textarea.disabled = false;
+    //             textarea.focus();
+    //             button.style.display = 'none';
+    //             if (saveBtn) saveBtn.style.display = '';
+    //         });
+    //     });
 
+    //     document.querySelectorAll('.recommendation-notes-save-btn').forEach(button => {
+    //         button.addEventListener('click', () => {
+    //             const jobId = button.dataset.jobId;
+    //             const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+    //             const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
+    //             if (!textarea) return;
+    //             localStorage.setItem(getNotesKey(jobId), textarea.value);
+    //             textarea.disabled = true;
+    //             button.style.display = 'none';
+    //             if (editBtn) editBtn.style.display = '';
+    //         });
+    //     });
+
+    //     document.querySelectorAll('.recommendation-notes-delete-btn').forEach(button => {
+    //         button.addEventListener('click', () => {
+    //             const jobId = button.dataset.jobId;
+    //             const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
+    //             const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
+    //             const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
+    //             localStorage.removeItem(getNotesKey(jobId));
+    //             if (textarea) {
+    //                 textarea.value = '';
+    //                 textarea.disabled = true;
+    //             }
+    //             if (saveBtn) saveBtn.style.display = 'none';
+    //             if (editBtn) editBtn.style.display = '';
+    //         });
+    //     });
+    // }
     function bindNotesControls() {
         document.querySelectorAll('.recommendation-notes-edit-btn').forEach(button => {
             button.addEventListener('click', () => {
-                const jobId = button.dataset.jobId;
-                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
-                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
+                const runId = button.dataset.runId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${runId}"]`);
+                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-run-id="${runId}"]`);
                 if (!textarea) return;
                 textarea.disabled = false;
                 textarea.focus();
@@ -166,31 +210,53 @@
         });
 
         document.querySelectorAll('.recommendation-notes-save-btn').forEach(button => {
-            button.addEventListener('click', () => {
-                const jobId = button.dataset.jobId;
-                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
-                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
+            button.addEventListener('click', async () => {
+                const runId = button.dataset.runId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${runId}"]`);
+                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-run-id="${runId}"]`);
                 if (!textarea) return;
-                localStorage.setItem(getNotesKey(jobId), textarea.value);
-                textarea.disabled = true;
-                button.style.display = 'none';
-                if (editBtn) editBtn.style.display = '';
+
+                try {
+                    const res = await fetch(`/api/sessions/${encodeURIComponent(runId)}/notes`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ notes: textarea.value })
+                    });
+                    if (!res.ok) throw new Error(`Failed to save notes (${res.status})`);
+                    textarea.disabled = true;
+                    button.style.display = 'none';
+                    if (editBtn) editBtn.style.display = '';
+                } catch (err) {
+                    console.error(err);
+                    if (typeof window.showAlert === 'function') {
+                        window.showAlert('Failed to save analyst notes: ' + err.message, 'error');
+                    }
+                }
             });
         });
 
         document.querySelectorAll('.recommendation-notes-delete-btn').forEach(button => {
-            button.addEventListener('click', () => {
-                const jobId = button.dataset.jobId;
-                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${jobId}"]`);
-                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-job-id="${jobId}"]`);
-                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-job-id="${jobId}"]`);
-                localStorage.removeItem(getNotesKey(jobId));
-                if (textarea) {
-                    textarea.value = '';
-                    textarea.disabled = true;
+            button.addEventListener('click', async () => {
+                const runId = button.dataset.runId;
+                const textarea = document.querySelector(`.recommendation-notes[data-recommendation-notes-for="${runId}"]`);
+                const editBtn = document.querySelector(`.recommendation-notes-edit-btn[data-run-id="${runId}"]`);
+                const saveBtn = document.querySelector(`.recommendation-notes-save-btn[data-run-id="${runId}"]`);
+
+                try {
+                    const res = await fetch(`/api/sessions/${encodeURIComponent(runId)}/notes`, { method: 'DELETE' });
+                    if (!res.ok) throw new Error(`Failed to delete notes (${res.status})`);
+                    if (textarea) {
+                        textarea.value = '';
+                        textarea.disabled = true;
+                    }
+                    if (saveBtn) saveBtn.style.display = 'none';
+                    if (editBtn) editBtn.style.display = '';
+                } catch (err) {
+                    console.error(err);
+                    if (typeof window.showAlert === 'function') {
+                        window.showAlert('Failed to delete analyst notes: ' + err.message, 'error');
+                    }
                 }
-                if (saveBtn) saveBtn.style.display = 'none';
-                if (editBtn) editBtn.style.display = '';
             });
         });
     }

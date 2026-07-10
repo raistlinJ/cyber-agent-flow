@@ -981,6 +981,18 @@ def _load_run_metadata(run_id: str | None):
     except Exception:
         return None
 
+def _analyst_notes_path(run_id: str) -> str:
+    return os.path.join(RUNS_DIR, run_id, "analyst_notes.json")
+
+def _load_analyst_notes(run_id: str) -> str:
+    path = _analyst_notes_path(run_id)
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, 'r') as f:
+            return str((json.load(f) or {}).get("notes") or "")
+    except Exception:
+        return ""
 
 def _format_analysis_sections(sections: list[str]) -> str:
     return "\n".join(f"{index}. {section}" for index, section in enumerate(sections, start=1))
@@ -1762,9 +1774,24 @@ def generate_scaffolding():
     if not os.path.exists(prompt_path):
         return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
         
+    #with open(prompt_path, 'r') as f:
+    #    prompt_content = f.read()
+    #    
+    ## Append auto-add instructions if requested
+    #if auto_add:
+    #    prompt_content += f"\n\nIMPORTANT: When you are finished creating the tool, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
     with open(prompt_path, 'r') as f:
         prompt_content = f.read()
-        
+
+    # Feed in analyst notes, if any — human context/corrections the automated analysis may have missed
+    analyst_notes = _load_analyst_notes(run_id)
+    if analyst_notes:
+        prompt_content += (
+            f"\n\n## Analyst Notes (human reviewer commentary)\n\n{analyst_notes}\n\n"
+            "Incorporate this analyst feedback into your implementation where relevant — "
+            "it may include context, corrections, or priorities the automated analysis missed."
+        )
+
     # Append auto-add instructions if requested
     if auto_add:
         prompt_content += f"\n\nIMPORTANT: When you are finished creating the tool, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
@@ -2089,6 +2116,32 @@ def session_annotate(run_id):
     except Exception as e:
         app.logger.exception("Annotation write failed")
         return jsonify({"success": False, "error": 'Failed to save annotation.'}), 500
+
+@app.route('/api/sessions/<run_id>/notes', methods=['PUT'])
+def save_analyst_notes(run_id):
+    """Save or overwrite analyst notes for a session, used later to inform scaffolding generation."""
+    _validate_run_id(run_id)
+    if not os.path.isdir(os.path.join(RUNS_DIR, run_id)):
+        abort(404, description="Session not found.")
+
+    data = request.json or {}
+    notes = str(data.get('notes') or '').strip()
+
+    os.makedirs(os.path.join(RUNS_DIR, run_id), exist_ok=True)
+    with open(_analyst_notes_path(run_id), 'w') as f:
+        json.dump({"notes": notes, "updated_time": now_timestamp()}, f, indent=2)
+
+    return jsonify({"success": True, "notes": notes})
+
+
+@app.route('/api/sessions/<run_id>/notes', methods=['DELETE'])
+def delete_analyst_notes(run_id):
+    """Remove analyst notes for a session."""
+    _validate_run_id(run_id)
+    path = _analyst_notes_path(run_id)
+    if os.path.isfile(path):
+        os.remove(path)
+    return jsonify({"success": True})  
 
 @app.route('/api/session/stop', methods=['POST'])
 def session_stop():
@@ -2882,9 +2935,20 @@ def list_analysis_jobs():
     with _analysis_lock:
         for job_id, record in _analysis_jobs.items():
             disk_jobs.setdefault(job_id, dict(record))
+#----------------------------------------------------------------------------------------------REMOVE LATER
+    #sorted_jobs = sorted(
+    #    [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in disk_jobs.items()],
+    #    key=lambda x: x.get("start_time") or "",
+    #    reverse=True
+    #)
+    #return jsonify({"jobs": sorted_jobs})
+    def _with_notes(job_id, record):
+        public_record = _public_analysis_job_record(_to_json_safe({"job_id": job_id, **record}))
+        public_record["analyst_notes"] = _load_analyst_notes(record.get("run_id") or "")
+        return public_record
 
     sorted_jobs = sorted(
-        [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in disk_jobs.items()],
+        [_with_notes(k, v) for k, v in disk_jobs.items()],
         key=lambda x: x.get("start_time") or "",
         reverse=True
     )
