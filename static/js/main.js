@@ -409,14 +409,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------------------------------------------------------------
     // Utility Alerts & Status
     // ---------------------------------------------------------------
+    //--------------------------------------------------------------------------------------------TO BE REMOVED
+//    const showAlert = (message, type = 'error') => {
+//        const alertEl = document.createElement('div');
+//        alertEl.className = `alert alert-${type}`;
+//        const icon = type === 'error' ? 'ph-warning-circle' : 'ph-check-circle';
+//        alertEl.innerHTML = `<i class="ph ${icon}"></i> <span>${message}</span>`;
+//        alertsContainer.innerHTML = '';
+//        alertsContainer.appendChild(alertEl);
+//        setTimeout(() => {
+//            alertEl.style.opacity = '0';
+//            setTimeout(() => alertEl.remove(), 300);
+//        }, 5000);
+//    };
     const showAlert = (message, type = 'error') => {
         const alertEl = document.createElement('div');
         alertEl.className = `alert alert-${type}`;
         const icon = type === 'error' ? 'ph-warning-circle' : 'ph-check-circle';
         alertEl.innerHTML = `<i class="ph ${icon}"></i> <span>${message}</span>`;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'alert-close';
+        closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+        closeBtn.addEventListener('click', () => alertEl.remove());
+        alertEl.appendChild(closeBtn);
+
         alertsContainer.innerHTML = '';
         alertsContainer.appendChild(alertEl);
         setTimeout(() => {
+            if (!alertEl.isConnected) return;
             alertEl.style.opacity = '0';
             setTimeout(() => alertEl.remove(), 300);
         }, 5000);

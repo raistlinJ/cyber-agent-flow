@@ -899,6 +899,74 @@ option {
     background-color: var(--error);
     box-shadow: 0 0 8px var(--error);
 }
+/* ============================================================
+   Global Alerts (toast, fixed bottom-right)
+   ============================================================ */
+
+.alerts-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 5000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 360px;
+    pointer-events: none;
+}
+
+.alert {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    pointer-events: auto;
+    animation: alertSlideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.alert span {
+    flex: 1;
+}
+
+.alert-error {
+    background: rgba(30, 10, 10, 0.92);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+}
+
+.alert-success {
+    background: rgba(6, 30, 20, 0.92);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #6ee7b7;
+}
+
+.alert-close {
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.1rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.alert-close:hover {
+    opacity: 1;
+}
+
+@keyframes alertSlideIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
 
 /* ============================================================
    Dropdown & Modal (Premium)
