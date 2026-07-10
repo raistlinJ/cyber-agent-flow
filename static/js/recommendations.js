@@ -75,19 +75,19 @@
                             <div class="recommendation-section-header">
                                 <h3>Analyst Notes</h3>
                                 <div class="recommendation-notes-actions">
-                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-edit-btn" data-job-id="${escapeHtml(job.job_id)}">
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-edit-btn" data-run-id="${escapeHtml(job.run_id)}">
                                         <i class="ph ph-pencil-simple"></i> Edit
                                     </button>
-                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-save-btn" data-job-id="${escapeHtml(job.job_id)}" style="display:none;">
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-save-btn" data-run-id="${escapeHtml(job.run_id)}" style="display:none;">
                                         <i class="ph ph-floppy-disk"></i> Save
                                     </button>
-                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-delete-btn" data-job-id="${escapeHtml(job.job_id)}">
+                                    <button type="button" class="btn btn-secondary btn-compact recommendation-notes-delete-btn" data-run-id="${escapeHtml(job.run_id)}">
                                         <i class="ph ph-trash"></i>
                                     </button>
                                 </div>
                             </div>
                             <textarea class="recommendation-notes" rows="6" disabled
-                                data-recommendation-notes-for="${escapeHtml(job.job_id)}"
+                                data-recommendation-notes-for="${escapeHtml(job.run_id)}"
                                 placeholder="Write analyst notes here...">${escapeHtml(notesValue)}</textarea>
                         </div>
                     </div>
