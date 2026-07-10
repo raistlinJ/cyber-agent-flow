@@ -140,15 +140,36 @@
             });
         });
     }
-
+//--------------------------------------------------------------------------------------------------TO BE REMOVED
+//    function bindActionButtons() {
+//        document.querySelectorAll('.recommendation-approve-btn').forEach(button => {
+//            button.addEventListener('click', () => {
+//                const jobId = button.dataset.jobId;
+//                const kind = button.dataset.kind;
+//                window.dispatchEvent(new CustomEvent('recommendations:approve', {
+//                    detail: { jobId, kind }
+//                }));
+//            });
+//        });
     function bindActionButtons() {
         document.querySelectorAll('.recommendation-approve-btn').forEach(button => {
             button.addEventListener('click', () => {
                 const jobId = button.dataset.jobId;
-                const kind = button.dataset.kind;
-                window.dispatchEvent(new CustomEvent('recommendations:approve', {
-                    detail: { jobId, kind }
-                }));
+                const job = activeSuccessfulJobs.find(j => j.job_id === jobId);
+                const runId = job && job.run_id;
+
+                if (!runId) {
+                    console.error('Approve clicked with no run_id for job', jobId);
+                    return;
+                }
+
+                if (typeof window.openAssetConfigModal === 'function') {
+                    // "hello world" placeholder asset name — Stage 1 will replace this
+                    // with a real asset name pulled from /api/sessions/<run_id>/scaffolding
+                    window.openAssetConfigModal('hello_world_test', runId);
+                } else {
+                    console.error('openAssetConfigModal is not available — check main.js load order.');
+                }
             });
         });
 

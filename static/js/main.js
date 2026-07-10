@@ -4803,6 +4803,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         assetConfigModal.style.display = 'flex';
     }
+    window.openAssetConfigModal = openAssetConfigModal; // Expose to global for button onclick
 
     document.getElementById('asset-fetch-models-btn').addEventListener('click', async () => {
         const provider = document.getElementById('asset-provider-select').value;
