@@ -2826,6 +2826,10 @@ option {
     max-height: none;
     overflow: visible;
 }
+#recommendations-list {
+    max-height: none;
+    overflow: visible;
+}
 .spinning { animation: spin 2s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
