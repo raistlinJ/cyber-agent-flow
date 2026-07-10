@@ -441,7 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!alertEl.isConnected) return;
             alertEl.style.opacity = '0';
             setTimeout(() => alertEl.remove(), 300);
-        }, 5000);
+        }, 10000);
     };
 
     const updateStatus = (state, message) => {
@@ -4826,6 +4826,7 @@ document.addEventListener('DOMContentLoaded', () => {
         assetConfigModal.style.display = 'flex';
     }
     window.openAssetConfigModal = openAssetConfigModal; // Expose to global for button onclick
+    window.showAlert = showAlert; // Expose to global for error handling
 
     document.getElementById('asset-fetch-models-btn').addEventListener('click', async () => {
         const provider = document.getElementById('asset-provider-select').value;
