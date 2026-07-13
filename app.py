@@ -71,6 +71,20 @@ except Exception as _watcher_import_err:
 # Path to runs/ directory (co-located with app.py)
 RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
 
+# Path to plugins/ directory — AI-generated tools and playbooks, kept
+# separate from the hand-built kali_tools.json catalog
+PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+PLUGIN_MCP_TOOLS_DIRNAME = "mcp_tools"
+PLUGIN_PLAYBOOKS_DIRNAME = "playbooks"
+
+
+def _plugin_mcp_tools_dir() -> str:
+    return os.path.join(PLUGINS_DIR, PLUGIN_MCP_TOOLS_DIRNAME)
+
+
+def _plugin_playbooks_dir() -> str:
+    return os.path.join(PLUGINS_DIR, PLUGIN_PLAYBOOKS_DIRNAME)
+
 # ---------------------------------------------------------------------------
 # Active session tracking  (only one session at a time for now)
 # ---------------------------------------------------------------------------
@@ -981,6 +995,54 @@ def _load_run_metadata(run_id: str | None):
     except Exception:
         return None
 
+def _load_plugin_mcp_tools() -> list[dict]:
+    """Scan plugins/mcp_tools/*/manifest.json for AI-generated tool entries."""
+    tools_dir = _plugin_mcp_tools_dir()
+    entries = []
+    if not os.path.isdir(tools_dir):
+        return entries
+
+    for entry_name in sorted(os.listdir(tools_dir)):
+        entry_dir = os.path.join(tools_dir, entry_name)
+        manifest_path = os.path.join(entry_dir, "manifest.json")
+        if not os.path.isdir(entry_dir) or not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path, 'r') as f:
+                manifest = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(manifest, dict) or not manifest.get("name"):
+            continue
+
+        provenance_path = os.path.join(entry_dir, "PROVENANCE.md")
+        entries.append({
+            "folder": entry_name,
+            "manifest": manifest,
+            "has_provenance": os.path.isfile(provenance_path),
+        })
+    return entries
+
+
+def _load_plugin_playbooks() -> list[dict]:
+    """Scan plugins/playbooks/*.md for AI-generated playbook files."""
+    playbooks_dir = _plugin_playbooks_dir()
+    entries = []
+    if not os.path.isdir(playbooks_dir):
+        return entries
+
+    for filename in sorted(os.listdir(playbooks_dir)):
+        if not filename.endswith('.md') or filename.endswith('.PROVENANCE.md'):
+            continue
+        name = filename[:-3]
+        provenance_path = os.path.join(playbooks_dir, f"{name}.PROVENANCE.md")
+        entries.append({
+            "name": name,
+            "filename": filename,
+            "has_provenance": os.path.isfile(provenance_path),
+        })
+    return entries
+
 def _analyst_notes_path(run_id: str) -> str:
     return os.path.join(RUNS_DIR, run_id, "analyst_notes.json")
 
@@ -996,7 +1058,6 @@ def _load_analyst_notes(run_id: str) -> str:
 
 def _format_analysis_sections(sections: list[str]) -> str:
     return "\n".join(f"{index}. {section}" for index, section in enumerate(sections, start=1))
-
 
 def _prepare_llm_analysis(run_id, span_req, ollama_url_override=None, model_override=None, analysis_outputs=None, api_key_override=None, llm_provider_override=None, ssl_verify_override=None):
     session_dir = os.path.join(RUNS_DIR, run_id)
@@ -1751,6 +1812,14 @@ def get_session_scaffolding(run_id):
                 })
     
     return jsonify({"success": True, "assets": assets})
+
+@app.route('/api/plugins', methods=['GET'])
+def list_plugins():
+    """List AI-generated MCP tools and playbooks available to enable, separate from kali_tools.json."""
+    return jsonify({
+        "mcp_tools": _load_plugin_mcp_tools(),
+        "playbooks": _load_plugin_playbooks(),
+    })
 
 @app.route('/api/scaffolding/generate', methods=['POST'])
 def generate_scaffolding():
