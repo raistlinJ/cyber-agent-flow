@@ -660,6 +660,9 @@ class TerminalEventHandler:
     _RESERVED_LINES = 3  # status + separator + input line
 
     def __init__(self, *, tool_output_chars: int = 6000, verbose: bool = False, known_session_ids: set[str] | None = None, stream_out=None, stream_in=None):
+        self._tool_start_time = 0.0
+        self._last_tool_status_msg: str | None = None
+
         import sys
         self.stream_out = stream_out or sys.stdout
         self.stream_in = stream_in or sys.stdin
@@ -772,12 +775,13 @@ class TerminalEventHandler:
         """Write the status text (no cursor movement, no flush)."""
         if self._active_tool_name:
             elapsed = int(time.monotonic() - self._tool_start_time)
-            self.stream_out.write(
+            msg = self._last_tool_status_msg or (
                 f" {Colors.ACCENT_PRIMARY}\u23f1{Colors.RESET} "
                 f"{Colors.TEXT_PRIMARY}{self._active_tool_name}{Colors.RESET} "
                 f"{Colors.DIM}{elapsed}s "
                 f"\u2502 /cancel  /force_analyze{Colors.RESET}"
             )
+            self.stream_out.write(msg)
         else:
             self.stream_out.write(f" {Colors.DIM}waiting\u2026{Colors.RESET}")
 
@@ -886,8 +890,10 @@ class TerminalEventHandler:
         if event_type == "tool_call":
             self._active_tool_name = str(event.get("tool") or "tool")
             self._tool_start_time = time.monotonic()
+            self._last_tool_status_msg = None
         elif event_type in {"tool_result", "error", "chat_done"}:
             self._active_tool_name = None
+            self._last_tool_status_msg = None
 
         if event_type == "status":
             self._print_status(str(event.get("message") or ""))
@@ -907,6 +913,8 @@ class TerminalEventHandler:
             self._output(f"\n{Colors.ACCENT_PRIMARY}[tool]{Colors.RESET} {Colors.TEXT_PRIMARY}{tool}{Colors.RESET} {Colors.TEXT_SECONDARY}{args}{Colors.RESET}")
         elif event_type == "tool_result":
             self._print_tool_result(event)
+        elif event_type == "tool_status":
+            self._print_tool_status(event)
         elif event_type == "error":
             self._output_err(f"\n{Colors.ACCENT_ERROR}[error] {event.get('message') or 'Unknown error.'}{Colors.RESET}")
         elif event_type == "context_usage":
@@ -951,6 +959,20 @@ class TerminalEventHandler:
     def _print_status(self, message: str) -> None:
         if message:
             self._output(f"{Colors.TEXT_SECONDARY}[status]{Colors.RESET} {message}")
+
+    def _print_tool_status(self, event: dict[str, Any]) -> None:
+        tool = event.get("tool") or "tool"
+        elapsed = event.get("elapsed_seconds") or 0
+        stdout_len = event.get("stdout_len") or 0
+        stderr_len = event.get("stderr_len") or 0
+        
+        # Only print if not using the live status bar, otherwise update the bar
+        msg = f"{Colors.DIM}[{tool} status: {elapsed}s elapsed, {stdout_len}b stdout, {stderr_len}b stderr]{Colors.RESET}"
+        if self._bar_active:
+            self._last_tool_status_msg = msg
+            self._update_status_line()
+        else:
+            self._output(msg)
 
     def _print_tool_result(self, event: dict[str, Any]) -> None:
         tool = event.get("tool") or "tool"

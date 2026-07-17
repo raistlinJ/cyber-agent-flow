@@ -105,6 +105,7 @@ _MAX_SHELL_SEQUENCE_COMMANDS = 3
 _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
+_TOOL_STATUS_FILENAME = "tool_status.json"
 _TIMEOUT_DECISION_POLL_SECONDS = 0.25
 _TIMEOUT_DECISION_MAX_WAIT_SECONDS = int(os.environ.get("MCP_TIMEOUT_DECISION_MAX_WAIT_SECONDS", "30") or 30)
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
@@ -953,6 +954,13 @@ def _timeout_response_path() -> str | None:
     return os.path.join(control_dir, _TIMEOUT_RESPONSE_FILENAME)
 
 
+def _tool_status_path() -> str | None:
+    control_dir = _timeout_control_dir()
+    if not control_dir:
+        return None
+    return os.path.join(control_dir, _TOOL_STATUS_FILENAME)
+
+
 def _cancel_request_path() -> str | None:
     control_dir = _timeout_control_dir()
     if not control_dir:
@@ -978,12 +986,32 @@ def _tool_stop_requested() -> bool:
 
 
 def _clear_timeout_control_files():
-    for path in (_timeout_request_path(), _timeout_response_path(), _cancel_request_path(), _tool_stop_request_path()):
+    for path in (_timeout_request_path(), _timeout_response_path(), _cancel_request_path(), _tool_stop_request_path(), _tool_status_path()):
         if path and os.path.exists(path):
             try:
                 os.remove(path)
             except OSError:
                 pass
+
+
+def _write_tool_status(tool_name: str, elapsed_seconds: int, stdout_len: int, stderr_len: int, extra_msg: str = ""):
+    status_path = _tool_status_path()
+    if not status_path:
+        return
+    status_data = {
+        "tool": tool_name,
+        "elapsed_seconds": elapsed_seconds,
+        "stdout_len": stdout_len,
+        "stderr_len": stderr_len,
+        "extra_msg": extra_msg,
+        "timestamp": time.time()
+    }
+    try:
+        with open(status_path + ".tmp", "w") as f:
+            json.dump(status_data, f)
+        os.replace(status_path + ".tmp", status_path)
+    except OSError:
+        pass
 
 
 def _write_timeout_request(
@@ -1142,6 +1170,7 @@ def _run_subprocess_with_timeout_prompt(
     idle_limit = int(idle_timeout_seconds or _DEFAULT_IDLE_TIMEOUT_SECONDS)
     idle_limit = max(0, idle_limit)
     last_activity_at = t0
+    last_status_at = t0
     last_seen_sizes = (0, 0)
 
     def _background_noninteractive_session(partial_stdout: str, partial_stderr: str) -> dict:
@@ -1195,9 +1224,16 @@ def _run_subprocess_with_timeout_prompt(
             partial_stdout = str(getattr(exc, "output", "") or "")
             partial_stderr = str(getattr(exc, "stderr", "") or "")
             current_sizes = (len(partial_stdout), len(partial_stderr))
+            now = time.time()
             if current_sizes != last_seen_sizes:
                 last_seen_sizes = current_sizes
-                last_activity_at = time.time()
+                last_activity_at = now
+            
+            if now - last_status_at >= 2.0:
+                out_len = len(partial_stdout)
+                err_len = len(partial_stderr)
+                _write_tool_status(tool_name, int(now - t0), out_len, err_len)
+                last_status_at = now
 
             if _looks_like_interactive_session(tool_name, cmd, partial_stdout, partial_stderr):
                 # Non-interactive subprocesses (stdin=DEVNULL) cannot be preserved safely.
@@ -1366,12 +1402,18 @@ def _run_interactive_subprocess_with_timeout_prompt(
     idle_limit = max(0, idle_limit)
     transcript = ""
     last_activity_at = t0
+    last_status_at = t0
 
     while True:
         chunk = _read_pty_available(master_fd, _PROCESS_CANCEL_POLL_SECONDS)
+        now = time.time()
         if chunk:
             transcript = _merge_process_stream_text(transcript, chunk)
-            last_activity_at = time.time()
+            last_activity_at = now
+            
+        if now - last_status_at >= 2.0:
+            _write_tool_status(tool_name, int(now - t0), len(transcript), 0)
+            last_status_at = now
 
         if _looks_like_preservable_interactive_session(tool_name, transcript, ""):
             session_id = _preserve_interactive_session(proc, master_fd, tool_name, arguments, cmd, transcript)
