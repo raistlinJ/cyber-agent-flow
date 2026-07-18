@@ -14,8 +14,10 @@ import logging
 import pty
 import subprocess
 import fcntl
+import uuid
 from datetime import datetime
 from timestamp_utils import now_timestamp
+from durable_event_store import DurableEventStore
 
 try:
     from system_loggers import NetworkCaptureLogger, SyscallLogger
@@ -69,6 +71,9 @@ except Exception as _watcher_import_err:
 
 # Path to runs/ directory (co-located with app.py)
 RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
+DURABLE_EVENT_DB = os.environ.get("CAF_EVENT_DB", os.path.join(RUNS_DIR, "caf_events.sqlite3"))
+_event_store = DurableEventStore(DURABLE_EVENT_DB)
+_event_store.recover_interrupted_work()
 
 # ---------------------------------------------------------------------------
 # Active session tracking  (only one session at a time for now)
@@ -81,6 +86,7 @@ _session_state = {
     "status": "idle",       # idle | starting | running | stopping | stopped
     "run_id": None,
     "cancel_event": None,   # asyncio.Event for cancelling a chat turn
+    "active_prompt_id": None,
     # LLM config for the active session (used by watcher API for same-LLM detection)
     "ollama_url": "",
     "model": "",
@@ -557,7 +563,8 @@ def _make_run_id(server_type: str) -> str:
 
 
 def _event_callback(event: dict):
-    """Push an event onto the SSE queue."""
+    """Persist an event before offering it to legacy live subscribers."""
+    event = dict(event or {})
     event["timestamp"] = datetime.now().isoformat()
     
     # Track isess sessions for background polling
@@ -568,7 +575,17 @@ def _event_callback(event: dict):
             with _session_lock:
                 _session_state["isess_sessions"].add(session_id)
     
-    q = _session_state.get("queue")
+    with _session_lock:
+        run_id = _session_state.get("run_id")
+        prompt_id = _session_state.get("active_prompt_id")
+        q = _session_state.get("queue")
+    if run_id:
+        event = _event_store.append_event(run_id, prompt_id, str(event.get("type") or "status"), event)
+        if prompt_id and event.get("type") == "chat_done":
+            _event_store.update_prompt_status(prompt_id, "completed")
+            with _session_lock:
+                if _session_state.get("active_prompt_id") == prompt_id:
+                    _session_state["active_prompt_id"] = None
     if q:
         try:
             q.put_nowait(event)
@@ -1372,6 +1389,13 @@ def session_start():
 
     server_type = "apt" if is_apt else "native"
     run_id = _make_run_id(server_type)
+    _event_store.create_run(run_id, "starting", {
+        "server_type": server_type,
+        "model": model,
+        "llm_provider": llm_provider,
+        "context_window": context_window,
+        "max_turns": max_turns,
+    })
 
     event_queue = queue.Queue(maxsize=1000)
 
@@ -1456,6 +1480,7 @@ def session_start():
                 with _session_lock:
                     _session_state["session"] = session
                     _session_state["status"] = "running"
+                _event_store.update_run_status(run_id, "running")
                 start_result["success"] = True
                 start_result["tools"] = tools
                 app.logger.info('Session started run_id=%s tools=%s', run_id, len(tools or []))
@@ -1464,6 +1489,7 @@ def session_start():
                 start_result["error"] = _safe_client_error(exc, 'Failed to start session.')
                 with _session_lock:
                     _session_state["status"] = "idle"
+                _event_store.update_run_status(run_id, "failed")
             finally:
                 start_done.set()
 
@@ -1547,6 +1573,8 @@ def session_start():
                 _session_state["status"] = "stopped"
                 _session_state["session"] = None
                 _session_state["loop"] = None
+                _session_state["active_prompt_id"] = None
+            _event_store.update_run_status(run_id, "stopped")
             _stop_auxiliary_loggers()
             app.logger.info('Session stopped run_id=%s', run_id)
 
@@ -1597,8 +1625,17 @@ def session_chat():
             }), 409
         loop = _session_state["loop"]
         session = _session_state["session"]
+        run_id = _session_state["run_id"]
+        active_prompt_id = _session_state.get("active_prompt_id")
 
-    data = request.json
+    if active_prompt_id:
+        return jsonify({
+            'success': False,
+            'error': 'A prompt is already running for this session.',
+            'prompt_id': active_prompt_id,
+        }), 409
+
+    data = request.json or {}
     prompt = (data.get('prompt') or '').strip()
     scope_enabled = bool(data.get('scope_enabled', True))
     urgency_enabled = bool(data.get('urgency_enabled', True))
@@ -1609,6 +1646,9 @@ def session_chat():
     if not prompt:
         return jsonify({'success': False, 'error': 'Empty prompt.'}), 400
 
+    prompt_id = uuid.uuid4().hex
+    _event_store.create_prompt(prompt_id, run_id, prompt, status="running")
+
     app.logger.info('Chat prompt submitted run_id=%s chars=%s', _session_state.get('run_id'), len(prompt))
     app.logger.debug('Chat prompt preview=%s', _redact_sensitive_text(prompt[:500]))
 
@@ -1616,6 +1656,7 @@ def session_chat():
     cancel_event = asyncio.Event()
     with _session_lock:
         _session_state["cancel_event"] = cancel_event
+        _session_state["active_prompt_id"] = prompt_id
 
     future = asyncio.run_coroutine_threadsafe(
         session.chat(prompt, cancel_event=cancel_event, scope=scope, urgency=urgency),
@@ -1624,9 +1665,43 @@ def session_chat():
     with _session_lock:
         _session_state["chat_future"] = future
 
+    def _record_chat_failure(done_future):
+        """Record cancellations or uncaught worker errors durably."""
+        try:
+            if done_future.cancelled():
+                _event_store.append_event(run_id, prompt_id, "chat_done", {
+                    "message": "Prompt task was cancelled.",
+                })
+                _event_store.update_prompt_status(prompt_id, "cancelled", "Prompt task was cancelled.")
+            else:
+                failure = done_future.exception()
+                if failure:
+                    _event_store.append_event(run_id, prompt_id, "error", {"message": str(failure)})
+                    _event_store.append_event(run_id, prompt_id, "chat_done", {
+                        "message": "Prompt worker failed.",
+                    })
+                    _event_store.update_prompt_status(prompt_id, "failed", str(failure))
+        except Exception as exc:
+            _event_store.append_event(run_id, prompt_id, "error", {"message": str(exc)})
+            _event_store.update_prompt_status(prompt_id, "failed", str(exc))
+        finally:
+            stored = _event_store.get_prompt(prompt_id)
+            if stored and stored.get("status") not in {"completed", "failed", "cancelled"}:
+                _event_store.append_event(run_id, prompt_id, "chat_done", {
+                    "message": "Prompt worker completed without a terminal event.",
+                })
+                _event_store.update_prompt_status(prompt_id, "completed")
+            with _session_lock:
+                if _session_state.get("active_prompt_id") == prompt_id:
+                    _session_state["active_prompt_id"] = None
+
+    future.add_done_callback(_record_chat_failure)
+
     # Return immediately — the client follows progress via SSE
     return jsonify({
         'success': True,
+        'run_id': run_id,
+        'prompt_id': prompt_id,
         'message': 'Prompt submitted.',
     })
 
@@ -2076,6 +2151,8 @@ def session_stop():
         status = _session_state["status"]
         loop = _session_state["loop"]
         session = _session_state["session"]
+        run_id = _session_state.get("run_id")
+        prompt_id = _session_state.get("active_prompt_id")
 
         if status == "idle":
             return jsonify({'success': True, 'message': 'No session running.'})
@@ -2084,6 +2161,12 @@ def session_stop():
         _session_state["status"] = "idle" # Proactive reset to prevent lockout
         _session_state["session"] = None
         _session_state["loop"] = None
+        _session_state["active_prompt_id"] = None
+
+    if run_id:
+        _event_store.update_run_status(run_id, "stopping")
+    if prompt_id:
+        _event_store.update_prompt_status(prompt_id, "cancelled", "Session stopped by user.")
 
     # Cancel any in-progress chat
     cancel = _session_state.get("cancel_event")
@@ -2133,6 +2216,16 @@ def session_status():
             'run_id': run_id,
             'metadata': _load_run_metadata(run_id),
         })
+
+
+@app.route('/api/capabilities')
+def api_capabilities():
+    """Advertise the replay protocol needed by reconnecting API clients."""
+    return jsonify({
+        'api_version': 2,
+        'durable_event_replay': True,
+        'prompt_status': True,
+    })
 
 
 @app.route('/api/loggers/status', methods=['GET'])
@@ -2380,30 +2473,30 @@ def watcher_status():
 
 @app.route('/api/session/stream')
 def session_stream():
-    """SSE endpoint — streams real-time events for the active session."""
+    """Replayable SSE endpoint for the active session's durable event log."""
     with _session_lock:
         if _session_state["status"] not in ("starting", "running", "stopping"):
             return jsonify({'error': 'No active session'}), 404
-        event_queue = _session_state["queue"]
+        run_id = _session_state["run_id"]
 
-    if not event_queue:
-        return jsonify({'error': 'No event queue'}), 404
+    try:
+        after = int(request.args.get("after") or request.headers.get("Last-Event-ID") or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'after must be an integer sequence number'}), 400
 
     def generate():
+        cursor = max(0, after)
         while True:
-            try:
-                # Use a short timeout (e.g. 5s) to guarantee we yield keepalives
-                # frequently enough to prevent Nginx or load balancers from dropping
-                # the connection during long-running tool executions.
-                event = event_queue.get(timeout=5)
-            except queue.Empty:
+            events = _event_store.events_after(run_id, cursor)
+            if not events:
                 yield ": keepalive\n\n"
+                time.sleep(0.5)
                 continue
-
-            yield f"data: {json.dumps(event)}\n\n"
-
-            if event.get("type") == "done":
-                break
+            for event in events:
+                cursor = int(event["sequence"])
+                yield f"id: {cursor}\ndata: {json.dumps(event)}\n\n"
+                if event.get("type") == "done":
+                    return
 
     return Response(
         generate(),
@@ -2414,6 +2507,34 @@ def session_stream():
             'Connection': 'keep-alive',
         }
     )
+
+
+@app.route('/api/sessions/<run_id>/events', methods=['GET'])
+def get_session_events(run_id):
+    """Return persisted run events after a sequence cursor for reconnects."""
+    _validate_run_id(run_id)
+    try:
+        after = int(request.args.get("after", 0))
+        limit = int(request.args.get("limit", 500))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'after and limit must be integers'}), 400
+    events = _event_store.events_after(run_id, after=after, limit=limit)
+    return jsonify({
+        'run_id': run_id,
+        'events': events,
+        'next_sequence': events[-1]['sequence'] if events else max(0, after),
+    })
+
+
+@app.route('/api/prompts/<prompt_id>', methods=['GET'])
+def get_prompt_status(prompt_id):
+    """Return the durable lifecycle status for one submitted prompt."""
+    if not re.match(r'^[a-f0-9]{32}$', prompt_id):
+        abort(400, "Invalid prompt_id")
+    prompt = _event_store.get_prompt(prompt_id)
+    if not prompt:
+        abort(404, "Prompt not found")
+    return jsonify(prompt)
 
 
 @app.route('/api/sessions/<run_id>/stop', methods=['POST'])
