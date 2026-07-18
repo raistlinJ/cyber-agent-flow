@@ -2224,6 +2224,7 @@ def api_capabilities():
     return jsonify({
         'api_version': 2,
         'durable_event_replay': True,
+        'durable_event_long_poll': True,
         'prompt_status': True,
     })
 
@@ -2511,14 +2512,25 @@ def session_stream():
 
 @app.route('/api/sessions/<run_id>/events', methods=['GET'])
 def get_session_events(run_id):
-    """Return persisted run events after a sequence cursor for reconnects."""
+    """Return persisted run events after a sequence cursor for reconnects.
+
+    ``wait`` enables bounded long-polling.  A reconnect simply repeats the
+    same cursor, so events remain durable while long tool/LLM phases no longer
+    force the client to open a fresh SSH channel every second.
+    """
     _validate_run_id(run_id)
     try:
         after = int(request.args.get("after", 0))
         limit = int(request.args.get("limit", 500))
+        wait_seconds = float(request.args.get("wait", 0))
     except (TypeError, ValueError):
-        return jsonify({'error': 'after and limit must be integers'}), 400
+        return jsonify({'error': 'after and limit must be integers; wait must be a number'}), 400
+    wait_seconds = max(0.0, min(wait_seconds, 15.0))
+    deadline = time.monotonic() + wait_seconds
     events = _event_store.events_after(run_id, after=after, limit=limit)
+    while not events and time.monotonic() < deadline:
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+        events = _event_store.events_after(run_id, after=after, limit=limit)
     return jsonify({
         'run_id': run_id,
         'events': events,

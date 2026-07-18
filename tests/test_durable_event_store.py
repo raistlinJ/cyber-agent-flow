@@ -61,6 +61,28 @@ def test_caf_replay_and_prompt_status_endpoints(monkeypatch, tmp_path):
     assert prompt.get_json()["status"] == "completed"
 
 
+def test_caf_replay_long_poll_returns_events_that_arrive_while_waiting(monkeypatch, tmp_path):
+    import app
+    import threading
+    import time
+
+    store = DurableEventStore(str(tmp_path / "caf-events.sqlite3"))
+    store.create_run("run-1", "running")
+    monkeypatch.setattr(app, "_event_store", store)
+
+    def append_later():
+        time.sleep(0.05)
+        store.append_event("run-1", None, "status", {"message": "Ready"})
+
+    worker = threading.Thread(target=append_later)
+    worker.start()
+    response = app.app.test_client().get("/api/sessions/run-1/events?after=0&wait=1")
+    worker.join()
+
+    assert response.status_code == 200
+    assert response.get_json()["events"][0]["message"] == "Ready"
+
+
 def test_caf_capabilities_advertise_durable_replay():
     import app
 
@@ -68,3 +90,4 @@ def test_caf_capabilities_advertise_durable_replay():
 
     assert response.status_code == 200
     assert response.get_json()["durable_event_replay"] is True
+    assert response.get_json()["durable_event_long_poll"] is True
