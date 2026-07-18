@@ -3226,4 +3226,7 @@ def get_session_keystrokes(run_id):
 if __name__ == '__main__':
     debug_enabled = str(os.environ.get('FLASK_DEBUG', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
     app.logger.info('Starting Flask server host=0.0.0.0 port=5055 debug=%s', debug_enabled)
-    app.run(host='0.0.0.0', port=5055, debug=debug_enabled)
+    # The API serves independent replay/status reads while the agent's session
+    # loop is waiting on a model or a tool.  Make this explicit instead of
+    # relying on Flask's version-dependent development-server default.
+    app.run(host='0.0.0.0', port=5055, debug=debug_enabled, threaded=True)

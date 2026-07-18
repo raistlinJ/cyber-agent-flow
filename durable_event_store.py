@@ -35,13 +35,18 @@ class DurableEventStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=FULL")
+        # WAL mode is a database-level setting.  Reapplying it for every
+        # polling request can acquire an exclusive lock exactly while an agent
+        # callback is recording a large tool result, making read-only status
+        # calls look hung.  Configure it once in _initialize() instead.
+        connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
