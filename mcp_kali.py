@@ -110,6 +110,11 @@ _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
 _TOOL_STATUS_FILENAME = "tool_status.json"
+
+
+def _tools_config_path() -> str:
+    """Allow isolated remote jobs to supply a per-run tool catalog."""
+    return os.environ.get("CAF_TOOLS_CONFIG_PATH") or "kali_tools.json"
 _TIMEOUT_DECISION_POLL_SECONDS = 0.25
 _TIMEOUT_DECISION_MAX_WAIT_SECONDS = int(os.environ.get("MCP_TIMEOUT_DECISION_MAX_WAIT_SECONDS", "30") or 30)
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
@@ -2109,7 +2114,7 @@ except Exception:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     try:
-        with open("kali_tools.json") as f:
+        with open(_tools_config_path()) as f:
             config = json.load(f)
     except Exception:
         config = {"tools": []}
@@ -2181,7 +2186,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=output or "Command executed successfully (no output)")]
 
     try:
-        with open("kali_tools.json") as f:
+        with open(_tools_config_path()) as f:
             config = json.load(f)
     except Exception:
         return [TextContent(type="text", text="Error: Could not read kali_tools.json")]
