@@ -1328,6 +1328,7 @@ def session_start():
     context_window = int(data.get('context_window', 8192))
     max_turns = int(data.get('max_turns', 20))
     tool_timeout = int(data.get('tool_timeout', 120))
+    auto_approve_dangerous = bool(data.get('auto_approve_dangerous'))
     network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
     keylogger_enabled = bool(data.get('keylogger_enabled'))
     network_capture_enabled = bool(data.get('network_capture_enabled'))
@@ -1437,6 +1438,7 @@ def session_start():
             tool_timeout=tool_timeout,
             network_policy=network_policy,
             enabled_tool_guides=enabled_tool_guides,
+            auto_approve_dangerous=auto_approve_dangerous,
         )
 
         async def _start():

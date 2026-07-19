@@ -71,7 +71,11 @@ _DEFAULT_CURL_CONNECT_TIMEOUT_SECONDS = 5
 _DEFAULT_CURL_MAX_TIME_SECONDS = 30
 _MAX_ALLOWED_CURL_MAX_TIME_SECONDS = 90
 _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS = 30
-_DEFAULT_IDLE_TIMEOUT_SECONDS = 20
+# Many normal security tools (notably nmap) are silent until they finish.  A
+# 20-second idle-output checkpoint turns a valid longer scan into a hidden
+# pause even when its configured tool timeout is much larger.  Keep idle
+# checkpoints opt-in per tool; the regular tool timeout still limits runtime.
+_DEFAULT_IDLE_TIMEOUT_SECONDS = 0
 _DISALLOWED_OPENSSL_FLAGS = {
     "-key",
     "-cert",

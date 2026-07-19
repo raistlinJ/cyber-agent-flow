@@ -1983,6 +1983,24 @@ class MCPSession:
                         "message": status_message
                     })
 
+                    # --dangerous-no-prompt means this unattended run has
+                    # already been authorized to proceed.  Timeout
+                    # checkpoints must not silently turn that authorization
+                    # into an indefinite user-input pause.
+                    if self.auto_approve_dangerous:
+                        wait_seconds = 300
+                        self.resolve_tool_timeout_decision("wait", wait_seconds=wait_seconds)
+                        _emit(self.event_callback, "tool_timeout_auto_continued", {
+                            "tool": tool_name,
+                            "elapsed_seconds": elapsed_seconds,
+                            "wait_seconds": wait_seconds,
+                            "message": (
+                                f"Auto-continuing {tool_name} for {wait_seconds} seconds "
+                                "at its timeout checkpoint (--dangerous-no-prompt)."
+                            ),
+                        })
+                        continue
+
                     if trigger == "idle":
                         detail_message = (
                             f"{tool_name} has shown no new output for {timeout_seconds} seconds "
