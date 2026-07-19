@@ -1973,21 +1973,6 @@ class MCPSession:
                     self._pending_tool_timeout_decision = dict(request)
 
                     checkpoint_label = "idle-output checkpoint" if trigger == "idle" else "timeout checkpoint"
-                    if elapsed_seconds > 0:
-                        status_message = (
-                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"after {elapsed_seconds} seconds. Waiting for user decision: ask again later, background it, or kill."
-                        )
-                    else:
-                        status_message = (
-                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
-                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: ask again later, background it, or kill."
-                        )
-
-                    _emit(self.event_callback, "status", {
-                        "message": status_message
-                    })
-
                     # --dangerous-no-prompt means this unattended run has
                     # already been authorized to proceed.  Timeout
                     # checkpoints must not silently turn that authorization
@@ -2005,6 +1990,21 @@ class MCPSession:
                             ),
                         })
                         continue
+
+                    if elapsed_seconds > 0:
+                        status_message = (
+                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
+                            f"after {elapsed_seconds} seconds. Waiting for user decision: ask again later, background it, or kill."
+                        )
+                    else:
+                        status_message = (
+                            f"{tool_name} reached {checkpoint_label} {checkpoint_index} "
+                            f"(interval: {timeout_seconds} seconds). Waiting for user decision: ask again later, background it, or kill."
+                        )
+
+                    _emit(self.event_callback, "status", {
+                        "message": status_message
+                    })
 
                     if trigger == "idle":
                         detail_message = (
