@@ -1311,10 +1311,10 @@ def get_models():
 def session_start():
     """Launch the MCP server, connect, and discover tools.  Keeps session alive."""
     with _session_lock:
-        if _session_state["status"] in ("starting", "running"):
+        if _session_state["status"] in ("starting", "running", "stopping"):
             return jsonify({
                 'success': False,
-                'error': 'A session is already running. Stop it first.',
+                'error': 'A session is active or still stopping. Wait for it to stop before starting another.',
             }), 409
 
     data = request.json or {}
@@ -1490,7 +1490,9 @@ def session_start():
                 app.logger.exception("Session start failed")
                 start_result["error"] = _safe_client_error(exc, 'Failed to start session.')
                 with _session_lock:
-                    _session_state["status"] = "idle"
+                    # An older worker must never reset a replacement run.
+                    if _session_state.get("run_id") == run_id:
+                        _session_state["status"] = "idle"
                 _event_store.update_run_status(run_id, "failed")
             finally:
                 start_done.set()
@@ -1572,12 +1574,17 @@ def session_start():
             loop.close()
 
             with _session_lock:
-                _session_state["status"] = "stopped"
-                _session_state["session"] = None
-                _session_state["loop"] = None
-                _session_state["active_prompt_id"] = None
+                # ``/api/session/stop`` is asynchronous.  If a newer session
+                # exists, this old loop must not erase its shared state.
+                is_current_run = _session_state.get("run_id") == run_id
+                if is_current_run:
+                    _session_state["status"] = "stopped"
+                    _session_state["session"] = None
+                    _session_state["loop"] = None
+                    _session_state["active_prompt_id"] = None
             _event_store.update_run_status(run_id, "stopped")
-            _stop_auxiliary_loggers()
+            if is_current_run:
+                _stop_auxiliary_loggers()
             app.logger.info('Session stopped run_id=%s', run_id)
 
     thread = threading.Thread(target=run_session_loop, daemon=True)
@@ -1630,6 +1637,12 @@ def session_chat():
         run_id = _session_state["run_id"]
         active_prompt_id = _session_state.get("active_prompt_id")
 
+    if loop is None or session is None or loop.is_closed():
+        return jsonify({
+            'success': False,
+            'error': 'CAF session is still changing state. Wait briefly and retry the prompt.',
+        }), 503
+
     if active_prompt_id:
         return jsonify({
             'success': False,
@@ -1660,10 +1673,20 @@ def session_chat():
         _session_state["cancel_event"] = cancel_event
         _session_state["active_prompt_id"] = prompt_id
 
-    future = asyncio.run_coroutine_threadsafe(
-        session.chat(prompt, cancel_event=cancel_event, scope=scope, urgency=urgency),
-        loop,
-    )
+    try:
+        future = asyncio.run_coroutine_threadsafe(
+            session.chat(prompt, cancel_event=cancel_event, scope=scope, urgency=urgency),
+            loop,
+        )
+    except RuntimeError as exc:
+        _event_store.update_prompt_status(prompt_id, "failed", str(exc))
+        with _session_lock:
+            if _session_state.get("active_prompt_id") == prompt_id:
+                _session_state["active_prompt_id"] = None
+        return jsonify({
+            'success': False,
+            'error': 'CAF session is still changing state. Wait briefly and retry the prompt.',
+        }), 503
     with _session_lock:
         _session_state["chat_future"] = future
 
@@ -2159,8 +2182,9 @@ def session_stop():
         if status == "idle":
             return jsonify({'success': True, 'message': 'No session running.'})
 
-        # Transitioning to stopping
-        _session_state["status"] = "idle" # Proactive reset to prevent lockout
+        # Keep this state until the worker loop has really closed.  Starting a
+        # replacement while it is cleaning up can corrupt the new session.
+        _session_state["status"] = "stopping"
         _session_state["session"] = None
         _session_state["loop"] = None
         _session_state["active_prompt_id"] = None
