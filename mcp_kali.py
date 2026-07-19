@@ -1015,9 +1015,10 @@ def _write_tool_status(
         "stdout_len": stdout_len,
         "stderr_len": stderr_len,
         "extra_msg": extra_msg,
-        # Only the output received since the prior status update.  This keeps
-        # a live UI informative without repeatedly shipping a growing nmap
-        # transcript on every progress event.
+        # The most recently captured output fragment.  The receiver de-dupes
+        # it, so retaining it is deliberate: a watcher that attaches after
+        # the first status write must still be able to show what the tool has
+        # actually produced.
         "output_preview": output_preview,
         "timestamp": time.time()
     }
@@ -1188,6 +1189,7 @@ def _run_subprocess_with_timeout_prompt(
     last_status_at = t0
     last_seen_sizes = (0, 0)
     last_reported_sizes = (0, 0)
+    last_output_preview = ""
 
     def _background_noninteractive_session(partial_stdout: str, partial_stderr: str) -> dict:
         stdout_fd = proc.stdout.fileno() if proc.stdout else None
@@ -1249,6 +1251,13 @@ def _run_subprocess_with_timeout_prompt(
                 out_len = len(partial_stdout)
                 err_len = len(partial_stderr)
                 new_output = partial_stdout[last_reported_sizes[0]:] + partial_stderr[last_reported_sizes[1]:]
+                new_preview = _strip_ansi(new_output)[-2000:]
+                if new_preview.strip():
+                    # Preserve the latest nonempty fragment.  The client may
+                    # begin observing status after this subprocess has already
+                    # emitted its first bytes; in that case a delta-only
+                    # preview would be permanently lost.
+                    last_output_preview = new_preview
                 # Status events are progress telemetry, not a replacement for
                 # the final tool artifact.  Keep each preview bounded.
                 _write_tool_status(
@@ -1256,7 +1265,7 @@ def _run_subprocess_with_timeout_prompt(
                     int(now - t0),
                     out_len,
                     err_len,
-                    output_preview=_strip_ansi(new_output)[-2000:],
+                    output_preview=last_output_preview,
                 )
                 last_reported_sizes = (out_len, err_len)
                 last_status_at = now
