@@ -98,3 +98,15 @@ def test_mcp_idle_checkpoint_is_opt_in_for_silent_tools():
     import mcp_kali
 
     assert mcp_kali._DEFAULT_IDLE_TIMEOUT_SECONDS == 0
+
+
+def test_mcp_tool_status_can_include_only_new_output_preview(monkeypatch, tmp_path):
+    import json
+    import mcp_kali
+
+    status_path = tmp_path / "tool_status.json"
+    monkeypatch.setattr(mcp_kali, "_tool_status_path", lambda: str(status_path))
+    mcp_kali._write_tool_status("nmap", 2, 120, 0, output_preview="Nmap scan report for 11.0.0.12")
+
+    data = json.loads(status_path.read_text())
+    assert data["output_preview"] == "Nmap scan report for 11.0.0.12"

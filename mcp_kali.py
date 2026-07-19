@@ -998,7 +998,14 @@ def _clear_timeout_control_files():
                 pass
 
 
-def _write_tool_status(tool_name: str, elapsed_seconds: int, stdout_len: int, stderr_len: int, extra_msg: str = ""):
+def _write_tool_status(
+    tool_name: str,
+    elapsed_seconds: int,
+    stdout_len: int,
+    stderr_len: int,
+    extra_msg: str = "",
+    output_preview: str = "",
+):
     status_path = _tool_status_path()
     if not status_path:
         return
@@ -1008,6 +1015,10 @@ def _write_tool_status(tool_name: str, elapsed_seconds: int, stdout_len: int, st
         "stdout_len": stdout_len,
         "stderr_len": stderr_len,
         "extra_msg": extra_msg,
+        # Only the output received since the prior status update.  This keeps
+        # a live UI informative without repeatedly shipping a growing nmap
+        # transcript on every progress event.
+        "output_preview": output_preview,
         "timestamp": time.time()
     }
     try:
@@ -1176,6 +1187,7 @@ def _run_subprocess_with_timeout_prompt(
     last_activity_at = t0
     last_status_at = t0
     last_seen_sizes = (0, 0)
+    last_reported_sizes = (0, 0)
 
     def _background_noninteractive_session(partial_stdout: str, partial_stderr: str) -> dict:
         stdout_fd = proc.stdout.fileno() if proc.stdout else None
@@ -1236,7 +1248,17 @@ def _run_subprocess_with_timeout_prompt(
             if now - last_status_at >= 2.0:
                 out_len = len(partial_stdout)
                 err_len = len(partial_stderr)
-                _write_tool_status(tool_name, int(now - t0), out_len, err_len)
+                new_output = partial_stdout[last_reported_sizes[0]:] + partial_stderr[last_reported_sizes[1]:]
+                # Status events are progress telemetry, not a replacement for
+                # the final tool artifact.  Keep each preview bounded.
+                _write_tool_status(
+                    tool_name,
+                    int(now - t0),
+                    out_len,
+                    err_len,
+                    output_preview=_strip_ansi(new_output)[-2000:],
+                )
+                last_reported_sizes = (out_len, err_len)
                 last_status_at = now
 
             if _looks_like_interactive_session(tool_name, cmd, partial_stdout, partial_stderr):
