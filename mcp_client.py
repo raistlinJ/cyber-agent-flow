@@ -1951,7 +1951,12 @@ class MCPSession:
                             last_status_mtime = mtime
                             with open(status_path, "r") as f:
                                 status_data = json.load(f)
-                            _emit(self.event_callback, "tool_status", status_data)
+                            # The status file is shared across sequential tool
+                            # calls.  Ignore a just-finished tool's stale row
+                            # instead of reporting (for example) nmap progress
+                            # while curl is the active call.
+                            if str(status_data.get("tool") or "") == active_tool_name:
+                                _emit(self.event_callback, "tool_status", status_data)
                     except Exception:
                         pass
                         

@@ -2228,6 +2228,7 @@ def api_capabilities():
         'durable_event_replay': True,
         'durable_event_long_poll': True,
         'prompt_status': True,
+        'auto_continue_tool_timeouts': True,
     })
 
 

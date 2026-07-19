@@ -91,6 +91,7 @@ def test_caf_capabilities_advertise_durable_replay():
     assert response.status_code == 200
     assert response.get_json()["durable_event_replay"] is True
     assert response.get_json()["durable_event_long_poll"] is True
+    assert response.get_json()["auto_continue_tool_timeouts"] is True
 
 
 def test_mcp_idle_checkpoint_is_opt_in_for_silent_tools():
