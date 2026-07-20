@@ -147,9 +147,19 @@ async def _worker(job_dir: Path) -> int:
                     cancel_event.set()
                 await asyncio.sleep(0.2)
             await task
-            emit({"type": "prompt_done", "prompt_id": current_prompt_id})
+            completed_prompt_id = current_prompt_id
+            # Persist completion before emitting the journal event.  A remote
+            # client can then recover an acknowledged prompt if its SSH event
+            # read is reset exactly as the terminal event is being delivered.
+            _update_state(
+                job_dir,
+                status="ready",
+                prompt_id=None,
+                completed_prompt_id=completed_prompt_id,
+                completed_prompt_at=time.time(),
+            )
+            emit({"type": "prompt_done", "prompt_id": completed_prompt_id})
             current_prompt_id = None
-            _update_state(job_dir, status="ready", prompt_id=None)
         await session.stop()
         cancelled = (job_dir / "cancel.json").exists()
         _update_state(job_dir, status="cancelled" if cancelled else "completed", prompt_id=None)
