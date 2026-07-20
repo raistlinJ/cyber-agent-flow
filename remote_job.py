@@ -178,13 +178,33 @@ def _start(job_dir: Path) -> int:
     return 0
 
 
-def _events(job_dir: Path, after: int) -> int:
+def _wire_event(record: dict[str, Any]) -> dict[str, Any]:
+    """Keep one SSH replay record comfortably below a channel window."""
+    wire = dict(record)
+    for key in ("result", "output", "content", "text"):
+        value = wire.get(key)
+        if isinstance(value, str) and len(value) > 12_000:
+            wire[key] = value[:12_000] + "\n[output truncated for event replay; full artifact remains on the remote job]"
+    return wire
+
+
+def _events(job_dir: Path, after: int, limit: int) -> int:
     records: list[dict[str, Any]] = []
+    encoded_bytes = 0
     for line in (job_dir / "events.jsonl").read_text(encoding="utf-8", errors="replace").splitlines() if (job_dir / "events.jsonl").exists() else []:
         try:
             record = json.loads(line)
             if int(record.get("sequence") or 0) > after:
-                records.append(record)
+                wire = _wire_event(record)
+                wire_size = len(json.dumps(wire, separators=(",", ":")).encode("utf-8"))
+                # Paramiko's command channel can deadlock if the server waits
+                # for an exit status before draining a very large response.
+                # Replay small bounded pages instead; the cursor makes this
+                # lossless and reconnect-safe.
+                if records and (len(records) >= limit or encoded_bytes + wire_size > 32_000):
+                    break
+                records.append(wire)
+                encoded_bytes += wire_size
         except (ValueError, TypeError, json.JSONDecodeError):
             continue
     print(json.dumps({"events": records, "next_sequence": records[-1]["sequence"] if records else after}))
@@ -200,6 +220,7 @@ def main() -> int:
     events = sub.add_parser("events")
     events.add_argument("--job-dir", required=True)
     events.add_argument("--after", type=int, default=0)
+    events.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
     job_dir = Path(args.job_dir).resolve()
     if args.command == "start":
@@ -207,7 +228,7 @@ def main() -> int:
     if args.command == "worker":
         return asyncio.run(_worker(job_dir))
     if args.command == "events":
-        return _events(job_dir, args.after)
+        return _events(job_dir, args.after, max(1, min(args.limit, 100)))
     if args.command == "status":
         print(json.dumps(_load_json(_state_path(job_dir))))
         return 0
