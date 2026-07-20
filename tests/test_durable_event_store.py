@@ -8,6 +8,7 @@ def test_event_store_orders_and_replays_events(tmp_path):
 
     first = store.append_event("run-1", "a" * 32, "status", {"message": "Calling model"})
     second = store.append_event("run-1", "a" * 32, "tool_result", {"tool": "nmap", "exit_code": 0})
+    store.flush()
 
     assert (first["sequence"], second["sequence"]) == (1, 2)
     assert second["prompt_id"] == "a" * 32
@@ -48,6 +49,7 @@ def test_caf_replay_and_prompt_status_endpoints(monkeypatch, tmp_path):
     store.create_prompt(prompt_id, "run-1", "Inspect target", status="running")
     store.append_event("run-1", prompt_id, "status", {"message": "Calling model"})
     store.append_event("run-1", prompt_id, "chat_done", {"message": "Ready"})
+    store.flush()
     store.update_prompt_status(prompt_id, "completed")
     monkeypatch.setattr(app, "_event_store", store)
 
@@ -73,6 +75,7 @@ def test_caf_replay_long_poll_returns_events_that_arrive_while_waiting(monkeypat
     def append_later():
         time.sleep(0.05)
         store.append_event("run-1", None, "status", {"message": "Ready"})
+        store.flush()
 
     worker = threading.Thread(target=append_later)
     worker.start()

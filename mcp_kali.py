@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import subprocess
@@ -12,6 +13,7 @@ import pty
 import select
 import signal
 import termios
+import atexit
 from urllib.parse import urlparse
 from mcp.server import Server
 from mcp.types import Tool, TextContent
@@ -115,6 +117,24 @@ _TOOL_STATUS_FILENAME = "tool_status.json"
 def _tools_config_path() -> str:
     """Allow isolated remote jobs to supply a per-run tool catalog."""
     return os.environ.get("CAF_TOOLS_CONFIG_PATH") or "kali_tools.json"
+
+_tools_config_cache: dict | None = None
+_tools_config_mtime: float = 0.0
+
+def _get_tools_config() -> dict:
+    global _tools_config_cache, _tools_config_mtime
+    path = _tools_config_path()
+    try:
+        mtime = os.path.getmtime(path)
+        if _tools_config_cache is not None and mtime <= _tools_config_mtime:
+            return _tools_config_cache
+        with open(path) as f:
+            config = json.load(f)
+            _tools_config_cache = config
+            _tools_config_mtime = mtime
+            return config
+    except Exception:
+        return {"tools": []}
 _TIMEOUT_DECISION_POLL_SECONDS = 0.25
 _TIMEOUT_DECISION_MAX_WAIT_SECONDS = int(os.environ.get("MCP_TIMEOUT_DECISION_MAX_WAIT_SECONDS", "30") or 30)
 _CANCEL_REQUEST_FILENAME = "tool_cancel_request.json"
@@ -139,6 +159,16 @@ except Exception:
     _NETWORK_POLICY = {"allow": ["*"], "disallow": []}
 
 _interactive_sessions: dict[str, dict] = {}
+
+def _cleanup_interactive_sessions():
+    for session_id, session in list(_interactive_sessions.items()):
+        proc = session.get("proc")
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+atexit.register(_cleanup_interactive_sessions)
 _interactive_session_counter = 0
 
 
@@ -2127,11 +2157,7 @@ except Exception:
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    try:
-        with open(_tools_config_path()) as f:
-            config = json.load(f)
-    except Exception:
-        config = {"tools": []}
+    config = _get_tools_config()
     
     tools = []
     for t in config.get("tools", []):
@@ -2199,11 +2225,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         return [TextContent(type="text", text=output or "Command executed successfully (no output)")]
 
-    try:
-        with open(_tools_config_path()) as f:
-            config = json.load(f)
-    except Exception:
-        return [TextContent(type="text", text="Error: Could not read kali_tools.json")]
+    config = _get_tools_config()
         
     tool_config = next((t for t in config.get("tools", []) if t["name"] == name), None)
     if not tool_config:
@@ -2237,7 +2259,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "shell_sequence":
         default_timeout = int(os.environ.get("MCP_TOOL_TIMEOUT", 120))
         timeout_seconds = int(tool_config.get("timeout_seconds", default_timeout) or default_timeout)
-        output, exit_code, duration_ms = _run_shell_sequence(arguments, timeout_seconds, config=config)
+        output, exit_code, duration_ms = await asyncio.to_thread(_run_shell_sequence, arguments, timeout_seconds, config=config)
         _logger.log_tool_call(
             name=name,
             args=arguments,
@@ -2353,7 +2375,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             tool_config.get("idle_timeout_seconds", _DEFAULT_IDLE_TIMEOUT_SECONDS)
             or _DEFAULT_IDLE_TIMEOUT_SECONDS
         )
-        execution = _run_subprocess_with_timeout_prompt(
+        execution = await asyncio.to_thread(
+            _run_subprocess_with_timeout_prompt,
             cmd,
             timeout_seconds,
             name,

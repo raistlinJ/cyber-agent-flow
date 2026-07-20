@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -215,7 +216,7 @@ def _events(job_dir: Path, after: int, limit: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="CAF durable remote job runner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "worker", "status", "cancel", "close"):
+    for name in ("start", "worker", "status", "cancel", "close", "purge"):
         command = sub.add_parser(name)
         command.add_argument("--job-dir", required=True)
         if name == "cancel":
@@ -234,6 +235,15 @@ def main() -> int:
         return _events(job_dir, args.after, max(1, min(args.limit, 100)))
     if args.command == "status":
         print(json.dumps(_load_json(_state_path(job_dir))))
+        return 0
+    if args.command == "purge":
+        state = _load_json(_state_path(job_dir))
+        status = str(state.get("status") or "")
+        if status not in {"completed", "failed", "cancelled"}:
+            print(json.dumps({"success": False, "error": f"Refusing to purge non-terminal job ({status or 'unknown'})."}))
+            return 1
+        shutil.rmtree(job_dir)
+        print(json.dumps({"success": True}))
         return 0
     if args.command in {"cancel", "close"}:
         marker = job_dir / ("cancel.json" if args.command == "cancel" else "close.json")

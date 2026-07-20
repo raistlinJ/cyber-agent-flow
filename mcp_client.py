@@ -552,9 +552,10 @@ class _LiteLLMClient:
         self.headers = {"Content-Type": "application/json", **(headers or {})}
         self.timeout = timeout
         self.verify = verify
+        self.session = requests.Session()
 
     def show(self, model: str) -> dict:
-        response = requests.get(
+        response = self.session.get(
             f"{self.host}/v1/models",
             headers=self.headers,
             timeout=min(self.timeout, 20),
@@ -582,7 +583,7 @@ class _LiteLLMClient:
         if tools and options.get("tool_choice", True) is not False:
             payload["tool_choice"] = "auto"
 
-        response = requests.post(
+        response = self.session.post(
             f"{self.host}/v1/chat/completions",
             headers=self.headers,
             json=payload,
@@ -674,12 +675,17 @@ def _to_anthropic_messages(messages: list[dict]) -> tuple[str | None, list[dict]
 class _AnthropicClient:
     def __init__(self, host: str, headers: dict | None = None, timeout: int = 90, verify: bool = True):
         self.host = host.rstrip("/")
-        self.headers = {"Content-Type": "application/json", **(headers or {})}
+        self.headers = {
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+            **(headers or {})
+        }
         self.timeout = timeout
         self.verify = verify
+        self.session = requests.Session()
 
     def show(self, model: str) -> dict:
-        response = requests.get(
+        response = self.session.get(
             f"{self.host}/v1/models",
             headers=self.headers,
             timeout=min(self.timeout, 20),
@@ -708,7 +714,7 @@ class _AnthropicClient:
         if temperature is not None:
             payload["temperature"] = temperature
 
-        response = requests.post(
+        response = self.session.post(
             f"{self.host}/v1/messages",
             headers=self.headers,
             json=payload,
@@ -2539,237 +2545,8 @@ class MCPSession:
                 return
 
             # Execute each tool call via MCP
-            for tc in tool_calls:
-                if cancel_event and cancel_event.is_set():
-                    _emit_chat_cancelled(self.event_callback)
-                    return
-
-                tool_name, tool_args = _extract_tool_info(tc)
-                tool_call_id = _tool_call_identifier(tc)
-
-                policy_allowed, policy_message = _evaluate_network_policy(self.network_policy, tool_args)
-                if not policy_allowed:
-                    err_msg = f"Policy blocked tool call to {tool_name}: {policy_message}"
-                    self._logger.log_tool_call(
-                        name=tool_name,
-                        args=tool_args,
-                        result=err_msg,
-                        duration_ms=0,
-                        exit_code=-1,
-                    )
-                    self.messages.append({
-                        "role": "tool",
-                        "content": err_msg,
-                        "name": tool_name,
-                        "tool_call_id": tool_call_id,
-                    })
-                    self._save_messages()
-                    _emit(self.event_callback, "status", {"message": err_msg})
-                    continue
-
-                is_exit_cmd = (
-                    tool_name == "interactive_session_write" 
-                    and isinstance(tool_args, dict)
-                    and tool_args.get("input", "").strip().lower() in ["exit", "quit", "exit\n", "quit\n"]
-                )
-
-                if tool_name in ["shell_dangerous", "interactive_session_close"] or is_exit_cmd:
-                    approval = await self._prompt_dangerous_tool_approval(tool_name, tool_args, cancel_event)
-                    if approval != "approve":
-                        denial_msg = "Command was cancelled by the user before execution."
-                        self._logger.log_tool_call(
-                            name=tool_name,
-                            args=tool_args,
-                            result=denial_msg,
-                            duration_ms=0,
-                            exit_code=-1,
-                        )
-                        self.messages.append({
-                            "role": "tool",
-                            "content": denial_msg,
-                            "name": tool_name,
-                            "tool_call_id": tool_call_id,
-                        })
-                        self._save_messages()
-                        turn_tool_results.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": denial_msg,
-                            "exit_code": -1,
-                            "duration_ms": 0,
-                        })
-                        _emit(self.event_callback, "status", {"message": denial_msg})
-                        continue
-
-                _emit(self.event_callback, "tool_call", {
-                    "tool": tool_name,
-                    "args": tool_args,
-                })
-
-                t0 = time.time()
-                try:
-                    tool_call_task = asyncio.create_task(self._session.call_tool(tool_name, tool_args))
-                    self._current_tool_task = tool_call_task
-                    timeout_monitor_task = asyncio.create_task(
-                        self._watch_tool_timeout_requests(tool_name, tool_args, tool_call_task)
-                    )
-                    try:
-                        result = await tool_call_task
-                    except asyncio.CancelledError:
-                        # Tool was cancelled (user hit /cancel or Ctrl+C)
-                        duration_ms = int((time.time() - t0) * 1000)
-                        cancel_msg = f"Tool {tool_name} was cancelled by the user after {duration_ms}ms."
-                        self._logger.log_tool_call(
-                            name=tool_name,
-                            args=tool_args,
-                            result=cancel_msg,
-                            duration_ms=duration_ms,
-                            exit_code=-2,
-                            cancelled=True,
-                        )
-                        self.messages.append({
-                            "role": "tool",
-                            "content": cancel_msg,
-                            "name": tool_name,
-                            "tool_call_id": tool_call_id,
-                        })
-                        self._save_messages()
-                        _emit(self.event_callback, "tool_result", {
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": cancel_msg,
-                            "exit_code": -2,
-                            "duration_ms": duration_ms,
-                        })
-                        _emit_chat_cancelled(self.event_callback)
-                        return
-                    finally:
-                        self._current_tool_task = None
-                        timeout_monitor_task.cancel()
-                        try:
-                            await timeout_monitor_task
-                        except asyncio.CancelledError:
-                            pass
-                    duration_ms = int((time.time() - t0) * 1000)
-
-                    result_text = ""
-                    if result.content:
-                        result_text = "\n".join(
-                            getattr(c, "text", str(c))
-                            for c in result.content
-                        )
-
-                    is_error = getattr(result, "isError", False)
-                    exit_code = -1 if is_error else 0
-
-                    graceful_stop = result_text.startswith("[GRACEFUL STOP]")
-                    is_cancelled = bool(cancel_event and cancel_event.is_set())
-                    self._logger.log_tool_call(
-                        name=tool_name,
-                        args=tool_args,
-                        result=result_text,
-                        duration_ms=duration_ms,
-                        exit_code=exit_code,
-                        graceful_stop=graceful_stop,
-                        cancelled=is_cancelled,
-                    )
-
-                    if "Interactive session preserved as" in result_text:
-                        isess_match = re.search(r"preserved as (isess-\w+)", result_text)
-                        if isess_match:
-                            isess_id = isess_match.group(1)
-                            self._active_interactive_sessions.add(isess_id)
-                            args_summary = ""
-                            if isinstance(tool_args, dict):
-                                args_summary = str(tool_args.get("args", ""))[:80]
-                            elif isinstance(tool_args, str):
-                                args_summary = tool_args[:80]
-                            lower_result_text = result_text.lower()
-                            writable = "read-only background session" not in lower_result_text
-                            session_kind = "background" if not writable else "interactive"
-                            _emit(self.event_callback, "isess_created", {
-                                "session_id": isess_id,
-                                "tool": tool_name or "",
-                                "args_summary": args_summary,
-                                "writable": writable,
-                                "session_kind": session_kind,
-                            })
-
-                    if tool_name == "interactive_session_list":
-                        self._reconcile_interactive_sessions_from_list_text(result_text)
-
-                    # Backstop discovery: reconcile active isess IDs from the server after likely source tools.
-                    if tool_name in _INTERACTIVE_SESSION_SOURCE_TOOLS:
-                        await self._discover_interactive_sessions(tool_name, tool_args)
-
-                    if tool_name == "interactive_session_close" and exit_code == 0:
-                        closed_id = ""
-                        if isinstance(tool_args, dict):
-                            closed_id = tool_args.get("session_id", "")
-                        elif isinstance(tool_args, str):
-                            closed_id = tool_args
-                        if closed_id in self._active_interactive_sessions:
-                            self._active_interactive_sessions.discard(closed_id)
-
-                    context_result = _truncate_tool_output(result_text)
-                    self.messages.append({
-                        "role": "tool",
-                        "content": context_result,
-                        "name": tool_name,
-                        "tool_call_id": tool_call_id,
-                    })
-                    self._save_messages()
-                    turn_tool_results.append({
-                        "tool": tool_name,
-                        "args": tool_args,
-                        "result": result_text,
-                        "exit_code": exit_code,
-                        "duration_ms": duration_ms,
-                    })
-
-                    if self._consume_background_turn_completion(tool_name) and "Interactive session preserved as" in result_text:
-                        _emit(self.event_callback, "chat_done", {
-                            "message": "Tool moved to background session. Ready for next prompt."
-                        })
-                        return
-
-                    if is_cancelled:
-                        _emit_chat_cancelled(self.event_callback)
-                        return
-
-                except Exception as exc:
-                    self._consume_background_turn_completion(tool_name)
-                    duration_ms = int((time.time() - t0) * 1000)
-                    err_msg = f"Tool execution failed before a result was returned: {exc}"
-                    self._logger.log_tool_call(
-                        name=tool_name,
-                        args=tool_args,
-                        result=err_msg,
-                        duration_ms=duration_ms,
-                        exit_code=-1,
-                    )
-                    self.messages.append({
-                        "role": "tool",
-                        "content": err_msg,
-                        "name": tool_name,
-                        "tool_call_id": tool_call_id,
-                    })
-                    self._save_messages()
-                    turn_tool_results.append({
-                        "tool": tool_name,
-                        "args": tool_args,
-                        "result": err_msg,
-                        "exit_code": -1,
-                        "duration_ms": duration_ms,
-                    })
-                    _emit(self.event_callback, "tool_result", {
-                        "tool": tool_name,
-                        "args": tool_args,
-                        "result": err_msg,
-                        "exit_code": -1,
-                        "duration_ms": duration_ms,
-                        "error": True,
-                    })
+            if await self._execute_tool_calls(tool_calls, turn_tool_results, cancel_event):
+                return
 
         # Hit iteration limit for this turn
         _emit(self.event_callback, "status", {
@@ -2782,6 +2559,259 @@ class MCPSession:
         _emit(self.event_callback, "chat_done", {
             "message": "Max iterations reached. Ready for next prompt."
         })
+
+    async def _execute_tool_calls(
+        self,
+        tool_calls: list[dict],
+        turn_tool_results: list[dict],
+        cancel_event: "asyncio.Event | None",
+    ) -> bool:
+        """Execute each tool call via MCP. Returns True if the agent loop should terminate."""
+        # Execute each tool call via MCP
+        for tc in tool_calls:
+            if cancel_event and cancel_event.is_set():
+                _emit_chat_cancelled(self.event_callback)
+                return
+
+            tool_name, tool_args = _extract_tool_info(tc)
+            tool_call_id = _tool_call_identifier(tc)
+
+            policy_allowed, policy_message = _evaluate_network_policy(self.network_policy, tool_args)
+            if not policy_allowed:
+                err_msg = f"Policy blocked tool call to {tool_name}: {policy_message}"
+                self._logger.log_tool_call(
+                    name=tool_name,
+                    args=tool_args,
+                    result=err_msg,
+                    duration_ms=0,
+                    exit_code=-1,
+                )
+                self.messages.append({
+                    "role": "tool",
+                    "content": err_msg,
+                    "name": tool_name,
+                    "tool_call_id": tool_call_id,
+                })
+                self._save_messages()
+                _emit(self.event_callback, "status", {"message": err_msg})
+                continue
+
+            is_exit_cmd = (
+                tool_name == "interactive_session_write" 
+                and isinstance(tool_args, dict)
+                and tool_args.get("input", "").strip().lower() in ["exit", "quit", "exit\n", "quit\n"]
+            )
+
+            if tool_name in ["shell_dangerous", "interactive_session_close"] or is_exit_cmd:
+                approval = await self._prompt_dangerous_tool_approval(tool_name, tool_args, cancel_event)
+                if approval != "approve":
+                    denial_msg = "Command was cancelled by the user before execution."
+                    self._logger.log_tool_call(
+                        name=tool_name,
+                        args=tool_args,
+                        result=denial_msg,
+                        duration_ms=0,
+                        exit_code=-1,
+                    )
+                    self.messages.append({
+                        "role": "tool",
+                        "content": denial_msg,
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id,
+                    })
+                    self._save_messages()
+                    turn_tool_results.append({
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "result": denial_msg,
+                        "exit_code": -1,
+                        "duration_ms": 0,
+                    })
+                    _emit(self.event_callback, "status", {"message": denial_msg})
+                    continue
+
+            _emit(self.event_callback, "tool_call", {
+                "tool": tool_name,
+                "args": tool_args,
+            })
+
+            t0 = time.time()
+            try:
+                tool_call_task = asyncio.create_task(self._session.call_tool(tool_name, tool_args))
+                self._current_tool_task = tool_call_task
+                timeout_monitor_task = asyncio.create_task(
+                    self._watch_tool_timeout_requests(tool_name, tool_args, tool_call_task)
+                )
+                try:
+                    result = await tool_call_task
+                except asyncio.CancelledError:
+                    # Tool was cancelled (user hit /cancel or Ctrl+C)
+                    duration_ms = int((time.time() - t0) * 1000)
+                    cancel_msg = f"Tool {tool_name} was cancelled by the user after {duration_ms}ms."
+                    self._logger.log_tool_call(
+                        name=tool_name,
+                        args=tool_args,
+                        result=cancel_msg,
+                        duration_ms=duration_ms,
+                        exit_code=-2,
+                        cancelled=True,
+                    )
+                    self.messages.append({
+                        "role": "tool",
+                        "content": cancel_msg,
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id,
+                    })
+                    self._save_messages()
+                    _emit(self.event_callback, "tool_result", {
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "result": cancel_msg,
+                        "exit_code": -2,
+                        "duration_ms": duration_ms,
+                    })
+                    _emit_chat_cancelled(self.event_callback)
+                    return True
+                finally:
+                    self._current_tool_task = None
+                    timeout_monitor_task.cancel()
+                    try:
+                        await timeout_monitor_task
+                    except asyncio.CancelledError:
+                        pass
+                duration_ms = int((time.time() - t0) * 1000)
+
+                result_text = ""
+                if result.content:
+                    result_text = "\n".join(
+                        getattr(c, "text", str(c))
+                        for c in result.content
+                    )
+
+                is_error = getattr(result, "isError", False)
+                exit_code = -1 if is_error else 0
+
+                graceful_stop = result_text.startswith("[GRACEFUL STOP]")
+                is_cancelled = bool(cancel_event and cancel_event.is_set())
+                self._logger.log_tool_call(
+                    name=tool_name,
+                    args=tool_args,
+                    result=result_text,
+                    duration_ms=duration_ms,
+                    exit_code=exit_code,
+                    graceful_stop=graceful_stop,
+                    cancelled=is_cancelled,
+                )
+
+                if "Interactive session preserved as" in result_text:
+                    isess_match = re.search(r"preserved as (isess-\w+)", result_text)
+                    if isess_match:
+                        isess_id = isess_match.group(1)
+                        self._active_interactive_sessions.add(isess_id)
+                        args_summary = ""
+                        if isinstance(tool_args, dict):
+                            args_summary = str(tool_args.get("args", ""))[:80]
+                        elif isinstance(tool_args, str):
+                            args_summary = tool_args[:80]
+                        lower_result_text = result_text.lower()
+                        writable = "read-only background session" not in lower_result_text
+                        session_kind = "background" if not writable else "interactive"
+                        _emit(self.event_callback, "isess_created", {
+                            "session_id": isess_id,
+                            "tool": tool_name or "",
+                            "args_summary": args_summary,
+                            "writable": writable,
+                            "session_kind": session_kind,
+                        })
+
+                if tool_name == "interactive_session_list":
+                    self._reconcile_interactive_sessions_from_list_text(result_text)
+
+                # Backstop discovery: reconcile active isess IDs from the server after likely source tools.
+                if tool_name in _INTERACTIVE_SESSION_SOURCE_TOOLS:
+                    await self._discover_interactive_sessions(tool_name, tool_args)
+
+                if tool_name == "interactive_session_close" and exit_code == 0:
+                    closed_id = ""
+                    if isinstance(tool_args, dict):
+                        closed_id = tool_args.get("session_id", "")
+                    elif isinstance(tool_args, str):
+                        closed_id = tool_args
+                    if closed_id in self._active_interactive_sessions:
+                        self._active_interactive_sessions.discard(closed_id)
+
+                context_result = _truncate_tool_output(result_text)
+                self.messages.append({
+                    "role": "tool",
+                    "content": context_result,
+                    "name": tool_name,
+                    "tool_call_id": tool_call_id,
+                })
+                self._save_messages()
+                turn_tool_results.append({
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": result_text,
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                })
+                # Durable consumers (the CAF web app and ModelScope remote
+                # jobs) need the completed artifact as well as intermittent
+                # tool-status previews.  Without this event, a quick tool or
+                # one that produces output only at exit has nothing to render.
+                _emit(self.event_callback, "tool_result", {
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": result_text,
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                })
+
+                if self._consume_background_turn_completion(tool_name) and "Interactive session preserved as" in result_text:
+                    _emit(self.event_callback, "chat_done", {
+                        "message": "Tool moved to background session. Ready for next prompt."
+                    })
+                    return True
+
+                if is_cancelled:
+                    _emit_chat_cancelled(self.event_callback)
+                    return True
+
+            except Exception as exc:
+                self._consume_background_turn_completion(tool_name)
+                duration_ms = int((time.time() - t0) * 1000)
+                err_msg = f"Tool execution failed before a result was returned: {exc}"
+                self._logger.log_tool_call(
+                    name=tool_name,
+                    args=tool_args,
+                    result=err_msg,
+                    duration_ms=duration_ms,
+                    exit_code=-1,
+                )
+                self.messages.append({
+                    "role": "tool",
+                    "content": err_msg,
+                    "name": tool_name,
+                    "tool_call_id": tool_call_id,
+                })
+                self._save_messages()
+                turn_tool_results.append({
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": err_msg,
+                    "exit_code": -1,
+                    "duration_ms": duration_ms,
+                })
+                _emit(self.event_callback, "tool_result", {
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": err_msg,
+                    "exit_code": -1,
+                    "duration_ms": duration_ms,
+                    "error": True,
+                })
+
+        return False
 
     async def stop(self):
         """Gracefully shut down the MCP connection and finalize logs."""

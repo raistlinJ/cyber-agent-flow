@@ -12,6 +12,7 @@ def test_process_output_text_decodes_timeout_bytes_without_repr_markers():
     assert mcp_kali._process_output_text(b"Starting Nmap\\n") == "Starting Nmap\\n"
     assert mcp_kali._merge_process_stream_text(b"first\\n", b"first\\nsecond\\n") == "first\\nsecond\\n"
 
+
 def test_tool_status_ipc_flow(tmp_path):
     run_id = "test_run_status"
     
