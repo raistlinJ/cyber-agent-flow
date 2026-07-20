@@ -2389,7 +2389,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             liveLogViewer.removeChild(firstChild);
         }
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
         persistLiveLog();
         return entry;
     }
@@ -2451,7 +2453,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         // Keep the active tool entry fully visible in the log viewer
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
     }
 
     function finalizeActiveToolEntry(note, phaseClass = 'is-complete', phaseLabel = 'Completed', durationMs = null) {
@@ -2476,7 +2480,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         // Scroll to show the finalized tool entry fully
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
         
         // Update timeline sidebar
         if (_activeToolState.callId) {
@@ -2565,7 +2571,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
             timelineContainer.appendChild(tlItem);
-            timelineContainer.scrollTop = timelineContainer.scrollHeight;
+            requestAnimationFrame(() => {
+                timelineContainer.scrollTop = timelineContainer.scrollHeight;
+            });
         }
 
         renderActiveToolEntry();
