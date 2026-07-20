@@ -142,6 +142,20 @@ _interactive_sessions: dict[str, dict] = {}
 _interactive_session_counter = 0
 
 
+def _process_output_text(value: object) -> str:
+    """Normalize subprocess output without exposing Python ``b'…'`` reprs.
+
+    ``TimeoutExpired.output`` may be bytes even when the process was created
+    with ``text=True``.  Progress previews must decode that payload before it
+    is written to the shared status file.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def _strip_ansi(text: str) -> str:
     if not text:
         return text
@@ -158,8 +172,8 @@ def _normalize_interactive_detection_text(text: str) -> str:
 
 
 def _merge_process_stream_text(snapshot: str | None, final_text: str | None) -> str:
-    snapshot_text = str(snapshot or "")
-    final_stream_text = str(final_text or "")
+    snapshot_text = _process_output_text(snapshot)
+    final_stream_text = _process_output_text(final_text)
     if not snapshot_text:
         return final_stream_text
     if not final_stream_text:
@@ -1244,8 +1258,8 @@ def _run_subprocess_with_timeout_prompt(
                 "checkpoint_index": checkpoint_index,
             }
         except subprocess.TimeoutExpired as exc:
-            partial_stdout = str(getattr(exc, "output", "") or "")
-            partial_stderr = str(getattr(exc, "stderr", "") or "")
+            partial_stdout = _process_output_text(getattr(exc, "output", None))
+            partial_stderr = _process_output_text(getattr(exc, "stderr", None))
             current_sizes = (len(partial_stdout), len(partial_stderr))
             now = time.time()
             if current_sizes != last_seen_sizes:
