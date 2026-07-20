@@ -96,11 +96,15 @@ async def _worker(job_dir: Path) -> int:
     spec = _load_json(job_dir / "spec.json")
     journal = EventJournal(job_dir / "events.jsonl")
     current_prompt_id: str | None = None
+    current_prompt_error = ""
 
     def emit(event: dict[str, Any]) -> None:
+        nonlocal current_prompt_error
         payload = dict(event or {})
         if current_prompt_id:
             payload["prompt_id"] = current_prompt_id
+        if payload.get("type") == "error" and current_prompt_id:
+            current_prompt_error = str(payload.get("message") or "CAF reported an internal prompt error.")
         journal.append(payload)
 
     try:
@@ -135,6 +139,7 @@ async def _worker(job_dir: Path) -> int:
                 continue
             handled.add(request_path.name)
             current_prompt_id = str(request["prompt_id"])
+            current_prompt_error = ""
             _update_state(job_dir, status="running", prompt_id=current_prompt_id)
             emit({"type": "prompt_started", "prompt_id": current_prompt_id})
             cancel_event = asyncio.Event()
@@ -157,6 +162,7 @@ async def _worker(job_dir: Path) -> int:
                 prompt_id=None,
                 completed_prompt_id=completed_prompt_id,
                 completed_prompt_at=time.time(),
+                completed_prompt_error=current_prompt_error,
             )
             emit({"type": "prompt_done", "prompt_id": completed_prompt_id})
             current_prompt_id = None
