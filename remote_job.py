@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
@@ -217,6 +218,8 @@ def main() -> int:
     for name in ("start", "worker", "status", "cancel", "close"):
         command = sub.add_parser(name)
         command.add_argument("--job-dir", required=True)
+        if name == "cancel":
+            command.add_argument("--force", action="store_true", help="terminate the worker process group")
     events = sub.add_parser("events")
     events.add_argument("--job-dir", required=True)
     events.add_argument("--after", type=int, default=0)
@@ -233,8 +236,22 @@ def main() -> int:
         print(json.dumps(_load_json(_state_path(job_dir))))
         return 0
     if args.command in {"cancel", "close"}:
-        _atomic_json(job_dir / ("cancel.json" if args.command == "cancel" else "close.json"), {"requested_at": time.time()})
-        print(json.dumps({"success": True}))
+        marker = job_dir / ("cancel.json" if args.command == "cancel" else "close.json")
+        _atomic_json(marker, {"requested_at": time.time(), "force": bool(getattr(args, "force", False))})
+        forced = False
+        if args.command == "cancel" and args.force:
+            state = _load_json(_state_path(job_dir))
+            try:
+                pid = int(state.get("pid") or 0)
+                if pid > 1:
+                    # The worker is launched in its own process group, so this
+                    # also terminates its MCP child and any active tool (nmap).
+                    os.killpg(pid, signal.SIGTERM)
+                    forced = True
+            except (OSError, TypeError, ValueError):
+                pass
+            _update_state(job_dir, status="cancelled", prompt_id=None, error="Cancelled by ModelScope.")
+        print(json.dumps({"success": True, "forced": forced}))
         return 0
     return 2
 
