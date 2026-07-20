@@ -79,18 +79,19 @@ _HOSTNAME_RE = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,
 _TIMEOUT_CONTROL_DIRNAME = "control"
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
+_TOOL_STATUS_FILENAME = "tool_status.json"
 _TOOL_DOC_MAP = {
-    "msf_run": "docs/tools/msf_run.md",
-    "RIPv2": "docs/tools/RIPv2.md",
-    "ospf_sniff": "docs/tools/ospf_sniff.md",
-    "shell": "docs/tools/shell.md",
-    "shell_extended": "docs/tools/shell_extended.md",
-    "shell_sequence": "docs/tools/shell_sequence.md",
-    "shell_dangerous": "docs/tools/shell_dangerous.md",
-    "interactive_session_list": "docs/tools/interactive_sessions.md",
-    "interactive_session_read": "docs/tools/interactive_sessions.md",
-    "interactive_session_write": "docs/tools/interactive_sessions.md",
-    "interactive_session_close": "docs/tools/interactive_sessions.md",
+    "msf_run": "tools_docs/msf_run.md",
+    "RIPv2": "tools_docs/RIPv2.md",
+    "ospf_sniff": "tools_docs/ospf_sniff.md",
+    "shell": "tools_docs/shell.md",
+    "shell_extended": "tools_docs/shell_extended.md",
+    "shell_sequence": "tools_docs/shell_sequence.md",
+    "shell_dangerous": "tools_docs/shell_dangerous.md",
+    "interactive_session_list": "tools_docs/interactive_sessions.md",
+    "interactive_session_read": "tools_docs/interactive_sessions.md",
+    "interactive_session_write": "tools_docs/interactive_sessions.md",
+    "interactive_session_close": "tools_docs/interactive_sessions.md",
 }
 _TOOL_DOC_MAX_CHARS_PER_DOC = 3500
 _TOOL_DOC_MAX_TOTAL_CHARS = 14000
@@ -1274,6 +1275,10 @@ def _tool_timeout_response_path(run_id: str) -> str:
     return os.path.join(_tool_timeout_control_dir(run_id), _TIMEOUT_RESPONSE_FILENAME)
 
 
+def _tool_status_path(run_id: str) -> str:
+    return os.path.join(_tool_timeout_control_dir(run_id), _TOOL_STATUS_FILENAME)
+
+
 def _load_enabled_tool_guidance(tool_names: list[str]) -> str:
     root_dir = Path(__file__).resolve().parent
     selected_docs: list[tuple[str, Path]] = []
@@ -1934,9 +1939,27 @@ class MCPSession:
 
     async def _watch_tool_timeout_requests(self, active_tool_name: str, active_tool_args: dict, call_task: asyncio.Task):
         seen_request_id = None
+        last_status_mtime = 0
 
         try:
             while not call_task.done():
+                status_path = _tool_status_path(self.run_id)
+                if os.path.exists(status_path):
+                    try:
+                        mtime = os.path.getmtime(status_path)
+                        if mtime > last_status_mtime:
+                            last_status_mtime = mtime
+                            with open(status_path, "r") as f:
+                                status_data = json.load(f)
+                            # The status file is shared across sequential tool
+                            # calls.  Ignore a just-finished tool's stale row
+                            # instead of reporting (for example) nmap progress
+                            # while curl is the active call.
+                            if str(status_data.get("tool") or "") == active_tool_name:
+                                _emit(self.event_callback, "tool_status", status_data)
+                    except Exception:
+                        pass
+                        
                 request = _load_tool_timeout_request(self.run_id)
                 request_id = str((request or {}).get("request_id") or "")
                 if request and request_id and request_id != seen_request_id:
@@ -1950,6 +1973,24 @@ class MCPSession:
                     self._pending_tool_timeout_decision = dict(request)
 
                     checkpoint_label = "idle-output checkpoint" if trigger == "idle" else "timeout checkpoint"
+                    # --dangerous-no-prompt means this unattended run has
+                    # already been authorized to proceed.  Timeout
+                    # checkpoints must not silently turn that authorization
+                    # into an indefinite user-input pause.
+                    if self.auto_approve_dangerous:
+                        wait_seconds = 300
+                        self.resolve_tool_timeout_decision("wait", wait_seconds=wait_seconds)
+                        _emit(self.event_callback, "tool_timeout_auto_continued", {
+                            "tool": tool_name,
+                            "elapsed_seconds": elapsed_seconds,
+                            "wait_seconds": wait_seconds,
+                            "message": (
+                                f"Auto-continuing {tool_name} for {wait_seconds} seconds "
+                                "at its timeout checkpoint (--dangerous-no-prompt)."
+                            ),
+                        })
+                        continue
+
                     if elapsed_seconds > 0:
                         status_message = (
                             f"{tool_name} reached {checkpoint_label} {checkpoint_index} "

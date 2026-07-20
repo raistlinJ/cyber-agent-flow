@@ -50,7 +50,7 @@
     {
       "name": "RIPv2",
       "command": "timeout",
-      "base_args": ["{timeout}", "python3", "-u", "routing_tools/rip_request.py"],
+      "base_args": ["{timeout}", "python3", "-u", "tools/rip_request.py"],
       "description": "Send RIP Requests to enumerate routes and inject native-socket RIPv2 Response packets over UDP/520. Request mode uses Scapy for packet send/capture; inject mode binds UDP source port 520 and sends a standards-formatted RIPv2 Response payload. Requires root. Args: [--iface IFACE] [--target IP] [--version {1,2}] [--timeout SECS] [--send-only] [--inject] [--entry ...]. Defaults: RIPv2 multicast (224.0.0.9), timeout=10s. Use timeout_seconds to cap the overall runtime.",
       "allow_args": true,
       "timeout_seconds": 60
@@ -58,7 +58,7 @@
     {
       "name": "ospf_sniff",
       "command": "timeout",
-      "base_args": ["{timeout}", "python3", "-u", "routing_tools/ospf_sniff.py"],
+      "base_args": ["{timeout}", "python3", "-u", "tools/ospf_sniff.py"],
       "description": "OSPF discovery via tshark (passive) with optional active Hello injection (Scapy) to elicit immediate neighbour responses. Passive mode captures all OSPF message types and LSA types. Active mode (--active) sends a crafted OSPF Hello to 224.0.0.5, prompting any OSPF router on the segment to reply before their timer fires. Requires root and tshark; active mode also requires scapy. Args: [--iface IFACE] [--timeout SECS] [--verbose] [--active] [--router-id ID] [--area AREA] [--src-ip IP] [--netmask MASK]. Default timeout=60s.",
       "allow_args": true,
       "timeout_seconds": 120

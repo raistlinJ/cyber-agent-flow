@@ -35,7 +35,12 @@ if [ "$BUILD_MODE" -eq 1 ]; then
     "$PYTHON_BIN" -m pip install -r "$PROJECT_DIR/requirements.txt"
 else
     echo "[cyber-agentflow] Verifying installed Python dependencies..."
-    if ! "$PYTHON_BIN" -c "import flask, requests, mcp, ollama, pynput" >/dev/null 2>&1; then
+    # ``pynput`` initialises its platform backend during a normal import and
+    # therefore raises when CAF is launched headlessly over SSH (no X display),
+    # even though the package is correctly installed.  Keylogging is optional
+    # and app.py already disables it gracefully in that environment; verify
+    # the package exists without initialising its desktop backend.
+    if ! "$PYTHON_BIN" -c "import flask, requests, mcp, ollama, importlib.util; assert importlib.util.find_spec('pynput')" >/dev/null 2>&1; then
         echo "[cyber-agentflow] ERROR: Required Python dependencies are missing from $VENV_DIR"
         echo "[cyber-agentflow] Run ./start_ws.sh --build once while online to install them."
         exit 1
