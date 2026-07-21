@@ -36,10 +36,6 @@ venv.bak/
 # Environment variables
 .env
 
-# ScenarioForge dashboard secrets and local virtual environment
-.scenarioforge/
-add-ons/exec-sim/.venv/
-
 # Optional tool configs
 .vscode/
 .idea/
