@@ -2062,32 +2062,81 @@ def list_plugin_jobs():
     )
     return jsonify({"jobs": sorted_jobs})
 
+#---------------------------------------------------------------------------Review here
+# Plugin generation now reuses the exact same provider-agnostic LLM call as
+# Analysis Jobs (_analysis_chat_request) — no coding-agent CLI, no login, no
+# litellm proxy. Same mechanism as analyze_session(): send messages, get text
+# back, then this code parses/writes the result instead of the model doing it.
+def _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify):
+    """Send the generation prompt to the configured provider and write the parsed result to disk."""
+    resp = _analysis_chat_request(provider, host, api_key, model, messages, {"temperature": 0.2}, ssl_verify)
+    safe_resp = _to_json_safe(resp)
+    response_text = ""
+    if isinstance(safe_resp, dict):
+        response_text = _analysis_extract_response_text(provider, safe_resp)
+    if not str(response_text or "").strip():
+        raise ValueError("Model returned an empty response.")
+
+    if plugin_kind == 'playbook':
+        content = response_text.strip()
+        content = re.sub(r'^```[a-zA-Z0-9_+-]*\n', '', content)
+        content = re.sub(r'\n```$', '', content)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, 'w') as f:
+            f.write(content)
+    else:
+        file_blocks = re.findall(r'###\s*FILE:\s*(.+?)\s*\n```[a-zA-Z0-9_+-]*\n(.*?)```', response_text, re.DOTALL)
+        if not file_blocks:
+            raise ValueError("Model response did not contain any ### FILE: blocks.")
+        manifest_found = False
+        os.makedirs(target_path, exist_ok=True)
+        for filename, content in file_blocks:
+            filename = os.path.basename(filename.strip())
+            if not filename:
+                continue
+            if filename == 'manifest.json':
+                manifest_found = True
+            with open(os.path.join(target_path, filename), 'w') as f:
+                f.write(content)
+        if not manifest_found:
+            raise ValueError("Model response did not include a manifest.json file.")
+
+
+def _plugin_job_wrapper(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, messages, provider, host, api_key, model, ssl_verify):
+    """Background job wrapper — mirrors _job_wrapper() in analyze_session()."""
+    try:
+        _update_plugin_job_state(run_id, job_id, status_detail=f"Sending generation request to {model}")
+        _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify)
+        _write_plugin_provenance(plugin_kind, safe_name, run_id, asset_name, messages[-1]['content'])
+        _update_plugin_job_state(run_id, job_id, status="success", status_detail="Generation completed.", end_time=datetime.now().isoformat())
+    except Exception as exc:
+        detail = _safe_client_error(str(exc), 'Plugin generation failed.')
+        _update_plugin_job_state(run_id, job_id, status="failed", status_detail=detail, error=detail, end_time=datetime.now().isoformat())
+
+
 @app.route('/api/scaffolding/generate', methods=['POST'])
 def generate_scaffolding():
-    """Spawn a Claude Code PTY session with the given scaffolding prompt."""
-    global _local_terminal_counter
-    
+    """Generate an MCP tool or markdown playbook using the same provider-agnostic LLM call as Analysis Jobs."""
     data = request.json or {}
     run_id = data.get("run_id")
     asset_name = data.get("asset_name")
-    api_key = data.get("api_key")
-    base_url = data.get("base_url")
-    #---------------------------------------------------------------------------Review here
-    provider = _normalize_llm_provider(data.get("provider") or "claude")
+    api_key = _extract_optional_api_key(data)
+    base_url = data.get("base_url") or data.get("url")
+    provider = _normalize_llm_provider(data.get("provider"))
     model = data.get("model", "")
-    tag = data.get("tag", "")
-    auto_add = data.get("auto_add", False)
-    #---------------------------------------------------------------------------Review here
+    ssl_verify = _normalize_ssl_verify(data.get("ssl_verify"))
     kind_override = data.get("kind")
     overwrite = bool(data.get("overwrite", False))
-    
+
     if not run_id or not asset_name:
         return jsonify({"success": False, "error": "run_id and asset_name are required."}), 400
-        
+    if not model:
+        return jsonify({"success": False, "error": "No model selected."}), 400
+
     prompt_path = os.path.join(RUNS_DIR, run_id, "scaffolding", asset_name, "CLAUDE_PROMPT.md")
     if not os.path.exists(prompt_path):
         return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
-        
+
     with open(prompt_path, 'r') as f:
         prompt_content = f.read()
 
@@ -2100,7 +2149,6 @@ def generate_scaffolding():
             "it may include context, corrections, or priorities the automated analysis missed."
         )
 
-    #---------------------------------------------------------------------------Review here
     # Determine plugin kind + collision-checked target path in plugins/
     plugin_kind = _infer_plugin_kind(kind_override, prompt_content)
     safe_name = _slugify_plugin_name(asset_name)
@@ -2115,149 +2163,66 @@ def generate_scaffolding():
             "error": f"A plugin named '{safe_name}' already exists at that location. Confirm overwrite or choose a different name.",
         }), 409
 
-    # Explicit, kind-aware output-path instruction so generation always lands in plugins/
     if plugin_kind == 'playbook':
-        prompt_content += (
-            f"\n\nIMPORTANT: Write your completed markdown playbook to exactly this path: "
-            f"`{target_path}`. Do not write it anywhere else."
+        format_instructions = (
+            "\n\nReturn only the completed Markdown playbook content as your entire response. "
+            "Do not wrap it in a code fence, do not add any commentary before or after it — "
+            "return the raw Markdown document directly, ready to save as-is."
         )
     else:
-        prompt_content += (
-            f"\n\nIMPORTANT: Create this MCP tool inside exactly this directory: `{target_path}`. "
-            "Inside that directory, include: (1) the tool's code/script, and (2) a `manifest.json` file "
-            "describing how to invoke it, using this exact schema: "
+        format_instructions = (
+            "\n\nReturn your output as one or more file blocks, using exactly this format for each file:\n\n"
+            "### FILE: <relative filename>\n"
+            "```\n<file content>\n```\n\n"
+            "You must include exactly one manifest.json file using this schema: "
             '{"name": "<tool_name>", "description": "<what it does and how to use it>", '
             '"command": "<path or binary to execute>", "args": ["<templated args, e.g. {args}>"], '
-            '"allow_args": true}. Do not write outside this directory.'
+            '"allow_args": true}. Include the implementation script referenced by "command" as its own '
+            "FILE block too. Do not include any prose outside the FILE blocks."
         )
 
-    # Append auto-add instructions if requested (only meaningful for kali_tools.json, not plugins)
-    if auto_add and plugin_kind == 'mcp_tool':
-        prompt_content += f"\n\nAdditionally, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
+    system_prompt = (
+        "You are a senior tooling engineer generating a reusable asset for an AI-assisted penetration "
+        "testing framework, based on a recommendation from a prior analysis of a real engagement. "
+        "Produce complete, working output — not a plan, not pseudocode."
+    )
+    user_prompt = prompt_content + format_instructions
+    host = _normalize_provider_base_url(provider, base_url or 'http://localhost:11434')
 
-    _local_terminal_counter += 1
-    term_id = f"term-{_local_terminal_counter}"
-    
-    master_fd, slave_fd = pty.openpty()
-    env = os.environ.copy()
-    
-    proxy_proc = None
-    #---------------------------------------------------------------------------Review here
-    if provider != "claude":  # was comparing against "anthropic", which no dropdown value ever sends
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('', 0))
-            proxy_port = s.getsockname()[1]
-            
-        proxy_cmd = ["litellm", "--model", f"{provider}/{model}", "--port", str(proxy_port)]
-        if base_url:
-            proxy_cmd.extend(["--api_base", base_url])
-            
-        try:
-            proxy_proc = subprocess.Popen(
-                proxy_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            time.sleep(2) # Allow proxy time to bind
-        except Exception as e:
-            app.logger.error(f"Failed to start litellm proxy: {e}")
-            os.close(slave_fd)
-            os.close(master_fd)
-            return jsonify({"success": False, "error": f"Failed to start local litellm proxy: {e}"}), 500
-            
-        env["ANTHROPIC_API_KEY"] = "sk-ant-dummy"
-        env["ANTHROPIC_BASE_URL"] = f"http://localhost:{proxy_port}"
-        
-        # Pass the actual API key through if provided
-        if api_key:
-            if provider == "openai":
-                env["OPENAI_API_KEY"] = api_key
-            else:
-                env[f"{provider.upper()}_API_KEY"] = api_key
-    else:
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
-        if base_url:
-            env["ANTHROPIC_BASE_URL"] = base_url
-        
-    cmd = ["claude", "-p", prompt_content]
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-            env=env
-        )
-        os.close(slave_fd)
-        
-        _local_terminals[term_id] = {
-            "proc": proc,
-            "proxy_proc": proxy_proc,
-            "master_fd": master_fd,
-            "closed": False
-        }
+    job_id = f"plugin_job_{int(time.time())}_{safe_name}"
+    start_time = datetime.now().isoformat()
+    initial_record = {
+        "job_id": job_id,
+        "run_id": run_id,
+        "asset_name": asset_name,
+        "kind": plugin_kind,
+        "safe_name": safe_name,
+        "target_path": os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))),
+        "provider": provider,
+        "model": model,
+        "status": "running",
+        "status_detail": f"Sending generation request to {model}",
+        "start_time": start_time,
+        "last_update_time": start_time,
+        "end_time": None,
+        "error": None,
+    }
+    with _plugin_jobs_lock:
+        _plugin_jobs[job_id] = dict(initial_record)
+    _write_plugin_job_record(run_id, job_id, initial_record)
 
-        #---------------------------------------------------------------------------Review here
-        # Create a disk-persisted, pollable plugin generation job — same
-        # background-job pattern as analyze_session()/_analysis_jobs
-        job_id = f"plugin_job_{int(time.time())}_{safe_name}"
-        start_time = datetime.now().isoformat()
-        initial_record = {
-            "job_id": job_id,
-            "run_id": run_id,
-            "asset_name": asset_name,
-            "kind": plugin_kind,
-            "safe_name": safe_name,
-            "target_path": os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))),
-            "term_id": term_id,
-            "status": "running",
-            "status_detail": "Claude Code generation in progress",
-            "start_time": start_time,
-            "last_update_time": start_time,
-            "end_time": None,
-            "error": None,
-        }
-        with _plugin_jobs_lock:
-            _plugin_jobs[job_id] = dict(initial_record)
-        _write_plugin_job_record(run_id, job_id, initial_record)
+    generation_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
-        # Background completion watcher — updates the job record to
-        # success/failed once Claude Code actually exits, independent of
-        # whether anyone is still watching the live terminal stream
-        def _watch_plugin_job(job_id=job_id, run_id=run_id, proc=proc, plugin_kind=plugin_kind,
-                               safe_name=safe_name, target_path=target_path, asset_name=asset_name,
-                               prompt_content=prompt_content):
-            proc.wait()
-            exit_code = proc.returncode
-            output_exists = os.path.exists(target_path)
-            if exit_code == 0 and output_exists:
-                try:
-                    _write_plugin_provenance(plugin_kind, safe_name, run_id, asset_name, prompt_content)
-                except Exception as prov_err:
-                    app.logger.error(f"Failed to write plugin provenance for {job_id}: {prov_err}")
-                _update_plugin_job_state(run_id, job_id, status="success",
-                                          status_detail="Generation completed.", end_time=datetime.now().isoformat())
-            else:
-                detail = (
-                    f"Claude Code exited with code {exit_code}." if exit_code != 0
-                    else f"Claude Code exited cleanly but no output was found at {target_path}."
-                )
-                _update_plugin_job_state(run_id, job_id, status="failed", status_detail=detail,
-                                          error=detail, end_time=datetime.now().isoformat())
+    threading.Thread(
+        target=_plugin_job_wrapper,
+        args=(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, generation_messages, provider, host, api_key, model, ssl_verify),
+        daemon=True,
+    ).start()
 
-        threading.Thread(target=_watch_plugin_job, daemon=True).start()
-        
-        return jsonify({"success": True, "term_id": term_id, "job_id": job_id})
-    except Exception as e:
-        if proxy_proc:
-            proxy_proc.terminate()
-        os.close(slave_fd)
-        os.close(master_fd)
-        app.logger.error(f"Failed to spawn claude-code: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({"success": True, "job_id": job_id})
 
 @app.route('/api/terminal/<term_id>/stream', methods=['GET'])
 def terminal_stream(term_id):
