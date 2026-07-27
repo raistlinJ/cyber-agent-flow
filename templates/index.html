@@ -1426,11 +1426,26 @@
 
             <!-- Asset Config Modal -->
             <div id="asset-config-modal-overlay" class="modal-overlay" style="display: none; z-index: 9998;">
-                <div class="annotation-modal" style="max-width: 500px; width: 92%;">
+                <div class="annotation-modal" style="max-width: 560px; width: 92%;">
                     <div class="modal-header">
-                        <h3 id="asset-modal-title"><i class="ph ph-robot"></i> Configure Claude Code</h3>
+                        <h3 id="asset-modal-title"><i class="ph ph-magic-wand"></i> Generate Plugin</h3>
+                        <button type="button" id="close-asset-config-btn" class="icon-btn"><i class="ph ph-x"></i></button>
                     </div>
                     <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                        <div class="input-group">
+                            <label>Recommendation</label>
+                            <div id="asset-info-block" class="recommendation-details-body" style="border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem 1rem;">
+                                <div class="recommendation-detail-row" id="asset-info-problem"><strong>Problem:</strong> —</div>
+                                <div class="recommendation-detail-row" id="asset-info-gain"><strong>Expected Gain:</strong> —</div>
+                            </div>
+                        </div>
+                        <div class="input-group" id="asset-notes-group" style="display: none;">
+                            <label>Analyst Notes</label>
+                            <div id="asset-info-notes" class="recommendation-details-body" style="border: 1px solid var(--panel-border); border-radius: 10px; padding: 0.85rem 1rem; font-size: 0.85rem; white-space: pre-wrap;"></div>
+                        </div>
+
+                        <div class="divider"></div>
+
                         <div class="input-group">
                             <label for="asset-provider-select">Provider</label>
                             <div class="select-wrapper">
@@ -1443,14 +1458,20 @@
                                 </select>
                                 <i class="ph ph-caret-down icon-right"></i>
                             </div>
-                            <span class="input-hint">If you choose a non-Anthropic provider, we will auto-launch a proxy in the background for Claude Code.</span>
+                            <span class="input-hint">Choose the provider used to generate this plugin.</span>
                         </div>
                         <div class="input-group">
-                            <label for="asset-url-input">Instance URL / Base URL</label>
+                            <label for="asset-url-input">Instance URL</label>
                             <div class="input-with-icon">
                                 <i class="ph ph-plugs-connected icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
                                 <input type="url" id="asset-url-input" placeholder="http://localhost:11434">
                             </div>
+                        </div>
+                        <div class="input-group">
+                            <label class="checkbox-container" for="asset-ssl-verify-toggle">
+                                <input type="checkbox" id="asset-ssl-verify-toggle" checked>
+                                <span>Require SSL Certificate Verification</span>
+                            </label>
                         </div>
                         <div class="input-group" id="asset-api-key-group">
                             <label for="asset-api-key">API Key</label>
@@ -1469,33 +1490,16 @@
                                 <i class="ph ph-caret-down icon-right"></i>
                             </div>
                             <div id="asset-fetch-error" class="error-label" style="display: none; color: var(--status-error); font-size: 0.82rem; margin-top: 0.6rem; padding: 0.4rem 0.6rem; border-radius: 4px; background: rgba(var(--status-error-rgb, 255, 68, 68), 0.1);"></div>
-                            <button type="button" id="asset-fetch-models-btn" class="btn btn-secondary" style="width: auto; margin-top: 0.5rem; font-size: 0.82rem; padding: 0.4rem 0.6rem;">
-                                <i class="ph ph-arrows-clockwise"></i> Fetch Models
-                            </button>
-                        </div>
-                        
-                        <hr style="border:0; border-top:1px solid var(--panel-border); margin: 1.5rem 0;">
-
-                        <div class="input-group">
-                            <label for="asset-tag">Asset Tag / Namespace</label>
-                            <input type="text" id="asset-tag" placeholder="e.g. nmap_scanner">
-                        </div>
-                        <div class="input-group config-card-lite" style="margin-top: 1rem;">
-                            <label class="checkbox-container">
-                                <input type="checkbox" id="asset-auto-add" checked>
-                                <span><strong>Auto-add to tools list</strong></span>
-                            </label>
-                            <p class="input-hint" style="margin-top: 0.3rem; margin-left: 1.5rem;">Instructs Claude to add the newly generated tool to `kali_tools.json` upon completion.</p>
-                        </div>
-                        <div class="input-group" style="margin-top: 1rem;">
-                            <label>Output Path</label>
-                            <input type="text" id="asset-output-path" disabled value="Working Directory: ./tools/">
-                            <span class="input-hint">The resulting files will be generated relative to the WebUI root.</span>
                         </div>
                     </div>
-                    <div class="modal-footer" style="justify-content: flex-end; gap: 0.75rem;">
-                        <button type="button" id="cancel-asset-config-btn" class="btn btn-secondary">Cancel</button>
-                        <button type="button" id="confirm-asset-config-btn" class="btn btn-primary">Generate</button>
+                    <div class="modal-footer" style="justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+                        <button type="button" id="asset-fetch-models-btn" class="btn btn-secondary" style="width: auto;">
+                            <i class="ph ph-arrows-clockwise"></i> Fetch Models
+                        </button>
+                        <div style="display: flex; gap: 0.75rem; margin-left: auto;">
+                            <button type="button" id="cancel-asset-config-btn" class="btn btn-secondary">Cancel</button>
+                            <button type="button" id="confirm-asset-config-btn" class="btn btn-primary">Generate</button>
+                        </div>
                     </div>
                 </div>
             </div>

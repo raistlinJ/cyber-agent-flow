@@ -4811,8 +4811,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let _activeAssetTerminalId = null;
     let _assetTerminalEventSource = null;
 
-    function openAssetConfigModal(assetName, runId) {
-        _activeAssetConfig = { assetName, runId };
+    function openAssetConfigModal(assetName, runId, meta = {}) {
+        _activeAssetConfig = { assetName, runId, kind: meta.kind || 'mcp_tool' };
         
         // Auto-fill from active global context
         const providerSelect = document.getElementById('provider-select');
@@ -4826,11 +4826,22 @@ document.addEventListener('DOMContentLoaded', () => {
         assetProvider.value = providerSelect.value || 'ollama_direct';
         assetUrl.value = ollamaUrlInput.value || 'http://localhost:11434';
         assetApiKey.value = apiKeyInput.value || '';
-        
-        // Set default tag based on asset name
-        document.getElementById('asset-tag').value = assetName;
-        document.getElementById('asset-output-path').value = `Working Directory: ./tools/${assetName}/`;
-        
+        document.getElementById('asset-ssl-verify-toggle').checked = true;
+
+        const kindLabel = _activeAssetConfig.kind === 'playbook' ? 'Markdown Playbook' : 'MCP Tool';
+        document.getElementById('asset-modal-title').innerHTML = `<i class="ph ph-magic-wand"></i> Generate ${kindLabel}: ${escapeHtml(assetName)}`;
+        document.getElementById('asset-info-problem').innerHTML = `<strong>Problem:</strong> ${escapeHtml(meta.problem || 'Not specified.')}`;
+        document.getElementById('asset-info-gain').innerHTML = `<strong>Expected Gain:</strong> ${escapeHtml(meta.gain || 'Not specified.')}`;
+
+        const notesGroup = document.getElementById('asset-notes-group');
+        const notesBlock = document.getElementById('asset-info-notes');
+        if (meta.notes) {
+            notesBlock.textContent = meta.notes;
+            notesGroup.style.display = '';
+        } else {
+            notesGroup.style.display = 'none';
+        }
+
         assetConfigModal.style.display = 'flex';
     }
     window.openAssetConfigModal = openAssetConfigModal; // Expose to global for button onclick
@@ -4848,12 +4859,12 @@ document.addEventListener('DOMContentLoaded', () => {
             url: url,
             provider: provider,
             apiKey: apiKey,
-            sslVerify: true,
+            sslVerify: document.getElementById('asset-ssl-verify-toggle').checked,
             button: btn,
             errorLabel: errorLabel,
             selectElement: modelSelect,
-            progressTitleText: 'Fetching Claude Code Models',
-            successMessage: 'Models loaded for Claude Code generation.',
+            progressTitleText: 'Fetching Models',
+            successMessage: 'Models loaded.',
             onSuccess: (models) => {
                 // Pre-select if global model matches
                 const globalModel = document.getElementById('model-select').value;
@@ -4869,22 +4880,53 @@ document.addEventListener('DOMContentLoaded', () => {
         assetConfigModal.style.display = 'none';
         _activeAssetConfig = null;
     });
+    document.getElementById('close-asset-config-btn').addEventListener('click', () => {
+        assetConfigModal.style.display = 'none';
+        _activeAssetConfig = null;
+    });
+
+    async function pollPluginGenerationJob(jobId, assetName) {
+        const maxAttempts = 60;
+        for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            try {
+                const res = await fetch('/api/plugins/jobs');
+                const data = await res.json();
+                const job = (data.jobs || []).find(j => j.job_id === jobId);
+                if (!job) continue;
+                if (job.status === 'success') {
+                    progressModal.style.display = 'none';
+                    showAlert(`Generated "${assetName}" successfully.`, 'success');
+                    return;
+                }
+                if (job.status === 'failed') {
+                    progressModal.style.display = 'none';
+                    showAlert(`Generation failed: ${job.error || job.status_detail || 'unknown error'}`, 'error');
+                    return;
+                }
+                progressMsg.innerText = job.status_detail || 'Generating...';
+            } catch (err) {
+                // keep polling through transient network errors
+            }
+        }
+        progressModal.style.display = 'none';
+        showAlert(`Generation of "${assetName}" is taking longer than expected — check back shortly.`, 'error');
+    }
 
     document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
         if (!_activeAssetConfig) return;
-        
+
         const provider = document.getElementById('asset-provider-select').value;
         const model = document.getElementById('asset-model-select').value;
         const apiKey = document.getElementById('asset-api-key').value.trim();
         const baseUrl = document.getElementById('asset-url-input').value.trim();
-        const tag = document.getElementById('asset-tag').value.trim();
-        const autoAdd = document.getElementById('asset-auto-add').checked;
+        const sslVerify = document.getElementById('asset-ssl-verify-toggle').checked;
         const btn = document.getElementById('confirm-asset-config-btn');
-        
+
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Starting...';
         btn.disabled = true;
-        
+
         try {
             const res = await fetch('/api/scaffolding/generate', {
                 method: 'POST',
@@ -4892,20 +4934,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     run_id: _activeAssetConfig.runId,
                     asset_name: _activeAssetConfig.assetName,
+                    kind: _activeAssetConfig.kind,
                     provider: provider,
                     model: model,
                     api_key: apiKey,
                     base_url: baseUrl,
-                    tag: tag,
-                    auto_add: autoAdd
+                    ssl_verify: sslVerify
                 })
             });
             const data = await res.json();
             if (data.success) {
                 assetConfigModal.style.display = 'none';
-                openAssetTerminal(data.term_id, _activeAssetConfig.assetName);
+                progressTitle.innerText = 'Generating Plugin';
+                progressMsg.innerText = `Sending generation request to ${model}...`;
+                progressModal.style.display = 'flex';
+                pollPluginGenerationJob(data.job_id, _activeAssetConfig.assetName);
+            } else if (data.collision) {
+                showAlert(data.error, 'error');
             } else {
-                showAlert('Failed to start Claude Code: ' + data.error, 'error');
+                showAlert('Failed to start generation: ' + data.error, 'error');
             }
         } catch (err) {
             showAlert('Error starting generation: ' + err.message, 'error');

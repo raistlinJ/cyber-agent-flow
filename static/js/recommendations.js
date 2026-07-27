@@ -256,14 +256,24 @@
             button.addEventListener('click', () => {
                 const runId = button.dataset.runId;
                 const assetName = button.dataset.assetName;
+                const kind = button.dataset.kind === 'markdown' ? 'playbook' : 'mcp_tool';
 
                 if (!runId || !assetName) {
                     console.error('Review clicked with missing runId/assetName', runId, assetName);
                     return;
                 }
 
+                const assets = scaffoldingCache[runId] || [];
+                const asset = assets.find(a => a.name === assetName);
+                const job = activeSuccessfulJobs.find(j => j.run_id === runId);
+
                 if (typeof window.openAssetConfigModal === 'function') {
-                    window.openAssetConfigModal(assetName, runId);
+                    window.openAssetConfigModal(assetName, runId, {
+                        kind,
+                        problem: asset?.meta?.problem || '',
+                        gain: asset?.meta?.gain || '',
+                        notes: job?.analyst_notes || '',
+                    });
                 } else {
                     console.error('openAssetConfigModal is not available — check main.js load order.');
                 }
