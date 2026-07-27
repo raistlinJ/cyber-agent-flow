@@ -1060,6 +1060,120 @@ def _load_plugin_playbooks() -> list[dict]:
         })
     return entries
 
+#---------------------------------------------------------------------------Review here
+# Plugin generation helpers — collision-safe output paths, kind detection,
+# and deterministic provenance for AI-generated tools/playbooks
+def _slugify_plugin_name(value: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_\-]', '_', str(value or '').strip()) or "unnamed"
+
+
+def _infer_plugin_kind(explicit_kind, prompt_content: str) -> str:
+    """Determine 'mcp_tool' or 'playbook' — explicit kind wins, else parsed from the asset's own Type field."""
+    normalized = str(explicit_kind or '').strip().lower()
+    if normalized in {'mcp', 'mcp_tool'}:
+        return 'mcp_tool'
+    if normalized in {'markdown', 'playbook'}:
+        return 'playbook'
+
+    type_match = re.search(r'\*\*Type\*\*:\s*(.+)', prompt_content)
+    type_value = (type_match.group(1) if type_match else '').strip().lower()
+    if 'markdown' in type_value or 'playbook' in type_value:
+        return 'playbook'
+    return 'mcp_tool'
+
+
+def _plugin_target_path(kind: str, safe_name: str) -> str:
+    if kind == 'playbook':
+        return os.path.join(_plugin_playbooks_dir(), f"{safe_name}.md")
+    return os.path.join(_plugin_mcp_tools_dir(), safe_name)
+
+
+def _write_plugin_provenance(kind: str, safe_name: str, run_id: str, asset_name: str, prompt_content: str):
+    """Deterministically record what generated this plugin and from what prompt.
+    Written by app.py itself — not left to the coding agent to self-report."""
+    generated_time = now_timestamp()
+    provenance = (
+        f"# AI-Generated {'Playbook' if kind == 'playbook' else 'MCP Tool'}\n\n"
+        f"- Generated: {generated_time}\n"
+        f"- Source engagement (run_id): {run_id}\n"
+        f"- Source scaffolding asset: {asset_name}\n\n"
+        f"## Full Prompt Used\n\n```text\n{prompt_content}\n```\n"
+    )
+
+    if kind == 'playbook':
+        provenance_path = os.path.join(_plugin_playbooks_dir(), f"{safe_name}.PROVENANCE.md")
+        os.makedirs(os.path.dirname(provenance_path), exist_ok=True)
+    else:
+        target_dir = _plugin_target_path(kind, safe_name)
+        os.makedirs(target_dir, exist_ok=True)
+        provenance_path = os.path.join(target_dir, "PROVENANCE.md")
+
+    with open(provenance_path, 'w') as f:
+        f.write(provenance)
+
+
+#---------------------------------------------------------------------------Review here
+# Plugin generation job tracking — mirrors _analysis_jobs /
+# _write_analysis_job_record / _load_all_analysis_job_records, so plugin
+# generation is a background-tracked, disk-persisted, pollable job instead of
+# only existing as a live PTY terminal stream that vanishes if unwatched.
+_plugin_jobs = {}  # job_id -> {status, run_id, asset_name, kind, target_path, term_id, ...}
+_plugin_jobs_lock = threading.Lock()
+PLUGIN_JOBS_DIRNAME = "plugin_jobs"
+
+
+def _plugin_jobs_dir(run_id: str) -> str:
+    return os.path.join(RUNS_DIR, run_id, PLUGIN_JOBS_DIRNAME)
+
+
+def _plugin_job_json_path(run_id: str, job_id: str) -> str:
+    return os.path.join(_plugin_jobs_dir(run_id), f"{job_id}.json")
+
+
+def _write_plugin_job_record(run_id: str, job_id: str, record: dict):
+    os.makedirs(_plugin_jobs_dir(run_id), exist_ok=True)
+    with open(_plugin_job_json_path(run_id, job_id), 'w') as f:
+        json.dump(_to_json_safe(record), f, indent=2)
+
+
+def _update_plugin_job_state(run_id: str, job_id: str, **updates):
+    updates = {k: v for k, v in updates.items() if v is not None}
+    if not updates:
+        return
+    updates["last_update_time"] = now_timestamp()
+    with _plugin_jobs_lock:
+        current = dict(_plugin_jobs.get(job_id, {}))
+        current.update(updates)
+        _plugin_jobs[job_id] = current
+    _write_plugin_job_record(run_id, job_id, current)
+
+
+def _load_all_plugin_job_records() -> dict:
+    """Scan runs/*/plugin_jobs/*.json — same disk-recovery pattern as analysis jobs."""
+    records = {}
+    if not os.path.isdir(RUNS_DIR):
+        return records
+    for run_id in os.listdir(RUNS_DIR):
+        jobs_dir = _plugin_jobs_dir(run_id)
+        if not os.path.isdir(jobs_dir):
+            continue
+        for filename in os.listdir(jobs_dir):
+            if not filename.endswith('.json'):
+                continue
+            try:
+                with open(os.path.join(jobs_dir, filename), 'r') as f:
+                    record = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(record, dict):
+                continue
+            job_id = record.get('job_id') or filename[:-5]
+            record.setdefault('job_id', job_id)
+            record.setdefault('run_id', run_id)
+            records[job_id] = record
+    return records
+
+
 def _analyst_notes_path(run_id: str) -> str:
     return os.path.join(RUNS_DIR, run_id, "analyst_notes.json")
 
@@ -1932,6 +2046,22 @@ def list_plugins():
         "playbooks": _load_plugin_playbooks(),
     })
 
+#---------------------------------------------------------------------------Review here
+@app.route('/api/plugins/jobs', methods=['GET'])
+def list_plugin_jobs():
+    """Return all plugin generation jobs, disk-backed — mirrors /api/analysis/jobs."""
+    disk_jobs = _load_all_plugin_job_records()
+    with _plugin_jobs_lock:
+        for job_id, record in _plugin_jobs.items():
+            disk_jobs.setdefault(job_id, dict(record))
+
+    sorted_jobs = sorted(
+        disk_jobs.values(),
+        key=lambda x: x.get("start_time") or "",
+        reverse=True
+    )
+    return jsonify({"jobs": sorted_jobs})
+
 @app.route('/api/scaffolding/generate', methods=['POST'])
 def generate_scaffolding():
     """Spawn a Claude Code PTY session with the given scaffolding prompt."""
@@ -1942,10 +2072,14 @@ def generate_scaffolding():
     asset_name = data.get("asset_name")
     api_key = data.get("api_key")
     base_url = data.get("base_url")
-    provider = data.get("provider", "anthropic")
+    #---------------------------------------------------------------------------Review here
+    provider = _normalize_llm_provider(data.get("provider") or "claude")
     model = data.get("model", "")
     tag = data.get("tag", "")
     auto_add = data.get("auto_add", False)
+    #---------------------------------------------------------------------------Review here
+    kind_override = data.get("kind")
+    overwrite = bool(data.get("overwrite", False))
     
     if not run_id or not asset_name:
         return jsonify({"success": False, "error": "run_id and asset_name are required."}), 400
@@ -1954,12 +2088,6 @@ def generate_scaffolding():
     if not os.path.exists(prompt_path):
         return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
         
-    #with open(prompt_path, 'r') as f:
-    #    prompt_content = f.read()
-    #    
-    ## Append auto-add instructions if requested
-    #if auto_add:
-    #    prompt_content += f"\n\nIMPORTANT: When you are finished creating the tool, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
     with open(prompt_path, 'r') as f:
         prompt_content = f.read()
 
@@ -1972,9 +2100,40 @@ def generate_scaffolding():
             "it may include context, corrections, or priorities the automated analysis missed."
         )
 
-    # Append auto-add instructions if requested
-    if auto_add:
-        prompt_content += f"\n\nIMPORTANT: When you are finished creating the tool, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
+    #---------------------------------------------------------------------------Review here
+    # Determine plugin kind + collision-checked target path in plugins/
+    plugin_kind = _infer_plugin_kind(kind_override, prompt_content)
+    safe_name = _slugify_plugin_name(asset_name)
+    target_path = _plugin_target_path(plugin_kind, safe_name)
+
+    if os.path.exists(target_path) and not overwrite:
+        return jsonify({
+            "success": False,
+            "collision": True,
+            "kind": plugin_kind,
+            "target_path": os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))),
+            "error": f"A plugin named '{safe_name}' already exists at that location. Confirm overwrite or choose a different name.",
+        }), 409
+
+    # Explicit, kind-aware output-path instruction so generation always lands in plugins/
+    if plugin_kind == 'playbook':
+        prompt_content += (
+            f"\n\nIMPORTANT: Write your completed markdown playbook to exactly this path: "
+            f"`{target_path}`. Do not write it anywhere else."
+        )
+    else:
+        prompt_content += (
+            f"\n\nIMPORTANT: Create this MCP tool inside exactly this directory: `{target_path}`. "
+            "Inside that directory, include: (1) the tool's code/script, and (2) a `manifest.json` file "
+            "describing how to invoke it, using this exact schema: "
+            '{"name": "<tool_name>", "description": "<what it does and how to use it>", '
+            '"command": "<path or binary to execute>", "args": ["<templated args, e.g. {args}>"], '
+            '"allow_args": true}. Do not write outside this directory.'
+        )
+
+    # Append auto-add instructions if requested (only meaningful for kali_tools.json, not plugins)
+    if auto_add and plugin_kind == 'mcp_tool':
+        prompt_content += f"\n\nAdditionally, please update `kali_tools.json` (or the relevant tool configuration) to include this new tool. The tag is: {tag}."
 
     _local_terminal_counter += 1
     term_id = f"term-{_local_terminal_counter}"
@@ -1983,7 +2142,8 @@ def generate_scaffolding():
     env = os.environ.copy()
     
     proxy_proc = None
-    if provider != "anthropic":
+    #---------------------------------------------------------------------------Review here
+    if provider != "claude":  # was comparing against "anthropic", which no dropdown value ever sends
         import socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(('', 0))
@@ -2039,8 +2199,58 @@ def generate_scaffolding():
             "master_fd": master_fd,
             "closed": False
         }
+
+        #---------------------------------------------------------------------------Review here
+        # Create a disk-persisted, pollable plugin generation job — same
+        # background-job pattern as analyze_session()/_analysis_jobs
+        job_id = f"plugin_job_{int(time.time())}_{safe_name}"
+        start_time = datetime.now().isoformat()
+        initial_record = {
+            "job_id": job_id,
+            "run_id": run_id,
+            "asset_name": asset_name,
+            "kind": plugin_kind,
+            "safe_name": safe_name,
+            "target_path": os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))),
+            "term_id": term_id,
+            "status": "running",
+            "status_detail": "Claude Code generation in progress",
+            "start_time": start_time,
+            "last_update_time": start_time,
+            "end_time": None,
+            "error": None,
+        }
+        with _plugin_jobs_lock:
+            _plugin_jobs[job_id] = dict(initial_record)
+        _write_plugin_job_record(run_id, job_id, initial_record)
+
+        # Background completion watcher — updates the job record to
+        # success/failed once Claude Code actually exits, independent of
+        # whether anyone is still watching the live terminal stream
+        def _watch_plugin_job(job_id=job_id, run_id=run_id, proc=proc, plugin_kind=plugin_kind,
+                               safe_name=safe_name, target_path=target_path, asset_name=asset_name,
+                               prompt_content=prompt_content):
+            proc.wait()
+            exit_code = proc.returncode
+            output_exists = os.path.exists(target_path)
+            if exit_code == 0 and output_exists:
+                try:
+                    _write_plugin_provenance(plugin_kind, safe_name, run_id, asset_name, prompt_content)
+                except Exception as prov_err:
+                    app.logger.error(f"Failed to write plugin provenance for {job_id}: {prov_err}")
+                _update_plugin_job_state(run_id, job_id, status="success",
+                                          status_detail="Generation completed.", end_time=datetime.now().isoformat())
+            else:
+                detail = (
+                    f"Claude Code exited with code {exit_code}." if exit_code != 0
+                    else f"Claude Code exited cleanly but no output was found at {target_path}."
+                )
+                _update_plugin_job_state(run_id, job_id, status="failed", status_detail=detail,
+                                          error=detail, end_time=datetime.now().isoformat())
+
+        threading.Thread(target=_watch_plugin_job, daemon=True).start()
         
-        return jsonify({"success": True, "term_id": term_id})
+        return jsonify({"success": True, "term_id": term_id, "job_id": job_id})
     except Exception as e:
         if proxy_proc:
             proxy_proc.terminate()
