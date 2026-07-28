@@ -54,3 +54,8 @@ Thumbs.db
 
 # Session logs
 runs/
+
+# Plugin provenance — embeds the full generation prompt (analyst notes +
+# source analysis output), same sensitivity class as runs/
+plugins/mcp_tools/*/PROVENANCE.md
+plugins/playbooks/*.PROVENANCE.md
