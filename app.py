@@ -1143,9 +1143,45 @@ def _update_plugin_job_state(run_id: str, job_id: str, **updates):
     updates["last_update_time"] = now_timestamp()
     with _plugin_jobs_lock:
         current = dict(_plugin_jobs.get(job_id, {}))
+        if current.get("status") == "canceled" and updates.get("status") != "canceled":
+            return
         current.update(updates)
         _plugin_jobs[job_id] = current
     _write_plugin_job_record(run_id, job_id, current)
+
+
+class PluginJobCancelled(Exception):
+    """Raised internally when a background plugin generation job has been canceled."""
+
+
+def _plugin_job_is_cancelled(job_id: str) -> bool:
+    with _plugin_jobs_lock:
+        current = _plugin_jobs.get(job_id) or {}
+        if current:
+            return current.get("status") == "canceled" or bool(current.get("cancel_requested"))
+    disk_jobs = _load_all_plugin_job_records()
+    record = disk_jobs.get(job_id) or {}
+    return record.get("status") == "canceled" or bool(record.get("cancel_requested"))
+
+
+def _mark_plugin_job_cancelled(run_id: str, job_id: str, status_detail: str = "Canceled by user", base_record: dict | None = None):
+    now = now_timestamp()
+    with _plugin_jobs_lock:
+        current = dict(base_record or {})
+        current.update(_plugin_jobs.get(job_id, {}))
+        current.update({
+            "job_id": job_id,
+            "run_id": current.get("run_id") or run_id,
+            "status": "canceled",
+            "status_detail": status_detail,
+            "cancel_requested": True,
+            "end_time": current.get("end_time") or now,
+            "last_update_time": now,
+            "error": None,
+        })
+        _plugin_jobs[job_id] = current
+    _write_plugin_job_record(run_id, job_id, current)
+    return current
 
 
 def _load_all_plugin_job_records() -> dict:
@@ -2047,6 +2083,44 @@ def list_plugins():
     })
 
 #---------------------------------------------------------------------------Review here
+@app.route('/api/plugins/jobs/<job_id>/cancel', methods=['POST'])
+def cancel_plugin_job(job_id):
+    """Mark a running plugin generation job as canceled. Soft-cancel only — the
+    underlying LLM request can't be interrupted mid-flight, same limitation
+    analysis jobs already have."""
+    _validate_filename(job_id)
+
+    with _plugin_jobs_lock:
+        live_job = dict(_plugin_jobs.get(job_id, {}))
+
+    record = live_job
+    if not record:
+        disk_jobs = _load_all_plugin_job_records()
+        record = disk_jobs.get(job_id)
+
+    if not record:
+        abort(404, description="Plugin job not found.")
+
+    run_id = record.get("run_id")
+    if not run_id:
+        return jsonify({"success": False, "error": "Plugin job has no run_id."}), 400
+
+    status = str(record.get("status") or "").lower()
+    if status == "canceled":
+        return jsonify({"success": True, "job": record})
+    if status != "running":
+        return jsonify({"success": False, "error": f"Cannot cancel plugin job with status '{status or 'unknown'}'."}), 409
+
+    canceled_record = _mark_plugin_job_cancelled(
+        str(run_id),
+        job_id,
+        "Canceled by user; ignoring any late model response",
+        base_record=record,
+    )
+    app.logger.info('Plugin job cancel requested job_id=%s run_id=%s', job_id, run_id)
+    return jsonify({"success": True, "job": canceled_record})
+
+
 @app.route('/api/plugins/jobs', methods=['GET'])
 def list_plugin_jobs():
     """Return all plugin generation jobs, disk-backed — mirrors /api/analysis/jobs."""
@@ -2067,15 +2141,20 @@ def list_plugin_jobs():
 # Analysis Jobs (_analysis_chat_request) — no coding-agent CLI, no login, no
 # litellm proxy. Same mechanism as analyze_session(): send messages, get text
 # back, then this code parses/writes the result instead of the model doing it.
-def _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify):
+def _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=None):
     """Send the generation prompt to the configured provider and write the parsed result to disk."""
     resp = _analysis_chat_request(provider, host, api_key, model, messages, {"temperature": 0.2}, ssl_verify)
+    if cancel_check and cancel_check():
+        raise PluginJobCancelled()
     safe_resp = _to_json_safe(resp)
     response_text = ""
     if isinstance(safe_resp, dict):
         response_text = _analysis_extract_response_text(provider, safe_resp)
     if not str(response_text or "").strip():
         raise ValueError("Model returned an empty response.")
+
+    if cancel_check and cancel_check():
+        raise PluginJobCancelled()
 
     if plugin_kind == 'playbook':
         content = response_text.strip()
@@ -2104,12 +2183,21 @@ def _perform_plugin_generation(plugin_kind, target_path, messages, provider, hos
 
 def _plugin_job_wrapper(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, messages, provider, host, api_key, model, ssl_verify):
     """Background job wrapper — mirrors _job_wrapper() in analyze_session()."""
+    def _cancelled():
+        return _plugin_job_is_cancelled(job_id)
+
     try:
+        if _cancelled():
+            return
         _update_plugin_job_state(run_id, job_id, status_detail=f"Sending generation request to {model}")
-        _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify)
+        _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=_cancelled)
         _write_plugin_provenance(plugin_kind, safe_name, run_id, asset_name, messages[-1]['content'])
         _update_plugin_job_state(run_id, job_id, status="success", status_detail="Generation completed.", end_time=datetime.now().isoformat())
+    except PluginJobCancelled:
+        app.logger.info('Plugin job canceled job_id=%s', job_id)
     except Exception as exc:
+        if _cancelled():
+            return
         detail = _safe_client_error(str(exc), 'Plugin generation failed.')
         _update_plugin_job_state(run_id, job_id, status="failed", status_detail=detail, error=detail, end_time=datetime.now().isoformat())
 

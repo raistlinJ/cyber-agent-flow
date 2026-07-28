@@ -4885,10 +4885,17 @@ document.addEventListener('DOMContentLoaded', () => {
         _activeAssetConfig = null;
     });
 
+    let _activePluginJobId = null;
+
     async function pollPluginGenerationJob(jobId, assetName) {
+        _activePluginJobId = jobId;
+        const cancelBtn = document.getElementById('progress-cancel-btn');
+        if (cancelBtn) cancelBtn.style.display = '';
+
         const maxAttempts = 60;
         for (let i = 0; i < maxAttempts; i++) {
             await new Promise(resolve => setTimeout(resolve, 2000));
+            if (_activePluginJobId !== jobId) return; // superseded or canceled locally
             try {
                 const res = await fetch('/api/plugins/jobs');
                 const data = await res.json();
@@ -4896,11 +4903,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!job) continue;
                 if (job.status === 'success') {
                     progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
                     showAlert(`Generated "${assetName}" successfully.`, 'success');
+                    return;
+                }
+                if (job.status === 'canceled') {
+                    progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
+                    showAlert(`Generation of "${assetName}" was canceled.`, 'error');
                     return;
                 }
                 if (job.status === 'failed') {
                     progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
                     showAlert(`Generation failed: ${job.error || job.status_detail || 'unknown error'}`, 'error');
                     return;
                 }
@@ -4910,8 +4928,30 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         progressModal.style.display = 'none';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        _activePluginJobId = null;
         showAlert(`Generation of "${assetName}" is taking longer than expected — check back shortly.`, 'error');
     }
+
+    document.getElementById('progress-cancel-btn').addEventListener('click', async () => {
+        const jobId = _activePluginJobId;
+        if (!jobId) return;
+        const cancelBtn = document.getElementById('progress-cancel-btn');
+        cancelBtn.disabled = true;
+        try {
+            const res = await fetch(`/api/plugins/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            if (!data.success) {
+                showAlert('Failed to cancel: ' + (data.error || 'unknown error'), 'error');
+            }
+            // The active poll loop will notice the canceled status on its next check
+            // and close the modal itself — nothing further to do here.
+        } catch (err) {
+            showAlert('Error canceling generation: ' + err.message, 'error');
+        } finally {
+            cancelBtn.disabled = false;
+        }
+    });
 
     document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
         if (!_activeAssetConfig) return;

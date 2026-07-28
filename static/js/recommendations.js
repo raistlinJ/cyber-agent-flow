@@ -265,13 +265,14 @@
 
                 const assets = scaffoldingCache[runId] || [];
                 const asset = assets.find(a => a.name === assetName);
+                const assetMeta = asset ? parseAssetMeta(asset.prompt_content) : {};
                 const job = activeSuccessfulJobs.find(j => j.run_id === runId);
 
                 if (typeof window.openAssetConfigModal === 'function') {
                     window.openAssetConfigModal(assetName, runId, {
                         kind,
-                        problem: asset?.meta?.problem || '',
-                        gain: asset?.meta?.gain || '',
+                        problem: assetMeta.problem || '',
+                        gain: assetMeta.gain || '',
                         notes: job?.analyst_notes || '',
                     });
                 } else {
