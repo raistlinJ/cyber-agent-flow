@@ -2873,15 +2873,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let toolsConfig = null;
         let enabledToolGuides = [];
+        let enabledPlaybooks = [];
         if (cmdType !== 'apt') {
             updateToolsJson();
             try { toolsConfig = JSON.parse(toolsJsonArea.value); }
             catch (e) { showAlert('Invalid JSON formatting in kali_tools.json editor.', 'error'); return; }
+
+            // Merge checked generated plugin MCP tools alongside the hand-configured ones.
+            document.querySelectorAll('.plugin-mcp-tool-checkbox:checked').forEach(cb => {
+                const folder = cb.dataset.pluginFolder;
+                const entry = (_pluginsCache.mcp_tools || []).find(p => p.folder === folder);
+                if (entry && entry.manifest && entry.manifest.name) {
+                    toolsConfig.tools.push(entry.manifest);
+                }
+            });
+
             if (!Array.isArray(toolsConfig.tools) || toolsConfig.tools.length === 0) {
                 showAlert('Select at least one Kali tool before starting a native session.', 'error');
                 return;
             }
             enabledToolGuides = selectedToolGuides();
+
+            // Checked generated playbooks — separate from enabled_tool_guides,
+            // since playbooks aren't tied to a specific connected MCP tool.
+            document.querySelectorAll('.plugin-playbook-checkbox:checked').forEach(cb => {
+                const name = cb.dataset.pluginName;
+                if (name) enabledPlaybooks.push(name);
+            });
         }
 
         if (!model || !command) return;
@@ -2900,7 +2918,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides, enabled_playbooks: enabledPlaybooks })
             });
             const data = await response.json();
 
@@ -4952,6 +4970,88 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelBtn.disabled = false;
         }
     });
+
+    // ---------------------------------------------------------------
+    // Plugins Configuration — generated MCP tools + playbooks, listed
+    // and toggled here, merged into the session-start request separately
+    // from the hand-configured kali_tools.json checkboxes.
+    // ---------------------------------------------------------------
+    let _pluginsCache = { mcp_tools: [], playbooks: [] };
+
+    async function loadPluginsIntoConfig() {
+        try {
+            const res = await fetch('/api/plugins');
+            const data = await res.json();
+            _pluginsCache.mcp_tools = Array.isArray(data.mcp_tools) ? data.mcp_tools : [];
+            _pluginsCache.playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
+        } catch (err) {
+            console.error('Failed to load plugins', err);
+            _pluginsCache.mcp_tools = [];
+            _pluginsCache.playbooks = [];
+        }
+        renderPluginMcpTools();
+        renderPluginPlaybooks();
+    }
+
+    function renderPluginMcpTools() {
+        const container = document.getElementById('plugin-mcp-tools-list');
+        const emptyState = document.getElementById('plugin-mcp-tools-empty');
+        if (!container || !emptyState) return;
+
+        container.querySelectorAll('.plugin-tool-item').forEach(el => el.remove());
+
+        if (!_pluginsCache.mcp_tools.length) {
+            emptyState.style.display = '';
+            return;
+        }
+        emptyState.style.display = 'none';
+
+        _pluginsCache.mcp_tools.forEach(entry => {
+            const manifest = entry.manifest || {};
+            const name = manifest.name || entry.folder || 'unnamed_tool';
+            const description = manifest.description || 'No description provided.';
+            const wrapper = document.createElement('label');
+            wrapper.className = 'checkbox-container plugin-tool-item';
+            wrapper.innerHTML = `
+                <input type="checkbox" class="plugin-mcp-tool-checkbox" data-plugin-folder="${escapeHtml(entry.folder || '')}">
+                <span><strong>${escapeHtml(name)}</strong>
+                    <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
+                </span>
+            `;
+            container.appendChild(wrapper);
+        });
+    }
+
+    function renderPluginPlaybooks() {
+        const container = document.getElementById('plugin-playbooks-list');
+        const emptyState = document.getElementById('plugin-playbooks-empty');
+        if (!container || !emptyState) return;
+
+        container.querySelectorAll('.plugin-playbook-item').forEach(el => el.remove());
+
+        if (!_pluginsCache.playbooks.length) {
+            emptyState.style.display = '';
+            return;
+        }
+        emptyState.style.display = 'none';
+
+        _pluginsCache.playbooks.forEach(entry => {
+            const description = entry.preview || 'Markdown playbook — a shortcut/approach that worked in a prior engagement.';
+            const wrapper = document.createElement('label');
+            wrapper.className = 'checkbox-container plugin-playbook-item';
+            wrapper.innerHTML = `
+                <input type="checkbox" class="plugin-playbook-checkbox" data-plugin-name="${escapeHtml(entry.name || '')}">
+                <span><strong>${escapeHtml(entry.name || 'unnamed_playbook')}</strong>
+                    <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
+                </span>
+            `;
+            container.appendChild(wrapper);
+        });
+    }
+
+    document.getElementById('plugins-refresh-btn')?.addEventListener('click', loadPluginsIntoConfig);
+    document.getElementById('config-plugins-tab-btn')?.addEventListener('click', loadPluginsIntoConfig);
+    loadPluginsIntoConfig();
 
     document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
         if (!_activeAssetConfig) return;

@@ -1339,6 +1339,49 @@ def _load_enabled_tool_guidance(tool_names: list[str]) -> str:
     )
 
 
+def _load_enabled_playbook_guidance(playbook_names: list[str]) -> str:
+    """Load AI-generated playbooks from plugins/playbooks/ — independent of
+    the connected-tool filter _load_enabled_tool_guidance() uses, since a
+    playbook is general operational guidance, not tied to one specific tool."""
+    root_dir = Path(__file__).resolve().parent
+    playbooks_dir = (root_dir / "plugins" / "playbooks").resolve()
+
+    sections: list[str] = []
+    total = 0
+    for name in playbook_names or []:
+        safe_name = str(name).strip()
+        if not safe_name:
+            continue
+        path = (playbooks_dir / f"{safe_name}.md").resolve()
+        if not path.exists() or playbooks_dir not in path.parents:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        snippet = text.strip()
+        if not snippet:
+            continue
+        if len(snippet) > _TOOL_DOC_MAX_CHARS_PER_DOC:
+            snippet = snippet[:_TOOL_DOC_MAX_CHARS_PER_DOC].rstrip() + "\n\n[truncated]"
+
+        block = f"### Playbook: {safe_name}\n\n{snippet}\n"
+        if total + len(block) > _TOOL_DOC_MAX_TOTAL_CHARS:
+            break
+        sections.append(block)
+        total += len(block)
+
+    if not sections:
+        return ""
+
+    return (
+        "AI-generated playbooks (learned shortcuts from prior engagements) are provided below. "
+        "Treat them as suggested approaches that worked before, not mandatory constraints.\n\n"
+        + "\n\n".join(sections)
+    )
+
+
 def _load_tool_timeout_request(run_id: str) -> dict | None:
     path = _tool_timeout_request_path(run_id)
     if not os.path.isfile(path):
@@ -1385,6 +1428,7 @@ class MCPSession:
         tool_timeout: int = 120,
         network_policy: dict | None = None,
         enabled_tool_guides: list[str] | None = None,
+        enabled_playbooks: list[str] | None = None,
         auto_approve_dangerous: bool = False,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
@@ -1400,6 +1444,7 @@ class MCPSession:
         self.run_id = run_id or make_run_id("agent")
         self.network_policy = _normalize_network_policy(network_policy)
         self.enabled_tool_guides = list(enabled_tool_guides) if isinstance(enabled_tool_guides, list) else None
+        self.enabled_playbooks = list(enabled_playbooks) if isinstance(enabled_playbooks, list) else None
         self.auto_approve_dangerous = bool(auto_approve_dangerous)
 
         # Internals
@@ -2218,6 +2263,11 @@ class MCPSession:
             guidance_tools = [name for name in self.tool_names if name in enabled_set]
 
         self._enabled_tool_guidance = _load_enabled_tool_guidance(guidance_tools)
+        playbook_guidance = _load_enabled_playbook_guidance(self.enabled_playbooks or [])
+        if playbook_guidance:
+            self._enabled_tool_guidance = (
+                f"{self._enabled_tool_guidance}\n\n{playbook_guidance}" if self._enabled_tool_guidance else playbook_guidance
+            )
 
         allow_text = ", ".join(self.network_policy["allow"])
         disallow_text = ", ".join(self.network_policy["disallow"]) if self.network_policy["disallow"] else "(none)"

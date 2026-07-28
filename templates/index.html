@@ -108,6 +108,10 @@
                                 <i class="ph ph-toolbox"></i>
                                 <span>Tools</span>
                             </button>
+                            <button type="button" class="config-subtab-btn" data-config-target="config-plugins-panel" id="config-plugins-tab-btn">
+                                <i class="ph ph-puzzle-piece"></i>
+                                <span>Plugins</span>
+                            </button>
                             <button type="button" class="config-subtab-btn" data-config-target="config-logging-panel">
                                 <i class="ph ph-list-checks"></i>
                                 <span>Logging</span>
@@ -503,6 +507,42 @@
                             <div class="config-subtab-empty" id="tools-config-empty" style="display:none;">
                                 <i class="ph ph-info"></i>
                                 <span>Native tool selection applies only to the custom Acosta MCP launch method.</span>
+                            </div>
+                        </div>
+
+                        <!-- Plugins Configuration -->
+                        <div class="config-subtab-panel" id="config-plugins-panel">
+                            <div class="form-section" id="plugins-config-section">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
+                                    <h2 class="section-title" style="margin-bottom:0;">
+                                        <i class="ph ph-puzzle-piece"></i>
+                                        Generated Plugins
+                                    </h2>
+                                    <button type="button" id="plugins-refresh-btn" class="btn btn-secondary" style="width:auto;padding:0.4rem 0.85rem;font-size:0.82rem;">
+                                        <i class="ph ph-arrows-clockwise"></i> Refresh
+                                    </button>
+                                </div>
+                                <p class="input-hint" style="margin-bottom: 1rem;">AI-generated tools and playbooks approved from Recommendations. Enable any you want available for your next live session. Kept separate from the hand-configured Kali tools above.</p>
+
+                                <details class="config-collapse" open>
+                                    <summary>
+                                        <span><i class="ph ph-wrench"></i> MCP Tools</span>
+                                        <i class="ph ph-caret-down collapse-caret"></i>
+                                    </summary>
+                                    <div id="plugin-mcp-tools-list" class="config-card-lite">
+                                        <div class="empty-state" id="plugin-mcp-tools-empty">No generated MCP tools yet. Approve one from the Recommendations tab.</div>
+                                    </div>
+                                </details>
+
+                                <details class="config-collapse" open>
+                                    <summary>
+                                        <span><i class="ph ph-book-open-text"></i> Markdown Playbooks</span>
+                                        <i class="ph ph-caret-down collapse-caret"></i>
+                                    </summary>
+                                    <div id="plugin-playbooks-list" class="config-card-lite">
+                                        <div class="empty-state" id="plugin-playbooks-empty">No generated playbooks yet. Approve one from the Recommendations tab.</div>
+                                    </div>
+                                </details>
                             </div>
                         </div>
 

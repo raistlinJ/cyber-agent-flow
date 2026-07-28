@@ -1053,10 +1053,21 @@ def _load_plugin_playbooks() -> list[dict]:
             continue
         name = filename[:-3]
         provenance_path = os.path.join(playbooks_dir, f"{name}.PROVENANCE.md")
+
+        preview = ""
+        try:
+            with open(os.path.join(playbooks_dir, filename), 'r') as f:
+                content = f.read()
+            body_lines = [ln.strip() for ln in content.splitlines() if ln.strip() and not ln.strip().startswith('#')]
+            preview = " ".join(body_lines)[:220]
+        except Exception:
+            preview = ""
+
         entries.append({
             "name": name,
             "filename": filename,
             "has_provenance": os.path.isfile(provenance_path),
+            "preview": preview,
         })
     return entries
 
@@ -1601,6 +1612,12 @@ def session_start():
     else:
         enabled_tool_guides = None
 
+    enabled_playbooks = data.get('enabled_playbooks')
+    if isinstance(enabled_playbooks, list):
+        enabled_playbooks = [str(item).strip() for item in enabled_playbooks if str(item).strip()]
+    else:
+        enabled_playbooks = None
+
     app.logger.info(
         'Session start requested provider=%s model=%s url=%s ssl_verify=%s context_window=%s max_turns=%s tool_timeout=%s',
         llm_provider,
@@ -1700,6 +1717,7 @@ def session_start():
             tool_timeout=tool_timeout,
             network_policy=network_policy,
             enabled_tool_guides=enabled_tool_guides,
+            enabled_playbooks=enabled_playbooks,
             auto_approve_dangerous=auto_approve_dangerous,
         )
 
