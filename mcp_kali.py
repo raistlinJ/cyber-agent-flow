@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sys
 import subprocess
 import time
 import os

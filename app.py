@@ -11,8 +11,6 @@ import queue
 import time
 import sys
 import logging
-import pty
-import subprocess
 import fcntl
 import shutil #this will be for the clear button to clear runs
 import uuid
@@ -46,8 +44,8 @@ if _running_in_docker():
     stop_keylogger = None
     pause_keylogger = None
     resume_keylogger = None
-    get_keylogger_status = lambda: {"running": False, "paused": False, "run_id": None, "buffer_size": 0, "disabled": "keylogger unavailable in Docker"}
-    check_keylogger_prerequisites = lambda: {"error": "Keylogger disabled in Docker container"}
+    def get_keylogger_status(): return {"running": False, "paused": False, "run_id": None, "buffer_size": 0, "disabled": "keylogger unavailable in Docker"}
+    def check_keylogger_prerequisites(): return {"error": "Keylogger disabled in Docker container"}
     get_keylogger = None
 else:
     try:
@@ -58,8 +56,8 @@ else:
         stop_keylogger = None
         pause_keylogger = None
         resume_keylogger = None
-        get_keylogger_status = lambda: {"running": False, "paused": False, "run_id": None, "buffer_size": 0}
-        check_keylogger_prerequisites = lambda: {"error": "Keylogger not available"}
+        def get_keylogger_status(): return {"running": False, "paused": False, "run_id": None, "buffer_size": 0}
+        def check_keylogger_prerequisites(): return {"error": "Keylogger not available"}
         get_keylogger = None
 
 # Tool Watcher — background agent that spots MCP tool opportunities in logs
@@ -734,7 +732,6 @@ def _analysis_required_sections(span_req: str, analysis_outputs=None) -> list[st
 
 def _build_analysis_output_template(span_req: str, analysis_outputs=None) -> str:
     sections = _analysis_required_sections(span_req, analysis_outputs)
-    full_session = span_req in ("Entire Session", "Event Point", "")
     templates = {
         "Executive Summary": (
             "- Overall engagement state in 2-4 bullets\n"
@@ -1571,7 +1568,7 @@ def get_models():
         provider_label = _provider_display_name(provider)
         detail = f' {provider_label} returned HTTP {status}.' if status else ''
         return jsonify({'success': False, 'error': f'Failed to fetch models from {provider_label}.{detail}'}), 400
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         provider_label = _provider_display_name(provider)
         return jsonify({'success': False, 'error': f'Could not reach the selected {provider_label} endpoint.'}), 400
 
@@ -2574,7 +2571,7 @@ def session_annotate(run_id):
             temp_logger.log_annotation(text, span)
             
         return jsonify({"success": True})
-    except Exception as e:
+    except Exception:
         app.logger.exception("Annotation write failed")
         return jsonify({"success": False, "error": 'Failed to save annotation.'}), 500
 
@@ -3050,7 +3047,7 @@ def session_targeted_stop(run_id):
                 with open(meta_path, 'w') as f:
                     json.dump(meta, f, indent=2)
                 return jsonify({'success': True, 'message': f'Session {run_id} marked as completed.'})
-        except Exception as e:
+        except Exception:
             app.logger.exception("Failed to update session metadata for %s", run_id)
             return jsonify({'success': False, 'error': 'Failed to update session metadata.'}), 500
 

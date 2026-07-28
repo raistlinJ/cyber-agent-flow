@@ -2328,7 +2328,7 @@ class MCPSession:
                     try:
                         await asyncio.wait_for(asyncio.shield(self._current_tool_task), timeout=1.0)
                     except asyncio.TimeoutError:
-                        print(f"[cancel] Tool subtask did not finish within 1s, moving on.")
+                        print("[cancel] Tool subtask did not finish within 1s, moving on.")
                     except (asyncio.CancelledError, Exception):
                         pass
                     self._current_tool_task = None
