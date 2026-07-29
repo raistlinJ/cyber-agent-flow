@@ -3818,6 +3818,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         sessionsList.querySelectorAll('.session-card').forEach(card => card.addEventListener('click', (e) => {
             if (e.target.closest('.btn-stop-session')) return; // Ignore card click if stop button pressed
+            if (card.dataset.run === _browseRunId && sessionDetail.style.display !== 'none') { closeSession(); return; }
             openSession(card.dataset.run)
         }));
 
@@ -3827,6 +3828,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
 
         if (_browseRunId && sessionDetail.style.display !== 'none') attachSessionDetail(_browseRunId);
+    }
+
+    function closeSession() {
+        _browseRunId = null;
+        sessionDetail.style.display = 'none';
+        detachSessionDetail();
+        sessionsList.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
     }
 
     async function openSession(runId) {
