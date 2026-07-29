@@ -1672,8 +1672,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function normalizePolicy(policy) {
-        const allow = Array.isArray(policy?.allow) && policy.allow.length ? policy.allow : ['*'];
-        const disallow = Array.isArray(policy?.disallow) ? policy.disallow : [];
+        const allowClean = Array.isArray(policy?.allow) ? policy.allow.filter(entry => String(entry || '').trim()) : [];
+        const disallowClean = Array.isArray(policy?.disallow) ? policy.disallow.filter(entry => String(entry || '').trim()) : [];
+        const allow = allowClean.length ? allowClean : ['*'];
+        const disallow = disallowClean;
         return { allow, disallow };
     }
 
@@ -2880,9 +2882,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const networkCaptureEnabled = Boolean(logNetworkCaptureToggle?.checked);
         const syscallLoggerEnabled = Boolean(logSyscallsToggle?.checked);
         syncPolicyDraftFromEditor();
+        const cleanAllow = Array.isArray(_policyDraft.allow) ? _policyDraft.allow.filter(entry => String(entry || '').trim()) : [];
+        const cleanDisallow = Array.isArray(_policyDraft.disallow) ? _policyDraft.disallow.filter(entry => String(entry || '').trim()) : [];
         const networkPolicy = {
-            allow: Array.isArray(_policyDraft.allow) && _policyDraft.allow.length ? [..._policyDraft.allow] : ['*'],
-            disallow: Array.isArray(_policyDraft.disallow) ? [..._policyDraft.disallow] : [],
+            allow: cleanAllow.length ? cleanAllow : ['*'],
+            disallow: cleanDisallow,
         };
 
         if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 100) {
