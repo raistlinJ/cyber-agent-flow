@@ -4993,6 +4993,28 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPluginPlaybooks();
     }
 
+    async function deletePluginEntry(kind, identifier, label) {
+        const confirmed = window.confirm(`Delete "${label}"? This cannot be undone, but you can always generate it again from Recommendations.`);
+        if (!confirmed) return;
+
+        const url = kind === 'playbook'
+            ? `/api/plugins/playbooks/${encodeURIComponent(identifier)}`
+            : `/api/plugins/mcp_tools/${encodeURIComponent(identifier)}`;
+
+        try {
+            const res = await fetch(url, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                showAlert(`Deleted "${label}".`, 'success');
+                loadPluginsIntoConfig();
+            } else {
+                showAlert('Failed to delete: ' + (data.error || 'unknown error'), 'error');
+            }
+        } catch (err) {
+            showAlert('Error deleting: ' + err.message, 'error');
+        }
+    }
+
     function renderPluginMcpTools() {
         const container = document.getElementById('plugin-mcp-tools-list');
         const emptyState = document.getElementById('plugin-mcp-tools-empty');
@@ -5017,7 +5039,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span><strong>${escapeHtml(name)}</strong>
                     <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
                 </span>
+                <button type="button" class="btn btn-secondary plugin-delete-btn" style="width:auto;padding:0.3rem 0.5rem;font-size:0.78rem;margin-left:auto;flex-shrink:0;" title="Delete this generated tool">
+                    <i class="ph ph-trash"></i>
+                </button>
             `;
+            wrapper.querySelector('.plugin-delete-btn').addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                deletePluginEntry('mcp_tool', entry.folder, name);
+            });
             container.appendChild(wrapper);
         });
     }
@@ -5044,7 +5074,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span><strong>${escapeHtml(entry.name || 'unnamed_playbook')}</strong>
                     <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
                 </span>
+                <button type="button" class="btn btn-secondary plugin-delete-btn" style="width:auto;padding:0.3rem 0.5rem;font-size:0.78rem;margin-left:auto;flex-shrink:0;" title="Delete this generated playbook">
+                    <i class="ph ph-trash"></i>
+                </button>
             `;
+            wrapper.querySelector('.plugin-delete-btn').addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                deletePluginEntry('playbook', entry.name, entry.name || 'unnamed_playbook');
+            });
             container.appendChild(wrapper);
         });
     }

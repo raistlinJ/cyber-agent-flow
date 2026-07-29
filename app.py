@@ -2154,6 +2154,32 @@ def list_plugin_jobs():
     )
     return jsonify({"jobs": sorted_jobs})
 
+
+@app.route('/api/plugins/mcp_tools/<folder>', methods=['DELETE'])
+def delete_plugin_mcp_tool(folder):
+    """Delete a generated MCP tool folder entirely."""
+    _validate_filename(folder)
+    target_dir = os.path.join(_plugin_mcp_tools_dir(), folder)
+    if not os.path.isdir(target_dir):
+        abort(404, description="Plugin MCP tool not found.")
+    shutil.rmtree(target_dir, ignore_errors=True)
+    return jsonify({"success": True})
+
+
+@app.route('/api/plugins/playbooks/<name>', methods=['DELETE'])
+def delete_plugin_playbook(name):
+    """Delete a generated playbook and its provenance sidecar."""
+    _validate_filename(name)
+    playbooks_dir = _plugin_playbooks_dir()
+    playbook_path = os.path.join(playbooks_dir, f"{name}.md")
+    provenance_path = os.path.join(playbooks_dir, f"{name}.PROVENANCE.md")
+    if not os.path.isfile(playbook_path):
+        abort(404, description="Plugin playbook not found.")
+    os.remove(playbook_path)
+    if os.path.isfile(provenance_path):
+        os.remove(provenance_path)
+    return jsonify({"success": True})
+
 #---------------------------------------------------------------------------Review here
 # Plugin generation now reuses the exact same provider-agnostic LLM call as
 # Analysis Jobs (_analysis_chat_request) — no coding-agent CLI, no login, no
