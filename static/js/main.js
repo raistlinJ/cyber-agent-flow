@@ -481,6 +481,8 @@ document.addEventListener('DOMContentLoaded', () => {
         interactive_session_close: 'interactive sessions guide',
     };
     let _toolGuideSelections = {};
+    let _pluginToolSelections = {};
+    let _pluginPlaybookSelections = {};
 
     function getEnabledToolNames() {
         const names = [];
@@ -728,6 +730,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 policyDraft: normalizePolicy(_policyDraft),
                 toolCheckboxStates,
                 toolGuideSelections: _toolGuideSelections,
+                pluginToolSelections: _pluginToolSelections,
+                pluginPlaybookSelections: _pluginPlaybookSelections,
                 toolsJson: toolsJsonArea?.value || '',
                 activeConfigSubtab: document.querySelector('.config-subtab-btn.active')?.dataset.configTarget || 'config-runtime-panel',
                 savedAt: Date.now(),
@@ -804,6 +808,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (payload.toolGuideSelections && typeof payload.toolGuideSelections === 'object') {
                 _toolGuideSelections = Object.fromEntries(
                     Object.entries(payload.toolGuideSelections).map(([name, enabled]) => [name, Boolean(enabled)])
+                );
+            }
+
+            if (payload.pluginToolSelections && typeof payload.pluginToolSelections === 'object') {
+                _pluginToolSelections = Object.fromEntries(
+                    Object.entries(payload.pluginToolSelections).map(([key, enabled]) => [key, Boolean(enabled)])
+                );
+            }
+            if (payload.pluginPlaybookSelections && typeof payload.pluginPlaybookSelections === 'object') {
+                _pluginPlaybookSelections = Object.fromEntries(
+                    Object.entries(payload.pluginPlaybookSelections).map(([key, enabled]) => [key, Boolean(enabled)])
                 );
             }
 
@@ -5043,6 +5058,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <i class="ph ph-trash"></i>
                 </button>
             `;
+            const checkbox = wrapper.querySelector('.plugin-mcp-tool-checkbox');
+            checkbox.checked = Boolean(_pluginToolSelections[entry.folder]);
+            checkbox.addEventListener('change', () => {
+                _pluginToolSelections[entry.folder] = checkbox.checked;
+                persistLastSettings();
+            });
             wrapper.querySelector('.plugin-delete-btn').addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -5078,6 +5099,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <i class="ph ph-trash"></i>
                 </button>
             `;
+            const checkbox = wrapper.querySelector('.plugin-playbook-checkbox');
+            checkbox.checked = Boolean(_pluginPlaybookSelections[entry.name]);
+            checkbox.addEventListener('change', () => {
+                _pluginPlaybookSelections[entry.name] = checkbox.checked;
+                persistLastSettings();
+            });
             wrapper.querySelector('.plugin-delete-btn').addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
