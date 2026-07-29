@@ -65,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const liveLogPanel = document.getElementById('live-log-panel');
     const liveLogViewer = document.getElementById('live-log-viewer');
     const toolsBadge = document.getElementById('service-tools-badge');
+    const guidesBadge = document.getElementById('service-guides-badge');
     const policyBadge = document.getElementById('service-policy-badge');
     const loggerStatusWrapper = document.getElementById('logger-status-wrapper');
     const loggerStatusBadge = document.getElementById('logger-status-badge');
@@ -1715,6 +1716,21 @@ document.addEventListener('DOMContentLoaded', () => {
         toolsBadge.style.display = 'inline-block';
     }
 
+    function setLiveGuidesBadge(playbooks) {
+        const playbookList = Array.isArray(playbooks) ? playbooks : [];
+        if (!guidesBadge) return;
+        if (!playbookList.length) {
+            guidesBadge.style.display = 'none';
+            guidesBadge.textContent = '';
+            guidesBadge.title = '';
+            return;
+        }
+
+        guidesBadge.textContent = `📖 ${playbookList.length} guide(s): ${playbookList.join(', ')}`;
+        guidesBadge.title = playbookList.join('\n');
+        guidesBadge.style.display = 'inline-block';
+    }
+
     function renderPolicyList(entries, emptyLabel) {
         if (!entries.length) {
             return `<li>${escapeHtml(emptyLabel)}</li>`;
@@ -2959,6 +2975,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.tools && data.tools.length) {
                     setLiveToolsBadge(data.tools);
                 }
+                setLiveGuidesBadge(enabledPlaybooks);
                 setLivePolicyBadge(data.network_policy || networkPolicy);
                 refreshLoggingChannelStatus();
                 
@@ -3560,6 +3577,7 @@ document.addEventListener('DOMContentLoaded', () => {
         resetStartBtn();
         setConfigEnabled(true);
         setLiveToolsBadge([]);
+        setLiveGuidesBadge([]);
         setLivePolicyBadge(null);
         hideLoggingChannelBadges();
         
@@ -4172,6 +4190,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (Array.isArray(data.metadata?.available_tools) && data.metadata.available_tools.length) {
                     setLiveToolsBadge(data.metadata.available_tools);
                 }
+                setLiveGuidesBadge(data.metadata?.enabled_playbooks || []);
                 setLivePolicyBadge(data.metadata?.network_policy || null);
                 refreshLoggingChannelStatus();
 
@@ -4196,6 +4215,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 switchTab('chat-pane');
             } else {
                 setLiveToolsBadge([]);
+                setLiveGuidesBadge([]);
                 setLivePolicyBadge(null);
                 hideLoggingChannelBadges();
                 setChatSessionToggleButton('start');

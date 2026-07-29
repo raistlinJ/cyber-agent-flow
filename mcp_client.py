@@ -2279,6 +2279,7 @@ class MCPSession:
                 "available_tools": self.tool_names,
                 "available_tool_count": len(self.tool_names),
                 "max_turns": self.max_turns,
+                "enabled_playbooks": self.enabled_playbooks or [],
             })
 
         if not self.tool_names:
