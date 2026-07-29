@@ -909,11 +909,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeProvider(provider) !== PROVIDERS.OLLAMA_DIRECT;
     }
 
-    function providerRequiresApiKey(provider) {
-        const normalized = normalizeProvider(provider);
-        return normalized === PROVIDERS.OPENAI || normalized === PROVIDERS.CLAUDE;
-    }
-
     function formatProviderLabel(provider) {
         const normalized = normalizeProvider(provider);
         if (normalized === PROVIDERS.LITELLM) return 'LiteLLM';
@@ -936,14 +931,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return {
                 provider: 'Connect directly to the OpenAI API. Use your OpenAI API key and fetch from the public model catalog available to your account.',
                 url: 'Base URL for OpenAI. In most cases use https://api.openai.com.',
-                apiKey: 'Required. Use your OpenAI API key. It is sent only with model discovery and chat requests.',
+                apiKey: 'Required by the official OpenAI API; OpenAI-compatible endpoints may not need one. Sent only with model discovery and chat requests.',
             };
         }
         if (normalized === PROVIDERS.CLAUDE) {
             return {
                 provider: 'Connect directly to Anthropic for Claude models. Use your Anthropic API key and fetch the Claude models available to your account.',
                 url: 'Base URL for Anthropic. In most cases use https://api.anthropic.com.',
-                apiKey: 'Required. Use your Anthropic API key. It is sent only with model discovery and chat requests.',
+                apiKey: 'Required by the official Anthropic API; compatible endpoints may not need one. Sent only with model discovery and chat requests.',
             };
         }
         if (normalized === PROVIDERS.LITELLM) {
@@ -1010,14 +1005,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (analysisOllamaUrlInput) {
             analysisOllamaUrlInput.placeholder = providerDefaultUrl(provider);
         }
-    }
-
-    function validateProviderApiKey(provider, apiKey) {
-        if (providerRequiresApiKey(provider) && !String(apiKey || '').trim()) {
-            showAlert(`Enter an API key for ${formatProviderLabel(provider)}.`, 'error');
-            return false;
-        }
-        return true;
     }
 
     function saveApiKeyToSessionStorage() {
@@ -1385,9 +1372,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const apiKey = providerUsesApiKey(provider) ? (apiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(sslVerifyToggle?.checked ?? true);
         const currentSelectedModel = modelSelect.value;
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
         await fetchModelsIntoSelect({
             url,
             provider,
@@ -1486,9 +1470,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const apiKey = providerUsesApiKey(provider) ? (analysisApiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(analysisSslVerifyToggle?.checked ?? true);
         const currentSelectedModel = analysisModelSelect.value;
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
 
         await fetchModelsIntoSelect({
             url,
@@ -1523,9 +1504,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!ollamaUrl) {
             showAlert('Please enter an instance URL', 'error');
-            return;
-        }
-        if (!validateProviderApiKey(provider, apiKey)) {
             return;
         }
         if (!model) {
@@ -2837,9 +2815,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const provider = normalizeProvider(providerSelect?.value);
         const apiKey = providerUsesApiKey(provider) ? (apiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(sslVerifyToggle?.checked ?? true);
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
         const model = modelSelect.value;
         const cmdType = kaliCommandType.value;
         const contextWindow = parseInt(document.getElementById('context-window').value, 10);
