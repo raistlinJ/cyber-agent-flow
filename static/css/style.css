@@ -1237,6 +1237,18 @@ option {
     scrollbar-width: thin;
 }
 
+/* When a session is expanded, its detail panel sits inside the list just
+   below the active card — let the list grow so the detail isn't trapped
+   in the 260px scroll area. */
+.sessions-list:has(.session-detail) {
+    max-height: none;
+    overflow-y: visible;
+}
+
+.sessions-list .session-detail {
+    margin-bottom: 0.25rem;
+}
+
 .session-card {
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);

@@ -3780,15 +3780,27 @@ document.addEventListener('DOMContentLoaded', () => {
     let _browseRunId = null, _currentTab = 'transcript';
     const sessionsList = document.getElementById('sessions-list'), sessionDetail = document.getElementById('session-detail'), detailContent = document.getElementById('detail-content');
 
+    // The detail panel lives inside the list (below the active card) while open;
+    // pull it back out before any innerHTML rewrite so it survives re-renders.
+    function detachSessionDetail() {
+        if (sessionsList.contains(sessionDetail)) sessionsList.before(sessionDetail);
+    }
+
+    function attachSessionDetail(runId) {
+        const card = [...sessionsList.querySelectorAll('.session-card')].find(c => c.dataset.run === runId);
+        if (card) card.after(sessionDetail);
+    }
+
     async function loadSessions() {
         try {
             const res = await fetch('/api/sessions'); const data = await res.json();
             _sessionsById = Object.fromEntries((data.sessions || []).map(session => [session.run_id, session]));
             renderSessionList(data.sessions || []);
-        } catch (e) { sessionsList.innerHTML = '<div class="empty-state">Could not load sessions.</div>'; }
+        } catch (e) { detachSessionDetail(); sessionsList.innerHTML = '<div class="empty-state">Could not load sessions.</div>'; }
     }
 
     function renderSessionList(sessions) {
+        detachSessionDetail();
         if (!sessions.length) { sessionsList.innerHTML = '<div class="empty-state">No sessions yet. Run an agent to start logging.</div>'; return; }
         sessionsList.innerHTML = sessions.map(s => {
             return `
@@ -3813,11 +3825,14 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             askToStopSession(btn.dataset.stopRun);
         }));
+
+        if (_browseRunId && sessionDetail.style.display !== 'none') attachSessionDetail(_browseRunId);
     }
 
     async function openSession(runId) {
         _browseRunId = runId; sessionDetail.style.display = 'block';
         sessionsList.querySelectorAll('.session-card').forEach(c => c.classList.toggle('active', c.dataset.run === runId));
+        attachSessionDetail(runId);
         sessionDownloadBtn.style.display = 'inline-block';
         sessionAnalyzeBtn.style.display = 'inline-block';
         renderSessionSummary(_sessionsById[runId]);
