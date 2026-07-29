@@ -453,7 +453,7 @@ class ToolWatcher:
         seen_slugs: set[str] = set()
         
         # State for reading lines and rolling memory
-        state = {'last_line_count': 0, 'last_tool_count': 0, 'analyzing': False, 'last_note': ''}
+        state = {'last_file_pos': 0, 'last_tool_count': 0, 'analyzing': False, 'last_note': ''}
 
         # The actual analysis routine
         def _analyze_delta():
@@ -461,12 +461,27 @@ class ToolWatcher:
             state['analyzing'] = True
             
             try:
-                all_lines = _read_transcript_lines(transcript_path)
-                new_lines = all_lines[state['last_line_count']:]
+                if not os.path.isfile(transcript_path):
+                    state['analyzing'] = False
+                    return
+                    
+                with open(transcript_path, "rb") as f:
+                    f.seek(state['last_file_pos'])
+                    new_bytes = f.read()
+                    new_pos = f.tell()
+                    
+                if not new_bytes:
+                    state['analyzing'] = False
+                    return
+                    
+                new_text = new_bytes.decode("utf-8", errors="replace")
+                new_lines = new_text.splitlines(keepends=True)
+                
                 if len(new_lines) < min_new_lines:
                     state['analyzing'] = False
                     return
-                state['last_line_count'] = len(all_lines)
+                    
+                state['last_file_pos'] = new_pos
 
                 tool_snippets, tool_total = _read_tool_call_snippets(tool_calls_dir, start_idx=state['last_tool_count'])
                 state['last_tool_count'] = tool_total

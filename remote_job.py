@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -95,11 +96,15 @@ async def _worker(job_dir: Path) -> int:
     spec = _load_json(job_dir / "spec.json")
     journal = EventJournal(job_dir / "events.jsonl")
     current_prompt_id: str | None = None
+    current_prompt_error = ""
 
     def emit(event: dict[str, Any]) -> None:
+        nonlocal current_prompt_error
         payload = dict(event or {})
         if current_prompt_id:
             payload["prompt_id"] = current_prompt_id
+        if payload.get("type") == "error" and current_prompt_id:
+            current_prompt_error = str(payload.get("message") or "CAF reported an internal prompt error.")
         journal.append(payload)
 
     try:
@@ -134,6 +139,7 @@ async def _worker(job_dir: Path) -> int:
                 continue
             handled.add(request_path.name)
             current_prompt_id = str(request["prompt_id"])
+            current_prompt_error = ""
             _update_state(job_dir, status="running", prompt_id=current_prompt_id)
             emit({"type": "prompt_started", "prompt_id": current_prompt_id})
             cancel_event = asyncio.Event()
@@ -146,9 +152,20 @@ async def _worker(job_dir: Path) -> int:
                     cancel_event.set()
                 await asyncio.sleep(0.2)
             await task
-            emit({"type": "prompt_done", "prompt_id": current_prompt_id})
+            completed_prompt_id = current_prompt_id
+            # Persist completion before emitting the journal event.  A remote
+            # client can then recover an acknowledged prompt if its SSH event
+            # read is reset exactly as the terminal event is being delivered.
+            _update_state(
+                job_dir,
+                status="ready",
+                prompt_id=None,
+                completed_prompt_id=completed_prompt_id,
+                completed_prompt_at=time.time(),
+                completed_prompt_error=current_prompt_error,
+            )
+            emit({"type": "prompt_done", "prompt_id": completed_prompt_id})
             current_prompt_id = None
-            _update_state(job_dir, status="ready", prompt_id=None)
         await session.stop()
         cancelled = (job_dir / "cancel.json").exists()
         _update_state(job_dir, status="cancelled" if cancelled else "completed", prompt_id=None)
@@ -215,7 +232,7 @@ def _events(job_dir: Path, after: int, limit: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="CAF durable remote job runner")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "worker", "status", "cancel", "close"):
+    for name in ("start", "worker", "status", "cancel", "close", "purge"):
         command = sub.add_parser(name)
         command.add_argument("--job-dir", required=True)
         if name == "cancel":
@@ -234,6 +251,15 @@ def main() -> int:
         return _events(job_dir, args.after, max(1, min(args.limit, 100)))
     if args.command == "status":
         print(json.dumps(_load_json(_state_path(job_dir))))
+        return 0
+    if args.command == "purge":
+        state = _load_json(_state_path(job_dir))
+        status = str(state.get("status") or "")
+        if status not in {"completed", "failed", "cancelled"}:
+            print(json.dumps({"success": False, "error": f"Refusing to purge non-terminal job ({status or 'unknown'})."}))
+            return 1
+        shutil.rmtree(job_dir)
+        print(json.dumps({"success": True}))
         return 0
     if args.command in {"cancel", "close"}:
         marker = job_dir / ("cancel.json" if args.command == "cancel" else "close.json")

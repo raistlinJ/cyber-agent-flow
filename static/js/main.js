@@ -409,17 +409,39 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------------------------------------------------------------
     // Utility Alerts & Status
     // ---------------------------------------------------------------
+    //--------------------------------------------------------------------------------------------TO BE REMOVED
+//    const showAlert = (message, type = 'error') => {
+//        const alertEl = document.createElement('div');
+//        alertEl.className = `alert alert-${type}`;
+//        const icon = type === 'error' ? 'ph-warning-circle' : 'ph-check-circle';
+//        alertEl.innerHTML = `<i class="ph ${icon}"></i> <span>${message}</span>`;
+//        alertsContainer.innerHTML = '';
+//        alertsContainer.appendChild(alertEl);
+//        setTimeout(() => {
+//            alertEl.style.opacity = '0';
+//            setTimeout(() => alertEl.remove(), 300);
+//        }, 5000);
+//    };
     const showAlert = (message, type = 'error') => {
         const alertEl = document.createElement('div');
         alertEl.className = `alert alert-${type}`;
         const icon = type === 'error' ? 'ph-warning-circle' : 'ph-check-circle';
         alertEl.innerHTML = `<i class="ph ${icon}"></i> <span>${message}</span>`;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'alert-close';
+        closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+        closeBtn.addEventListener('click', () => alertEl.remove());
+        alertEl.appendChild(closeBtn);
+
         alertsContainer.innerHTML = '';
         alertsContainer.appendChild(alertEl);
         setTimeout(() => {
+            if (!alertEl.isConnected) return;
             alertEl.style.opacity = '0';
             setTimeout(() => alertEl.remove(), 300);
-        }, 5000);
+        }, 10000);
     };
 
     const updateStatus = (state, message) => {
@@ -887,11 +909,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeProvider(provider) !== PROVIDERS.OLLAMA_DIRECT;
     }
 
-    function providerRequiresApiKey(provider) {
-        const normalized = normalizeProvider(provider);
-        return normalized === PROVIDERS.OPENAI || normalized === PROVIDERS.CLAUDE;
-    }
-
     function formatProviderLabel(provider) {
         const normalized = normalizeProvider(provider);
         if (normalized === PROVIDERS.LITELLM) return 'LiteLLM';
@@ -914,14 +931,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return {
                 provider: 'Connect directly to the OpenAI API. Use your OpenAI API key and fetch from the public model catalog available to your account.',
                 url: 'Base URL for OpenAI. In most cases use https://api.openai.com.',
-                apiKey: 'Required. Use your OpenAI API key. It is sent only with model discovery and chat requests.',
+                apiKey: 'Required by the official OpenAI API; OpenAI-compatible endpoints may not need one. Sent only with model discovery and chat requests.',
             };
         }
         if (normalized === PROVIDERS.CLAUDE) {
             return {
                 provider: 'Connect directly to Anthropic for Claude models. Use your Anthropic API key and fetch the Claude models available to your account.',
                 url: 'Base URL for Anthropic. In most cases use https://api.anthropic.com.',
-                apiKey: 'Required. Use your Anthropic API key. It is sent only with model discovery and chat requests.',
+                apiKey: 'Required by the official Anthropic API; compatible endpoints may not need one. Sent only with model discovery and chat requests.',
             };
         }
         if (normalized === PROVIDERS.LITELLM) {
@@ -988,14 +1005,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (analysisOllamaUrlInput) {
             analysisOllamaUrlInput.placeholder = providerDefaultUrl(provider);
         }
-    }
-
-    function validateProviderApiKey(provider, apiKey) {
-        if (providerRequiresApiKey(provider) && !String(apiKey || '').trim()) {
-            showAlert(`Enter an API key for ${formatProviderLabel(provider)}.`, 'error');
-            return false;
-        }
-        return true;
     }
 
     function saveApiKeyToSessionStorage() {
@@ -1363,9 +1372,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const apiKey = providerUsesApiKey(provider) ? (apiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(sslVerifyToggle?.checked ?? true);
         const currentSelectedModel = modelSelect.value;
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
         await fetchModelsIntoSelect({
             url,
             provider,
@@ -1464,9 +1470,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const apiKey = providerUsesApiKey(provider) ? (analysisApiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(analysisSslVerifyToggle?.checked ?? true);
         const currentSelectedModel = analysisModelSelect.value;
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
 
         await fetchModelsIntoSelect({
             url,
@@ -1501,9 +1504,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!ollamaUrl) {
             showAlert('Please enter an instance URL', 'error');
-            return;
-        }
-        if (!validateProviderApiKey(provider, apiKey)) {
             return;
         }
         if (!model) {
@@ -2367,7 +2367,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             liveLogViewer.removeChild(firstChild);
         }
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
         persistLiveLog();
         return entry;
     }
@@ -2429,7 +2431,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         // Keep the active tool entry fully visible in the log viewer
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
     }
 
     function finalizeActiveToolEntry(note, phaseClass = 'is-complete', phaseLabel = 'Completed', durationMs = null) {
@@ -2454,7 +2458,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         // Scroll to show the finalized tool entry fully
-        liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        requestAnimationFrame(() => {
+            liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
+        });
         
         // Update timeline sidebar
         if (_activeToolState.callId) {
@@ -2543,7 +2549,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
             timelineContainer.appendChild(tlItem);
-            timelineContainer.scrollTop = timelineContainer.scrollHeight;
+            requestAnimationFrame(() => {
+                timelineContainer.scrollTop = timelineContainer.scrollHeight;
+            });
         }
 
         renderActiveToolEntry();
@@ -2807,9 +2815,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const provider = normalizeProvider(providerSelect?.value);
         const apiKey = providerUsesApiKey(provider) ? (apiKeyInput?.value.trim() || '') : '';
         const sslVerify = Boolean(sslVerifyToggle?.checked ?? true);
-        if (!validateProviderApiKey(provider, apiKey)) {
-            return;
-        }
         const model = modelSelect.value;
         const cmdType = kaliCommandType.value;
         const contextWindow = parseInt(document.getElementById('context-window').value, 10);
@@ -2843,15 +2848,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let toolsConfig = null;
         let enabledToolGuides = [];
+        let enabledPlaybooks = [];
         if (cmdType !== 'apt') {
             updateToolsJson();
             try { toolsConfig = JSON.parse(toolsJsonArea.value); }
             catch (e) { showAlert('Invalid JSON formatting in kali_tools.json editor.', 'error'); return; }
+
+            // Merge checked generated plugin MCP tools alongside the hand-configured ones.
+            document.querySelectorAll('.plugin-mcp-tool-checkbox:checked').forEach(cb => {
+                const folder = cb.dataset.pluginFolder;
+                const entry = (_pluginsCache.mcp_tools || []).find(p => p.folder === folder);
+                if (entry && entry.manifest && entry.manifest.name) {
+                    toolsConfig.tools.push(entry.manifest);
+                }
+            });
+
             if (!Array.isArray(toolsConfig.tools) || toolsConfig.tools.length === 0) {
                 showAlert('Select at least one Kali tool before starting a native session.', 'error');
                 return;
             }
             enabledToolGuides = selectedToolGuides();
+
+            // Checked generated playbooks — separate from enabled_tool_guides,
+            // since playbooks aren't tied to a specific connected MCP tool.
+            document.querySelectorAll('.plugin-playbook-checkbox:checked').forEach(cb => {
+                const name = cb.dataset.pluginName;
+                if (name) enabledPlaybooks.push(name);
+            });
         }
 
         if (!model || !command) return;
@@ -2870,7 +2893,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/session/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides })
+                body: JSON.stringify({ url, provider, api_key: apiKey, ssl_verify: sslVerify, model, server_command: command, tools_config: toolsConfig, context_window: contextWindow, max_turns: maxTurns, tool_timeout: toolTimeout, network_policy: networkPolicy, keylogger_enabled: keyloggerEnabled, network_capture_enabled: networkCaptureEnabled, syscall_logger_enabled: syscallLoggerEnabled, enabled_tool_guides: enabledToolGuides, enabled_playbooks: enabledPlaybooks })
             });
             const data = await response.json();
 
@@ -3732,15 +3755,27 @@ document.addEventListener('DOMContentLoaded', () => {
     let _browseRunId = null, _currentTab = 'transcript';
     const sessionsList = document.getElementById('sessions-list'), sessionDetail = document.getElementById('session-detail'), detailContent = document.getElementById('detail-content');
 
+    // The detail panel lives inside the list (below the active card) while open;
+    // pull it back out before any innerHTML rewrite so it survives re-renders.
+    function detachSessionDetail() {
+        if (sessionsList.contains(sessionDetail)) sessionsList.before(sessionDetail);
+    }
+
+    function attachSessionDetail(runId) {
+        const card = [...sessionsList.querySelectorAll('.session-card')].find(c => c.dataset.run === runId);
+        if (card) card.after(sessionDetail);
+    }
+
     async function loadSessions() {
         try {
             const res = await fetch('/api/sessions'); const data = await res.json();
             _sessionsById = Object.fromEntries((data.sessions || []).map(session => [session.run_id, session]));
             renderSessionList(data.sessions || []);
-        } catch (e) { sessionsList.innerHTML = '<div class="empty-state">Could not load sessions.</div>'; }
+        } catch (e) { detachSessionDetail(); sessionsList.innerHTML = '<div class="empty-state">Could not load sessions.</div>'; }
     }
 
     function renderSessionList(sessions) {
+        detachSessionDetail();
         if (!sessions.length) { sessionsList.innerHTML = '<div class="empty-state">No sessions yet. Run an agent to start logging.</div>'; return; }
         sessionsList.innerHTML = sessions.map(s => {
             return `
@@ -3758,6 +3793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         sessionsList.querySelectorAll('.session-card').forEach(card => card.addEventListener('click', (e) => {
             if (e.target.closest('.btn-stop-session')) return; // Ignore card click if stop button pressed
+            if (card.dataset.run === _browseRunId && sessionDetail.style.display !== 'none') { closeSession(); return; }
             openSession(card.dataset.run)
         }));
 
@@ -3765,11 +3801,21 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             askToStopSession(btn.dataset.stopRun);
         }));
+
+        if (_browseRunId && sessionDetail.style.display !== 'none') attachSessionDetail(_browseRunId);
+    }
+
+    function closeSession() {
+        _browseRunId = null;
+        sessionDetail.style.display = 'none';
+        detachSessionDetail();
+        sessionsList.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
     }
 
     async function openSession(runId) {
         _browseRunId = runId; sessionDetail.style.display = 'block';
         sessionsList.querySelectorAll('.session-card').forEach(c => c.classList.toggle('active', c.dataset.run === runId));
+        attachSessionDetail(runId);
         sessionDownloadBtn.style.display = 'inline-block';
         sessionAnalyzeBtn.style.display = 'inline-block';
         renderSessionSummary(_sessionsById[runId]);
@@ -4549,6 +4595,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.downloadAnalysisJob(jobId);
                 } else if (action === 'cancel') {
                     window.cancelAnalysisJob(jobId);
+                } else if (action === 'recommendations'){
+                    switchTab('recommendations-pane');
+                    window.refreshRecommendationsView();
                 }
             });
         });
@@ -4778,8 +4827,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let _activeAssetTerminalId = null;
     let _assetTerminalEventSource = null;
 
-    function openAssetConfigModal(assetName, runId) {
-        _activeAssetConfig = { assetName, runId };
+    function openAssetConfigModal(assetName, runId, meta = {}) {
+        _activeAssetConfig = { assetName, runId, kind: meta.kind || 'mcp_tool' };
         
         // Auto-fill from active global context
         const providerSelect = document.getElementById('provider-select');
@@ -4793,13 +4842,26 @@ document.addEventListener('DOMContentLoaded', () => {
         assetProvider.value = providerSelect.value || 'ollama_direct';
         assetUrl.value = ollamaUrlInput.value || 'http://localhost:11434';
         assetApiKey.value = apiKeyInput.value || '';
-        
-        // Set default tag based on asset name
-        document.getElementById('asset-tag').value = assetName;
-        document.getElementById('asset-output-path').value = `Working Directory: ./tools/${assetName}/`;
-        
+        document.getElementById('asset-ssl-verify-toggle').checked = true;
+
+        const kindLabel = _activeAssetConfig.kind === 'playbook' ? 'Markdown Playbook' : 'MCP Tool';
+        document.getElementById('asset-modal-title').innerHTML = `<i class="ph ph-magic-wand"></i> Generate ${kindLabel}: ${escapeHtml(assetName)}`;
+        document.getElementById('asset-info-problem').innerHTML = `<strong>Problem:</strong> ${escapeHtml(meta.problem || 'Not specified.')}`;
+        document.getElementById('asset-info-gain').innerHTML = `<strong>Expected Gain:</strong> ${escapeHtml(meta.gain || 'Not specified.')}`;
+
+        const notesGroup = document.getElementById('asset-notes-group');
+        const notesBlock = document.getElementById('asset-info-notes');
+        if (meta.notes) {
+            notesBlock.textContent = meta.notes;
+            notesGroup.style.display = '';
+        } else {
+            notesGroup.style.display = 'none';
+        }
+
         assetConfigModal.style.display = 'flex';
     }
+    window.openAssetConfigModal = openAssetConfigModal; // Expose to global for button onclick
+    window.showAlert = showAlert; // Expose to global for error handling
 
     document.getElementById('asset-fetch-models-btn').addEventListener('click', async () => {
         const provider = document.getElementById('asset-provider-select').value;
@@ -4813,12 +4875,12 @@ document.addEventListener('DOMContentLoaded', () => {
             url: url,
             provider: provider,
             apiKey: apiKey,
-            sslVerify: true,
+            sslVerify: document.getElementById('asset-ssl-verify-toggle').checked,
             button: btn,
             errorLabel: errorLabel,
             selectElement: modelSelect,
-            progressTitleText: 'Fetching Claude Code Models',
-            successMessage: 'Models loaded for Claude Code generation.',
+            progressTitleText: 'Fetching Models',
+            successMessage: 'Models loaded.',
             onSuccess: (models) => {
                 // Pre-select if global model matches
                 const globalModel = document.getElementById('model-select').value;
@@ -4834,22 +4896,175 @@ document.addEventListener('DOMContentLoaded', () => {
         assetConfigModal.style.display = 'none';
         _activeAssetConfig = null;
     });
+    document.getElementById('close-asset-config-btn').addEventListener('click', () => {
+        assetConfigModal.style.display = 'none';
+        _activeAssetConfig = null;
+    });
+
+    let _activePluginJobId = null;
+
+    async function pollPluginGenerationJob(jobId, assetName) {
+        _activePluginJobId = jobId;
+        const cancelBtn = document.getElementById('progress-cancel-btn');
+        if (cancelBtn) cancelBtn.style.display = '';
+
+        const maxAttempts = 60;
+        for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (_activePluginJobId !== jobId) return; // superseded or canceled locally
+            try {
+                const res = await fetch('/api/plugins/jobs');
+                const data = await res.json();
+                const job = (data.jobs || []).find(j => j.job_id === jobId);
+                if (!job) continue;
+                if (job.status === 'success') {
+                    progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
+                    showAlert(`Generated "${assetName}" successfully.`, 'success');
+                    return;
+                }
+                if (job.status === 'canceled') {
+                    progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
+                    showAlert(`Generation of "${assetName}" was canceled.`, 'error');
+                    return;
+                }
+                if (job.status === 'failed') {
+                    progressModal.style.display = 'none';
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                    _activePluginJobId = null;
+                    showAlert(`Generation failed: ${job.error || job.status_detail || 'unknown error'}`, 'error');
+                    return;
+                }
+                progressMsg.innerText = job.status_detail || 'Generating...';
+            } catch (err) {
+                // keep polling through transient network errors
+            }
+        }
+        progressModal.style.display = 'none';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        _activePluginJobId = null;
+        showAlert(`Generation of "${assetName}" is taking longer than expected — check back shortly.`, 'error');
+    }
+
+    document.getElementById('progress-cancel-btn').addEventListener('click', async () => {
+        const jobId = _activePluginJobId;
+        if (!jobId) return;
+        const cancelBtn = document.getElementById('progress-cancel-btn');
+        cancelBtn.disabled = true;
+        try {
+            const res = await fetch(`/api/plugins/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            if (!data.success) {
+                showAlert('Failed to cancel: ' + (data.error || 'unknown error'), 'error');
+            }
+            // The active poll loop will notice the canceled status on its next check
+            // and close the modal itself — nothing further to do here.
+        } catch (err) {
+            showAlert('Error canceling generation: ' + err.message, 'error');
+        } finally {
+            cancelBtn.disabled = false;
+        }
+    });
+
+    // ---------------------------------------------------------------
+    // Plugins Configuration — generated MCP tools + playbooks, listed
+    // and toggled here, merged into the session-start request separately
+    // from the hand-configured kali_tools.json checkboxes.
+    // ---------------------------------------------------------------
+    let _pluginsCache = { mcp_tools: [], playbooks: [] };
+
+    async function loadPluginsIntoConfig() {
+        try {
+            const res = await fetch('/api/plugins');
+            const data = await res.json();
+            _pluginsCache.mcp_tools = Array.isArray(data.mcp_tools) ? data.mcp_tools : [];
+            _pluginsCache.playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
+        } catch (err) {
+            console.error('Failed to load plugins', err);
+            _pluginsCache.mcp_tools = [];
+            _pluginsCache.playbooks = [];
+        }
+        renderPluginMcpTools();
+        renderPluginPlaybooks();
+    }
+
+    function renderPluginMcpTools() {
+        const container = document.getElementById('plugin-mcp-tools-list');
+        const emptyState = document.getElementById('plugin-mcp-tools-empty');
+        if (!container || !emptyState) return;
+
+        container.querySelectorAll('.plugin-tool-item').forEach(el => el.remove());
+
+        if (!_pluginsCache.mcp_tools.length) {
+            emptyState.style.display = '';
+            return;
+        }
+        emptyState.style.display = 'none';
+
+        _pluginsCache.mcp_tools.forEach(entry => {
+            const manifest = entry.manifest || {};
+            const name = manifest.name || entry.folder || 'unnamed_tool';
+            const description = manifest.description || 'No description provided.';
+            const wrapper = document.createElement('label');
+            wrapper.className = 'checkbox-container plugin-tool-item';
+            wrapper.innerHTML = `
+                <input type="checkbox" class="plugin-mcp-tool-checkbox" data-plugin-folder="${escapeHtml(entry.folder || '')}">
+                <span><strong>${escapeHtml(name)}</strong>
+                    <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
+                </span>
+            `;
+            container.appendChild(wrapper);
+        });
+    }
+
+    function renderPluginPlaybooks() {
+        const container = document.getElementById('plugin-playbooks-list');
+        const emptyState = document.getElementById('plugin-playbooks-empty');
+        if (!container || !emptyState) return;
+
+        container.querySelectorAll('.plugin-playbook-item').forEach(el => el.remove());
+
+        if (!_pluginsCache.playbooks.length) {
+            emptyState.style.display = '';
+            return;
+        }
+        emptyState.style.display = 'none';
+
+        _pluginsCache.playbooks.forEach(entry => {
+            const description = entry.preview || 'Markdown playbook — a shortcut/approach that worked in a prior engagement.';
+            const wrapper = document.createElement('label');
+            wrapper.className = 'checkbox-container plugin-playbook-item';
+            wrapper.innerHTML = `
+                <input type="checkbox" class="plugin-playbook-checkbox" data-plugin-name="${escapeHtml(entry.name || '')}">
+                <span><strong>${escapeHtml(entry.name || 'unnamed_playbook')}</strong>
+                    <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
+                </span>
+            `;
+            container.appendChild(wrapper);
+        });
+    }
+
+    document.getElementById('plugins-refresh-btn')?.addEventListener('click', loadPluginsIntoConfig);
+    document.getElementById('config-plugins-tab-btn')?.addEventListener('click', loadPluginsIntoConfig);
+    loadPluginsIntoConfig();
 
     document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
         if (!_activeAssetConfig) return;
-        
+
         const provider = document.getElementById('asset-provider-select').value;
         const model = document.getElementById('asset-model-select').value;
         const apiKey = document.getElementById('asset-api-key').value.trim();
         const baseUrl = document.getElementById('asset-url-input').value.trim();
-        const tag = document.getElementById('asset-tag').value.trim();
-        const autoAdd = document.getElementById('asset-auto-add').checked;
+        const sslVerify = document.getElementById('asset-ssl-verify-toggle').checked;
         const btn = document.getElementById('confirm-asset-config-btn');
-        
+
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Starting...';
         btn.disabled = true;
-        
+
         try {
             const res = await fetch('/api/scaffolding/generate', {
                 method: 'POST',
@@ -4857,20 +5072,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     run_id: _activeAssetConfig.runId,
                     asset_name: _activeAssetConfig.assetName,
+                    kind: _activeAssetConfig.kind,
                     provider: provider,
                     model: model,
                     api_key: apiKey,
                     base_url: baseUrl,
-                    tag: tag,
-                    auto_add: autoAdd
+                    ssl_verify: sslVerify
                 })
             });
             const data = await res.json();
             if (data.success) {
                 assetConfigModal.style.display = 'none';
-                openAssetTerminal(data.term_id, _activeAssetConfig.assetName);
+                progressTitle.innerText = 'Generating Plugin';
+                progressMsg.innerText = `Sending generation request to ${model}...`;
+                progressModal.style.display = 'flex';
+                pollPluginGenerationJob(data.job_id, _activeAssetConfig.assetName);
+            } else if (data.collision) {
+                showAlert(data.error, 'error');
             } else {
-                showAlert('Failed to start Claude Code: ' + data.error, 'error');
+                showAlert('Failed to start generation: ' + data.error, 'error');
             }
         } catch (err) {
             showAlert('Error starting generation: ' + err.message, 'error');

@@ -54,3 +54,8 @@ Thumbs.db
 
 # Session logs
 runs/
+
+# Generated plugins — local by default, same treatment as runs/. A specific
+# reviewed tool/playbook can be shared deliberately later with:
+#   git add -f <path-to-manifest-and-script-or-playbook>
+plugins/

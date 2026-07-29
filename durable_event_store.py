@@ -8,9 +8,11 @@ from a sequence number after a reconnect.
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
+import threading
+import queue
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +33,27 @@ class DurableEventStore:
         self.path = path
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self._initialize()
+        self._seq_lock = threading.Lock()
+        self._next_sequences: dict[str, int] = {}
+        self._write_queue = queue.Queue()
+        self._writer_thread = threading.Thread(target=self._writer_worker, daemon=True)
+        self._writer_thread.start()
+
+    def _writer_worker(self):
+        with self._connect() as conn:
+            while True:
+                item = self._write_queue.get()
+                if item is None:
+                    break
+                try:
+                    sql, args = item
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(sql, args)
+                    conn.commit()
+                except Exception as e:
+                    print(f"[DurableEventStore] Background write error: {e}", flush=True)
+                finally:
+                    self._write_queue.task_done()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
@@ -42,6 +65,10 @@ class DurableEventStore:
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
+
+    def flush(self) -> None:
+        """Wait for the background writer to commit all pending events."""
+        self._write_queue.join()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -159,27 +186,32 @@ class DurableEventStore:
     ) -> dict[str, Any]:
         """Commit an ordered event and return the client-facing record."""
         created_at = _now()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM events WHERE run_id=?",
-                (run_id,),
-            ).fetchone()
-            sequence = int(row["next_sequence"])
-            event = {
-                **payload,
-                "type": event_type,
-                "run_id": run_id,
-                "prompt_id": prompt_id,
-                "sequence": sequence,
-                "timestamp": created_at,
-            }
-            connection.execute(
-                """INSERT INTO events(run_id, sequence, prompt_id, type, created_at, payload_json)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (run_id, sequence, prompt_id, event_type, created_at, json.dumps(event, default=str)),
-            )
-            connection.commit()
+        with self._seq_lock:
+            if run_id not in self._next_sequences:
+                with self._connect() as connection:
+                    row = connection.execute(
+                        "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM events WHERE run_id=?",
+                        (run_id,),
+                    ).fetchone()
+                    self._next_sequences[run_id] = int(row["next_sequence"])
+            sequence = self._next_sequences[run_id]
+            self._next_sequences[run_id] += 1
+            
+        event = {
+            **payload,
+            "type": event_type,
+            "run_id": run_id,
+            "prompt_id": prompt_id,
+            "sequence": sequence,
+            "timestamp": created_at,
+        }
+        
+        self._write_queue.put((
+            """INSERT INTO events(run_id, sequence, prompt_id, type, created_at, payload_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (run_id, sequence, prompt_id, event_type, created_at, json.dumps(event, default=str))
+        ))
+        
         return event
 
     def events_after(self, run_id: str, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
