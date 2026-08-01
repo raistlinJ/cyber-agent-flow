@@ -116,6 +116,10 @@
                                 <i class="ph ph-list-checks"></i>
                                 <span>Logging</span>
                             </button>
+                            <button type="button" class="config-subtab-btn" data-config-target="config-network-panel">
+                                <i class="ph ph-wifi-high"></i>
+                                <span>Network SSM</span>
+                            </button>
                         </div>
 
                         <div class="config-subtab-panel active" id="config-runtime-panel">
@@ -640,6 +644,46 @@
                                         <span>
                                             <strong>Log Session Metadata</strong>
                                             <p class="input-hint" style="margin-top: 0.3rem;">Record timestamps, model name, provider, context settings, and tool configuration for each session.</p>
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-subtab-panel" id="config-network-panel">
+                            <div class="form-section">
+                                <h2 class="section-title">
+                                    <i class="ph ph-wifi-high"></i>
+                                    Network Watcher (SSM)
+                                </h2>
+                                <p class="input-hint" style="margin-bottom: 1rem;">Configures the background packet sniffer and remote SSM model for anomaly detection.</p>
+                                
+                                <div class="input-group">
+                                    <label for="nw-interface">Network Interface</label>
+                                    <input type="text" id="nw-interface" value="eth0" placeholder="e.g. eth0, en0, wlan0">
+                                    <span class="input-hint">The interface `pyshark` will sniff continuously on.</span>
+                                </div>
+                                <div class="input-group">
+                                    <label for="nw-api-url">Remote API URL (vLLM / llama.cpp)</label>
+                                    <input type="url" id="nw-api-url" value="http://localhost:8000/v1/chat/completions" placeholder="http://remote-server:8000/v1/chat/completions">
+                                    <span class="input-hint">Must be an OpenAI-compatible completions endpoint.</span>
+                                </div>
+                                <div class="input-group">
+                                    <label for="nw-model">Model Name</label>
+                                    <input type="text" id="nw-model" value="mamba-130m" placeholder="e.g. mamba-130m, jamba-1.5-mini">
+                                    <span class="input-hint">The model name to request from the remote API.</span>
+                                </div>
+                                <div class="input-group">
+                                    <label for="nw-api-key">API Key (Optional)</label>
+                                    <input type="password" id="nw-api-key" placeholder="Bearer token if required">
+                                </div>
+                                
+                                <div class="input-group config-card-lite" style="margin-top: 1rem;">
+                                    <label class="checkbox-container" for="nw-enable-toggle">
+                                        <input type="checkbox" id="nw-enable-toggle">
+                                        <span>
+                                            <strong>Enable Network Watcher</strong>
+                                            <p class="input-hint" style="margin-top: 0.3rem;">When the service starts, a background thread will capture packets on this interface, parse ASCII payloads, and feed them continuously to the SSM model.</p>
                                         </span>
                                     </label>
                                 </div>

@@ -68,6 +68,14 @@ except Exception as _watcher_import_err:
     print(f"[app] ToolWatcher unavailable: {_watcher_import_err}", flush=True)
     _tool_watcher = None
 
+# Network Watcher — background agent that sniffs packets for SSM analysis
+try:
+    from network_watcher import NetworkWatcher
+    _network_watcher = NetworkWatcher(_event_store)
+except Exception as _nw_import_err:
+    print(f"[app] NetworkWatcher unavailable: {_nw_import_err}", flush=True)
+    _network_watcher = None
+
 # Path to runs/ directory (co-located with app.py)
 RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
 DURABLE_EVENT_DB = os.environ.get("CAF_EVENT_DB", os.path.join(RUNS_DIR, "caf_events.sqlite3"))
@@ -2935,7 +2943,39 @@ def watcher_status():
         'watching_mode': _tool_watcher.watching_mode,
         'watchdog_available': _tool_watcher.watchdog_available
     })
+    })
 
+
+@app.route('/api/network_watcher/start', methods=['POST'])
+def network_watcher_start():
+    if not _network_watcher:
+        return jsonify({'success': False, 'error': 'NetworkWatcher not available.'}), 503
+    data = request.get_json() or {}
+    run_id = data.get('run_id')
+    interface = data.get('interface', 'eth0')
+    api_url = data.get('api_url', 'http://localhost:8000/v1/chat/completions')
+    model = data.get('model', 'mamba-130m')
+    api_key = data.get('api_key', '')
+    if not run_id:
+        return jsonify({'success': False, 'error': 'run_id required'}), 400
+    try:
+        _network_watcher.start(run_id, interface, api_url, model, api_key)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/network_watcher/stop', methods=['POST'])
+def network_watcher_stop():
+    if not _network_watcher:
+        return jsonify({'success': False, 'error': 'NetworkWatcher not available.'}), 503
+    _network_watcher.stop()
+    return jsonify({'success': True})
+
+@app.route('/api/network_watcher/status', methods=['GET'])
+def network_watcher_status():
+    if not _network_watcher:
+        return jsonify({'available': False, 'running': False})
+    return jsonify(_network_watcher.status())
 
 
 @app.route('/api/session/stream')

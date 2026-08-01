@@ -1,0 +1,171 @@
+import os
+import threading
+import json
+import time
+import requests
+import queue
+import logging
+
+try:
+    import pyshark
+    _PYSHARK_AVAILABLE = True
+except ImportError:
+    _PYSHARK_AVAILABLE = False
+
+
+class NetworkWatcher:
+    def __init__(self, event_store):
+        self._thread = None
+        self._stop_event = threading.Event()
+        self.watcher_available = _PYSHARK_AVAILABLE
+        self.running = False
+        self.interface = "eth0"
+        self.api_url = "http://localhost:8000/v1/chat/completions"
+        self.model = "mamba-130m"
+        self.api_key = ""
+        self.run_id = None
+        self.event_store = event_store
+
+        self._buffer = queue.Queue()
+        self._last_flush_time = 0
+
+    def start(self, run_id: str, interface: str, api_url: str, model: str, api_key: str):
+        if not self.watcher_available:
+            raise RuntimeError("pyshark is not installed.")
+        
+        self.stop()
+        self.run_id = run_id
+        self.interface = interface
+        self.api_url = api_url
+        self.model = model
+        self.api_key = api_key
+        
+        self._stop_event.clear()
+        self.running = True
+        
+        self._thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True,
+            name="network-watcher-capture"
+        )
+        self._thread.start()
+        
+        self._analyzer_thread = threading.Thread(
+            target=self._analyzer_loop,
+            daemon=True,
+            name="network-watcher-analyzer"
+        )
+        self._analyzer_thread.start()
+        logging.info(f"[NetworkWatcher] Started on interface {self.interface} for run {self.run_id}")
+
+    def stop(self):
+        self.running = False
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
+        if hasattr(self, '_analyzer_thread') and self._analyzer_thread and self._analyzer_thread.is_alive():
+            self._analyzer_thread.join(timeout=3)
+        self._thread = None
+        self._analyzer_thread = None
+        logging.info("[NetworkWatcher] Stopped.")
+
+    def status(self) -> dict:
+        return {
+            "available": self.watcher_available,
+            "running": self.running,
+            "interface": self.interface,
+            "api_url": self.api_url,
+            "model": self.model
+        }
+
+    def _capture_loop(self):
+        try:
+            # We filter for TCP streams where data might be cleartext
+            # You can tweak the bpf_filter depending on needs (e.g. port 80, 21, 23, 53)
+            capture = pyshark.LiveCapture(
+                interface=self.interface,
+                bpf_filter="tcp and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)"
+            )
+            for packet in capture.sniff_continuously():
+                if self._stop_event.is_set():
+                    break
+                
+                try:
+                    if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
+                        # Extract raw ASCII payload
+                        raw_hex = packet.tcp.payload.replace(':', '')
+                        try:
+                            ascii_text = bytearray.fromhex(raw_hex).decode('utf-8', errors='ignore')
+                            if ascii_text.strip():
+                                self._buffer.put(ascii_text)
+                        except Exception:
+                            pass
+                except AttributeError:
+                    continue
+        except Exception as e:
+            logging.error(f"[NetworkWatcher] Capture error: {e}")
+            self.running = False
+
+    def _analyzer_loop(self):
+        while not self._stop_event.is_set():
+            batch = ""
+            # Gather available text in buffer
+            while not self._buffer.empty():
+                try:
+                    batch += self._buffer.get_nowait() + "\n"
+                except queue.Empty:
+                    break
+            
+            if batch.strip():
+                self._analyze_batch(batch)
+            
+            # Wait a bit before next batch to prevent spamming
+            time.sleep(5)
+
+    def _analyze_batch(self, batch: str):
+        prompt = (
+            "You are an anomaly detection SSM watching a live packet stream. "
+            "Analyze the following cleartext payload. If you see plaintext credentials, API keys, "
+            "or sensitive server banners, output a concise JSON alert like {\"alert\": \"Found FTP credentials\"}. "
+            "If nothing interesting is found, output nothing.\n\n"
+            "PAYLOAD:\n"
+            f"{batch[:4000]}"  # cap to 4k chars per request as safety
+        )
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 150
+        }
+
+        try:
+            resp = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+                if content and "alert" in content.lower():
+                    # Parse out alert if it is JSON or just output raw
+                    self._emit_alert(content)
+        except Exception as e:
+            logging.error(f"[NetworkWatcher] SSM API error: {e}")
+
+    def _emit_alert(self, message: str):
+        if not self.run_id or not self.event_store:
+            return
+        
+        logging.info(f"[NetworkWatcher] Alert emitted: {message}")
+        self.event_store.append_event(
+            self.run_id,
+            None,
+            "agent_alert",
+            {
+                "source": "NetworkWatcher (SSM)",
+                "message": message,
+                "urgency": "high"
+            }
+        )

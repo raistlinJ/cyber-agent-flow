@@ -54,6 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const keyloggerEnableToggle = document.getElementById('keylogger-enable-toggle');
     const logNetworkCaptureToggle = document.getElementById('log-network-capture-toggle');
     const logSyscallsToggle = document.getElementById('log-syscalls-toggle');
+
+    // Network Watcher references
+    const nwEnableToggle = document.getElementById('nw-enable-toggle');
+    const nwInterfaceInput = document.getElementById('nw-interface');
+    const nwApiUrlInput = document.getElementById('nw-api-url');
+    const nwModelInput = document.getElementById('nw-model');
+    const nwApiKeyInput = document.getElementById('nw-api-key');
+
     const configSubtabBtns = document.querySelectorAll('.config-subtab-btn');
     const configSubtabPanels = document.querySelectorAll('.config-subtab-panel');
 
@@ -2789,6 +2797,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateStatus('running', 'Stopping service…');
 
         try {
+            fetch('/api/network_watcher/stop', { method: 'POST' }).catch(() => {});
             const response = await fetch('/api/session/stop', { method: 'POST' });
             const data = await response.json();
             if (data.success) {
@@ -2919,6 +2928,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.tools && data.tools.length) {
                     setLiveToolsBadge(data.tools);
                 }
+                
+                if (nwEnableToggle && nwEnableToggle.checked) {
+                    fetch('/api/network_watcher/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            run_id: data.run_id,
+                            interface: nwInterfaceInput.value.trim() || 'eth0',
+                            api_url: nwApiUrlInput.value.trim() || 'http://localhost:8000/v1/chat/completions',
+                            model: nwModelInput.value.trim() || 'mamba-130m',
+                            api_key: nwApiKeyInput.value.trim()
+                        })
+                    }).catch(e => console.error('Failed to start network watcher', e));
+                }
+                
                 setLivePolicyBadge(data.network_policy || networkPolicy);
                 refreshLoggingChannelStatus();
                 
