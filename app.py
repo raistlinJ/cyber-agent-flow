@@ -2943,7 +2943,6 @@ def watcher_status():
         'watching_mode': _tool_watcher.watching_mode,
         'watchdog_available': _tool_watcher.watchdog_available
     })
-    })
 
 
 @app.route('/api/network_watcher/start', methods=['POST'])

@@ -82,7 +82,12 @@
                         d="M176,232a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h80A8,8,0,0,1,176,232Zm40-128a87.55,87.55,0,0,1-33.64,69.21A16.24,16.24,0,0,0,176,186v6a16,16,0,0,1-16,16H96a16,16,0,0,1-16-16v-6a16,16,0,0,0-6.23-12.66A87.59,87.59,0,0,1,40,104.49C39.74,56.83,78.26,17.14,125.88,16A88,88,0,0,1,216,104Zm-16,0a72,72,0,0,0-73.74-72c-39,.92-70.47,33.39-70.26,72.39a71.65,71.65,0,0,0,27.64,56.3A32,32,0,0,1,96,186v6h64v-6a32.15,32.15,0,0,1,12.47-25.35A71.65,71.65,0,0,0,200,104Zm-16.11-9.34a57.6,57.6,0,0,0-46.56-46.55,8,8,0,0,0-2.66,15.78c16.57,2.79,30.63,16.85,33.44,33.45A8,8,0,0,0,176,104a9,9,0,0,0,1.35-.11A8,8,0,0,0,183.89,94.66Z">
                     </path>
                     </svg>
+                    </svg>
                     <span>Recommendations</span>
+                </button>
+                <button class="nav-btn" data-target="network-watch-pane" id="nav-network-watch-btn">
+                    <i class="ph ph-wifi-high"></i>
+                    <span>Network Watch</span>
                 </button>
                 <button class="nav-btn" data-target="watcher-pane" id="nav-watcher-btn">
                     <span style="font-size:1.1rem;line-height:1">🔭</span>
@@ -115,10 +120,6 @@
                             <button type="button" class="config-subtab-btn" data-config-target="config-logging-panel">
                                 <i class="ph ph-list-checks"></i>
                                 <span>Logging</span>
-                            </button>
-                            <button type="button" class="config-subtab-btn" data-config-target="config-network-panel">
-                                <i class="ph ph-wifi-high"></i>
-                                <span>Network SSM</span>
                             </button>
                         </div>
 
@@ -650,46 +651,6 @@
                             </div>
                         </div>
 
-                        <div class="config-subtab-panel" id="config-network-panel">
-                            <div class="form-section">
-                                <h2 class="section-title">
-                                    <i class="ph ph-wifi-high"></i>
-                                    Network Watcher (SSM)
-                                </h2>
-                                <p class="input-hint" style="margin-bottom: 1rem;">Configures the background packet sniffer and remote SSM model for anomaly detection.</p>
-                                
-                                <div class="input-group">
-                                    <label for="nw-interface">Network Interface</label>
-                                    <input type="text" id="nw-interface" value="eth0" placeholder="e.g. eth0, en0, wlan0">
-                                    <span class="input-hint">The interface `pyshark` will sniff continuously on.</span>
-                                </div>
-                                <div class="input-group">
-                                    <label for="nw-api-url">Remote API URL (vLLM / llama.cpp)</label>
-                                    <input type="url" id="nw-api-url" value="http://localhost:8000/v1/chat/completions" placeholder="http://remote-server:8000/v1/chat/completions">
-                                    <span class="input-hint">Must be an OpenAI-compatible completions endpoint.</span>
-                                </div>
-                                <div class="input-group">
-                                    <label for="nw-model">Model Name</label>
-                                    <input type="text" id="nw-model" value="mamba-130m" placeholder="e.g. mamba-130m, jamba-1.5-mini">
-                                    <span class="input-hint">The model name to request from the remote API.</span>
-                                </div>
-                                <div class="input-group">
-                                    <label for="nw-api-key">API Key (Optional)</label>
-                                    <input type="password" id="nw-api-key" placeholder="Bearer token if required">
-                                </div>
-                                
-                                <div class="input-group config-card-lite" style="margin-top: 1rem;">
-                                    <label class="checkbox-container" for="nw-enable-toggle">
-                                        <input type="checkbox" id="nw-enable-toggle">
-                                        <span>
-                                            <strong>Enable Network Watcher</strong>
-                                            <p class="input-hint" style="margin-top: 0.3rem;">When the service starts, a background thread will capture packets on this interface, parse ASCII payloads, and feed them continuously to the SSM model.</p>
-                                        </span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- Service Action Buttons -->
                         <div class="action-footer">
                             <button type="button" id="start-service-btn" class="btn btn-primary" disabled>
@@ -710,6 +671,74 @@
 
                     </div>
                 </div> <!-- End Configuration Tab -->
+
+                <!-- Network Watch Tab -->
+                <div class="tab-pane" id="network-watch-pane">
+                    <div class="form-section" style="max-width: 900px; margin: 0 auto; padding-top: 2rem;">
+                        <h2 class="section-title">
+                            <i class="ph ph-wifi-high"></i>
+                            Network Watcher (SSM)
+                        </h2>
+                        <p class="input-hint" style="margin-bottom: 1rem;">Live network packet analysis using remote State Space Models (SSM).</p>
+                        
+                        <div class="input-group">
+                            <label for="nw-interface">Network Interface(s)</label>
+                            <input type="text" id="nw-interface" value="eth0" placeholder="e.g. eth0, en0, wlan0 (comma separated)">
+                            <span class="input-hint">The interface(s) to sniff continuously on.</span>
+                        </div>
+                        <div style="display: flex; gap: 1rem;">
+                            <div class="input-group" style="flex: 1;">
+                                <label for="nw-api-url">Remote API URL</label>
+                                <input type="url" id="nw-api-url" value="http://localhost:8000/v1/chat/completions" placeholder="http://remote-server:8000/v1/chat/completions">
+                            </div>
+                            <div class="input-group" style="flex: 1;">
+                                <label for="nw-model">Model Name</label>
+                                <input type="text" id="nw-model" value="mamba-130m" placeholder="e.g. mamba-130m">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="nw-api-key">API Key (Optional)</label>
+                            <input type="password" id="nw-api-key" placeholder="Bearer token if required">
+                        </div>
+                        
+                        <div class="action-footer" style="margin-top: 1rem;">
+                            <button type="button" id="nw-start-btn" class="btn btn-primary">
+                                <i class="ph ph-play"></i>
+                                <span>Start Watcher</span>
+                            </button>
+                            <button type="button" id="nw-stop-btn" class="btn btn-danger hidden">
+                                <i class="ph ph-stop"></i>
+                                <span>Stop Watcher</span>
+                            </button>
+                        </div>
+
+                        <div class="metrics-dashboard" style="margin-top: 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
+                                <h4>CPU Usage</h4>
+                                <div id="nw-metric-cpu" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">--%</div>
+                            </div>
+                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
+                                <h4>Memory Used</h4>
+                                <div id="nw-metric-mem" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">-- / -- MB</div>
+                            </div>
+                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
+                                <h4>Packets Captured</h4>
+                                <div id="nw-metric-packets" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">0</div>
+                            </div>
+                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
+                                <h4>Avg Inference</h4>
+                                <div id="nw-metric-inference" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">-- s</div>
+                            </div>
+                        </div>
+                        
+                        <div class="log-container" style="margin-top: 2rem; background: var(--bg-surface-2); border-radius: 8px; border: 1px solid var(--border-subtle); padding: 1rem;">
+                            <h3 style="margin-bottom: 1rem;"><i class="ph ph-terminal-window"></i> Live SSM Findings</h3>
+                            <div id="nw-live-log" style="font-family: var(--font-mono); font-size: 0.85rem; height: 300px; overflow-y: auto; white-space: pre-wrap;">
+                                <div style="color: var(--text-muted);">Waiting for network watcher to start...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Past Sessions Tab -->
                 <div class="tab-pane" id="sessions-pane">

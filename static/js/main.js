@@ -3627,6 +3627,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 break;
             }
+            case 'agent_alert':
+                if (event.source === 'NetworkWatcher (SSM)' && typeof nwLiveLog !== 'undefined' && nwLiveLog) {
+                    if (nwLiveLog.innerHTML.includes('Waiting for network watcher')) {
+                        nwLiveLog.innerHTML = '';
+                    }
+                    nwLiveLog.innerHTML += `<div style="margin-bottom: 8px;"><strong>[${new Date().toLocaleTimeString()}] ALERT:</strong> ${escapeHtml(event.message)}</div>`;
+                    nwLiveLog.scrollTop = nwLiveLog.scrollHeight;
+                }
+                appendLog(`<span class="log-label" style="background-color: var(--status-error); color: white;">🚨 Alert</span> ${escapeHtml(event.source)}: ${escapeHtml(event.message)}`, 'log-status');
+                break;
             case 'context_usage': updateContextBar(event); break;
             case 'service_started': appendLog(`<span class="log-label">🟢 Service Started</span>`, 'log-done'); break;
             case 'service_stopped':
@@ -5233,6 +5243,87 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatTabBar.scrollLeft += evt.deltaY;
             }
         });
+    }
+    // Network Watcher UI logic
+    if (nwStartBtn) {
+        nwStartBtn.addEventListener('click', async () => {
+            nwStartBtn.disabled = true;
+            try {
+                const response = await fetch('/api/network_watcher/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        run_id: _currentRunId || 'standalone-watch',
+                        interface: nwInterfaceInput.value.trim() || 'eth0',
+                        api_url: nwApiUrlInput.value.trim() || 'http://localhost:8000/v1/chat/completions',
+                        model: nwModelInput.value.trim() || 'mamba-130m',
+                        api_key: nwApiKeyInput.value.trim()
+                    })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    nwStartBtn.classList.add('hidden');
+                    nwStopBtn.classList.remove('hidden');
+                    if (nwLiveLog) {
+                        nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
+                    }
+                    startNwPolling();
+                } else {
+                    alert('Failed to start Network Watcher: ' + data.error);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Error starting Network Watcher.');
+            }
+            nwStartBtn.disabled = false;
+        });
+    }
+
+    if (nwStopBtn) {
+        nwStopBtn.addEventListener('click', async () => {
+            nwStopBtn.disabled = true;
+            try {
+                await fetch('/api/network_watcher/stop', { method: 'POST' });
+                nwStopBtn.classList.add('hidden');
+                nwStartBtn.classList.remove('hidden');
+                stopNwPolling();
+                if (nwLiveLog) {
+                    nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            nwStopBtn.disabled = false;
+        });
+    }
+
+    function startNwPolling() {
+        if (nwStatusInterval) return;
+        nwStatusInterval = setInterval(async () => {
+            try {
+                const res = await fetch('/api/network_watcher/status');
+                const data = await res.json();
+                if (data.running && data.metrics) {
+                    if (nwMetricCpu) nwMetricCpu.textContent = `${data.metrics.cpu_percent.toFixed(1)}%`;
+                    if (nwMetricMem) nwMetricMem.textContent = `${data.metrics.mem_used_mb} / ${data.metrics.mem_used_mb + data.metrics.mem_free_mb} MB`;
+                    if (nwMetricPackets) nwMetricPackets.textContent = data.metrics.packets_captured;
+                    if (nwMetricInference) nwMetricInference.textContent = `${data.metrics.avg_inference_sec} s`;
+                }
+            } catch (e) {
+                console.error('NW Polling error', e);
+            }
+        }, 3000);
+    }
+
+    function stopNwPolling() {
+        if (nwStatusInterval) {
+            clearInterval(nwStatusInterval);
+            nwStatusInterval = null;
+        }
+        if (nwMetricCpu) nwMetricCpu.textContent = '--%';
+        if (nwMetricMem) nwMetricMem.textContent = '-- / -- MB';
+        if (nwMetricPackets) nwMetricPackets.textContent = '0';
+        if (nwMetricInference) nwMetricInference.textContent = '-- s';
     }
 
 });

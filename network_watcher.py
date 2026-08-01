@@ -5,6 +5,7 @@ import time
 import requests
 import queue
 import logging
+import psutil
 
 try:
     import pyshark
@@ -28,6 +29,12 @@ class NetworkWatcher:
 
         self._buffer = queue.Queue()
         self._last_flush_time = 0
+        
+        # Metrics
+        self.packets_captured = 0
+        self.bytes_extracted = 0
+        self.total_inference_time = 0.0
+        self.inference_count = 0
 
     def start(self, run_id: str, interface: str, api_url: str, model: str, api_key: str):
         if not self.watcher_available:
@@ -39,6 +46,12 @@ class NetworkWatcher:
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
+        
+        # Reset metrics
+        self.packets_captured = 0
+        self.bytes_extracted = 0
+        self.total_inference_time = 0.0
+        self.inference_count = 0
         
         self._stop_event.clear()
         self.running = True
@@ -70,20 +83,40 @@ class NetworkWatcher:
         logging.info("[NetworkWatcher] Stopped.")
 
     def status(self) -> dict:
+        cpu_percent = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        
+        avg_inference = 0.0
+        if self.inference_count > 0:
+            avg_inference = self.total_inference_time / self.inference_count
+            
         return {
             "available": self.watcher_available,
             "running": self.running,
             "interface": self.interface,
             "api_url": self.api_url,
-            "model": self.model
+            "model": self.model,
+            "metrics": {
+                "cpu_percent": cpu_percent,
+                "mem_used_mb": mem.used // (1024 * 1024),
+                "mem_free_mb": mem.available // (1024 * 1024),
+                "mem_percent": mem.percent,
+                "packets_captured": self.packets_captured,
+                "bytes_extracted": self.bytes_extracted,
+                "avg_inference_sec": round(avg_inference, 2)
+            }
         }
 
     def _capture_loop(self):
         try:
-            # We filter for TCP streams where data might be cleartext
-            # You can tweak the bpf_filter depending on needs (e.g. port 80, 21, 23, 53)
+            # Parse interfaces: if comma separated, make a list
+            if isinstance(self.interface, str) and ',' in self.interface:
+                ifaces = [i.strip() for i in self.interface.split(',') if i.strip()]
+            else:
+                ifaces = self.interface
+
             capture = pyshark.LiveCapture(
-                interface=self.interface,
+                interface=ifaces,
                 bpf_filter="tcp and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)"
             )
             for packet in capture.sniff_continuously():
@@ -91,12 +124,14 @@ class NetworkWatcher:
                     break
                 
                 try:
+                    self.packets_captured += 1
                     if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
                         # Extract raw ASCII payload
                         raw_hex = packet.tcp.payload.replace(':', '')
                         try:
                             ascii_text = bytearray.fromhex(raw_hex).decode('utf-8', errors='ignore')
                             if ascii_text.strip():
+                                self.bytes_extracted += len(ascii_text)
                                 self._buffer.put(ascii_text)
                         except Exception:
                             pass
@@ -125,8 +160,9 @@ class NetworkWatcher:
     def _analyze_batch(self, batch: str):
         prompt = (
             "You are an anomaly detection SSM watching a live packet stream. "
-            "Analyze the following cleartext payload. If you see plaintext credentials, API keys, "
-            "or sensitive server banners, output a concise JSON alert like {\"alert\": \"Found FTP credentials\"}. "
+            "Describe anything interesting; meaning ascii or anything that can be inferred from it. "
+            "If you see plaintext credentials, API keys, sensitive server banners, or anything notable, "
+            "output a concise JSON alert like {\"alert\": \"<description>\"}. "
             "If nothing interesting is found, output nothing.\n\n"
             "PAYLOAD:\n"
             f"{batch[:4000]}"  # cap to 4k chars per request as safety
@@ -144,7 +180,12 @@ class NetworkWatcher:
         }
 
         try:
+            start_time = time.time()
             resp = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            elapsed = time.time() - start_time
+            self.total_inference_time += elapsed
+            self.inference_count += 1
+            
             if resp.status_code == 200:
                 data = resp.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
