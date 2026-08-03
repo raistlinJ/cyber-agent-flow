@@ -800,6 +800,7 @@ If nothing interesting is found, say that clearly.`
   function _formattedNwResponse(entry) {
     if (entry.analysis) return entry.analysis;
     if (entry.outcome === 'pending') return 'Awaiting the model response…';
+    if (entry.engine === 'llamacpp_ssm' && entry.error) return `SSM runtime failed: ${entry.error}`;
     try {
       const parsed = JSON.parse(entry.response || '{}');
       const content = parsed?.choices?.[0]?.message?.content || parsed?.message?.content;
@@ -811,16 +812,38 @@ If nothing interesting is found, say that clearly.`
     return entry.response || 'No findings reported for this packet batch.';
   }
 
+  function _nwFindingEntries(interactions) {
+    // A stream produces an observation for every decoded packet. Keep the
+    // findings panel useful by retaining its newest observation per flow (and
+    // its newest error per flow), while preserving all non-stream findings.
+    const entries = Array.isArray(interactions) ? interactions : [];
+    const visible = [];
+    const streamLatest = new Map();
+
+    entries.forEach((entry, index) => {
+      if (entry.outcome === 'pending') return;
+      if (entry.engine !== 'llamacpp_ssm') {
+        visible.push({ entry, index });
+        return;
+      }
+
+      const flow = entry.request?.flow || 'unknown flow';
+      const kind = entry.outcome === 'success' ? 'observation' : 'error';
+      streamLatest.set(`${kind}:${flow}`, { entry, index });
+    });
+
+    return visible.concat([...streamLatest.values()])
+      .sort((left, right) => left.index - right.index)
+      .map(({ entry }) => entry);
+  }
+
   function _renderNwFindings(interactions) {
     const list = $('nw-findings-list');
     const empty = $('nw-findings-empty');
     const count = $('nw-findings-count');
     if (!list || !empty || !count) return;
 
-    const findings = (Array.isArray(interactions) ? interactions : [])
-      .filter((entry) => entry.outcome !== 'pending' && (
-        entry.engine !== 'llamacpp_ssm' || String(entry.analysis || '').startsWith('Alert')
-      ));
+    const findings = _nwFindingEntries(interactions);
     count.textContent = findings.length ? `(${findings.length})` : '';
     empty.style.display = findings.length ? 'none' : '';
     list.replaceChildren();
@@ -832,7 +855,8 @@ If nothing interesting is found, say that clearly.`
 
       const header = document.createElement('div');
       header.style.cssText = 'display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.4rem; font-size:0.78rem; color:var(--text-secondary);';
-      header.textContent = `${_formatInteractionTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+      const flow = entry.engine === 'llamacpp_ssm' ? entry.request?.flow : null;
+      header.textContent = `${_formatInteractionTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'}${flow ? ` · ${flow}` : ''} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
 
       const response = document.createElement('div');
       response.style.cssText = `white-space:pre-wrap; overflow-wrap:anywhere; font-size:0.88rem; line-height:1.5; color:${isError ? 'var(--error)' : 'var(--text-primary)'};`;

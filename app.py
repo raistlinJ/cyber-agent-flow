@@ -3179,10 +3179,10 @@ def network_watcher_live_results():
 
     <section class="findings-panel">
         <div class="findings-header">
-            <span>✨ SSM Stream Alerts <span id="findings-count"></span></span>
-            <small>Threshold-crossing stream scores</small>
+            <span>✨ SSM Stream Findings <span id="findings-count"></span></span>
+            <small>Latest per-flow scores and runtime errors</small>
         </div>
-        <div id="findings-empty" class="findings-empty">No SSM alerts yet. Flows appear here when they cross the configured threshold.</div>
+        <div id="findings-empty" class="findings-empty">No SSM stream observations yet. Scores and runtime errors appear here as decoded packets are processed.</div>
         <div id="findings-list" class="findings-list"></div>
     </section>
 
@@ -3228,6 +3228,7 @@ def network_watcher_live_results():
         function formattedResponse(entry) {
             if (entry.analysis) return entry.analysis;
             if (entry.outcome === 'pending') return 'Awaiting the model response…';
+            if (entry.engine === 'llamacpp_ssm' && entry.error) return `SSM runtime failed: ${entry.error}`;
             try {
                 const parsed = JSON.parse(entry.response || '{}');
                 const content = parsed?.choices?.[0]?.message?.content || parsed?.message?.content;
@@ -3239,11 +3240,33 @@ def network_watcher_live_results():
             return entry.response || 'No findings reported for this packet batch.';
         }
 
+        function streamFindingEntries(interactions) {
+            // A stream scores every event. The compact findings panel keeps the
+            // newest score and newest error for each flow instead of growing
+            // once per packet.
+            const entries = Array.isArray(interactions) ? interactions : [];
+            const visible = [];
+            const streamLatest = new Map();
+            entries.forEach((entry, index) => {
+                if (entry.outcome === 'pending') return;
+                if (entry.engine !== 'llamacpp_ssm') {
+                    visible.push({ entry, index });
+                    return;
+                }
+                const flow = entry.request?.flow || 'unknown flow';
+                const kind = entry.outcome === 'success' ? 'observation' : 'error';
+                streamLatest.set(`${kind}:${flow}`, { entry, index });
+            });
+            return visible.concat([...streamLatest.values()])
+                .sort((left, right) => left.index - right.index)
+                .map(({ entry }) => entry);
+        }
+
         function renderFindings(interactions) {
             const list = document.getElementById('findings-list');
             const empty = document.getElementById('findings-empty');
             const count = document.getElementById('findings-count');
-            const findings = (Array.isArray(interactions) ? interactions : []).filter((entry) => entry.outcome !== 'pending' && (entry.engine !== 'llamacpp_ssm' || String(entry.analysis || '').startsWith('Alert')));
+            const findings = streamFindingEntries(interactions);
             count.textContent = findings.length ? `(${findings.length})` : '';
             empty.style.display = findings.length ? 'none' : '';
             list.replaceChildren();
@@ -3254,7 +3277,8 @@ def network_watcher_live_results():
                 card.className = `finding${isError ? ' error' : ''}`;
                 const meta = document.createElement('div');
                 meta.className = 'finding-meta';
-                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+                const flow = entry.engine === 'llamacpp_ssm' ? entry.request?.flow : null;
+                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'}${flow ? ` · ${flow}` : ''} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
                 const content = document.createElement('div');
                 content.className = 'finding-content';
                 content.textContent = formattedResponse(entry);
