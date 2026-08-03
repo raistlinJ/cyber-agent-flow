@@ -229,8 +229,8 @@ If nothing interesting is found, say that clearly.`
     if (pythonSettings) pythonSettings.style.display = '';
     if (pythonPacketFields) pythonPacketFields.style.display = suricata ? 'none' : '';
     if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
-    if (captureHeading) captureHeading.textContent = suricata ? 'Suricata capture interface' : 'PyShark decoder and fields';
-    if (captureSummary) captureSummary.textContent = suricata ? 'Required to launch Suricata' : 'Interfaces and decoded packet data';
+    if (captureHeading) captureHeading.textContent = suricata ? 'Suricata capture interface' : 'PyShark capture interface';
+    if (captureSummary) captureSummary.textContent = suricata ? 'Required to launch Suricata' : 'Choose packet capture interfaces';
     if (interfaceLabel) interfaceLabel.textContent = suricata ? 'Suricata capture interface' : 'Network Interface(s)';
     if (interfaceHint) interfaceHint.textContent = suricata
       ? 'Select exactly one interface. The watcher starts Suricata on it.'

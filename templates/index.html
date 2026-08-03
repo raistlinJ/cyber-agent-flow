@@ -1328,7 +1328,7 @@
                                     </details>
 
                                     <details id="nw-python-source-settings" class="watcher-config-section" open>
-                                    <summary><span id="nw-capture-interface-heading">PyShark decoder and fields</span><small id="nw-capture-interface-summary">Interfaces and decoded packet data</small></summary>
+                                    <summary><span id="nw-capture-interface-heading">PyShark capture interface</span><small id="nw-capture-interface-summary">Choose packet capture interfaces</small></summary>
                                     <div class="watcher-config-section-body">
                                     <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service, which retains its own per-flow state.</p>
                                     <div class="input-group" style="margin:0">
@@ -1338,8 +1338,13 @@
                                         </div>
                                         <span id="nw-interface-hint" class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
                                     </div>
+                                    </div>
+                                    </details>
 
-                                    <div id="nw-python-packet-fields" class="nw-packet-fields">
+                                    <details id="nw-python-packet-fields" class="watcher-config-section" open>
+                                    <summary><span>PyShark decoded packet data</span><small>Choose fields by network layer</small></summary>
+                                    <div class="watcher-config-section-body">
+                                    <div class="nw-packet-fields">
                                         <div>
                                             <label class="nw-packet-fields-title">Packet data sent to the SSM/LLM</label>
                                             <p class="input-hint">Choose the decoded fields to parse. All current fields are selected by default.</p>
