@@ -6,5 +6,6 @@ pynput>=1.7.6
 asyncssh
 psutil
 pytest
+llama-cpp-python>=0.3.0
 pytest-asyncio
 prompt_toolkit>=3.0.30
