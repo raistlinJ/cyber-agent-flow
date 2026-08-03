@@ -232,6 +232,37 @@ def test_remote_ssm_endpoint_uses_the_explicit_stream_contract():
     assert watcher._remote_ssm_endpoint() == "https://gpu.example.test/v1/ssm/events"
 
 
+def test_remote_ssm_receives_the_continuous_stream_policy(monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    watcher.api_url = "https://gpu.example.test"
+    watcher.model = "recurrent-test"
+    watcher.api_key = ""
+    watcher.ssl_verify = True
+    watcher.request_timeout = 60
+    watcher.system_prompt = "Score behavior changes by flow."
+    sent = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"score": 0.8, "active_flows": 4}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(network_watcher.requests, "post", fake_post)
+
+    observation = watcher._observe_remote_ssm("tcp|a:1|b:443", {"p": "tcp"})
+
+    assert sent["url"] == "https://gpu.example.test/v1/ssm/events"
+    assert sent["json"]["system_prompt"] == "Score behavior changes by flow."
+    assert observation.score == 0.8
+
+
 def test_cyber_agent_flow_context_is_bounded_and_only_sent_on_updates(tmp_path, monkeypatch):
     transcript = tmp_path / "runs" / "run-1" / "transcript.md"
     transcript.parent.mkdir(parents=True)
