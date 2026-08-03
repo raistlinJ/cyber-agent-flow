@@ -219,12 +219,14 @@ If nothing interesting is found, say that clearly.`
   function _updateCaptureSourceUi() {
     const suricata = _isSuricataSource();
     const pythonSettings = $('nw-python-source-settings');
+    const pythonPacketFields = $('nw-python-packet-fields');
     const suricataSettings = $('nw-suricata-source-settings');
     const evePathGroup = $('nw-suricata-eve-path-group');
-    if (pythonSettings) pythonSettings.style.display = !suricata ? '' : 'none';
+    if (pythonSettings) pythonSettings.style.display = '';
+    if (pythonPacketFields) pythonPacketFields.style.display = suricata ? 'none' : '';
     if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
     if (evePathGroup) evePathGroup.style.display = suricata ? '' : 'none';
-    if (!suricata) _fetchNetworkInterfaces();
+    _fetchNetworkInterfaces();
   }
 
   function _updateCyberAgentFlowDataControls() {
@@ -798,6 +800,12 @@ If nothing interesting is found, say that clearly.`
       const localSsm = _currentMode === 'continuous' && modeConfig.analysis_engine === 'llamacpp_ssm';
       if (localSsm && !modeConfig.ssm_model_path) { _showWatcherStartError('Enter the local recurrent GGUF model path first.', true); btn.disabled = false; return; }
       if (!localSsm && !model) { _showWatcherStartError('Select a model first.'); btn.disabled = false; return; }
+      const selectedInterfaces = Array.from(document.querySelectorAll('.nw-iface-cb:checked')).map((checkbox) => checkbox.value);
+      if (modeConfig.capture_source === 'suricata_eve' && selectedInterfaces.length !== 1) {
+        _showWatcherStartError('Select exactly one interface for Suricata EVE mode.', localSsm);
+        btn.disabled = false;
+        return;
+      }
       const errEl = $('watcher-fetch-error');
       if (errEl) errEl.style.display = 'none';
       const ssmErrEl = $('nw-ssm-start-error');
@@ -807,8 +815,7 @@ If nothing interesting is found, say that clearly.`
         const timeout = parseInt($('watcher-timeout-select')?.value || '60');
         const systemPrompt = $('watcher-system-prompt')?.value || '';
         let requestBody = { url, model, provider, api_key: apiKey, ssl_verify: ssl, timeout, system_prompt: systemPrompt, ...modeConfig };
-        const cbs = document.querySelectorAll('.nw-iface-cb:checked');
-        requestBody.interfaces = modeConfig.capture_source === 'python' ? Array.from(cbs).map(cb => cb.value) : [];
+        requestBody.interfaces = selectedInterfaces;
 
         const res = await fetch('/api/network_watcher/start', {
           method: 'POST',

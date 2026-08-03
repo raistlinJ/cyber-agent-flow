@@ -9,6 +9,7 @@ import logging
 import psutil
 import shutil
 import subprocess
+import re
 from datetime import datetime
 from ssm_stream import LlamaCppSsmRuntime, SsmObservation, packet_flow_key, packet_stream_event
 
@@ -107,6 +108,7 @@ class NetworkWatcher:
         self._caf_context_last_check = 0.0
         self._ssm_runtime = None
         self._last_alert_by_flow = {}
+        self._suricata_process = None
 
         self._buffer = queue.Queue(maxsize=500)
         self._last_flush_time = 0
@@ -393,6 +395,15 @@ class NetworkWatcher:
         self.clear_interactions()
         self._buffer = queue.Queue(maxsize=500)
 
+        if self.capture_source == "suricata_eve":
+            try:
+                self._start_suricata_capture()
+            except Exception:
+                if self._ssm_runtime:
+                    self._ssm_runtime.stop()
+                    self._ssm_runtime = None
+                raise
+
         self._stop_event.clear()
         self.running = True
 
@@ -477,6 +488,38 @@ class NetworkWatcher:
             return f"Suricata EVE JSON ({self.suricata_eve_path})"
         return f"Python packet decoder on interface {self.interface}"
 
+    def _start_suricata_capture(self):
+        """Launch Suricata for one selected live interface before tailing EVE."""
+        selected_interfaces = [value.strip() for value in str(self.interface or "").split(",") if value.strip()]
+        if len(selected_interfaces) != 1:
+            raise RuntimeError("Suricata EVE mode requires exactly one selected network interface.")
+        interface = selected_interfaces[0]
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]+", interface):
+            raise RuntimeError("Suricata EVE mode received an invalid network interface name.")
+        executable = self.suricata_status.get("executable") or shutil.which("suricata")
+        if not executable:
+            raise RuntimeError("Suricata is not installed or not on PATH.")
+
+        log_directory = os.path.dirname(os.path.abspath(self.suricata_eve_path))
+        if not log_directory:
+            raise RuntimeError("Enter a valid Suricata EVE JSON path.")
+        try:
+            os.makedirs(log_directory, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"Could not create Suricata log directory {log_directory}: {exc}") from exc
+
+        command = [executable, "-i", interface, "-l", log_directory]
+        try:
+            self._suricata_process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Could not start Suricata on {interface}: {exc}") from exc
+        self._add_log("info", f"Started Suricata on {interface}; writing EVE under {log_directory}.")
+
     def _refresh_suricata_status(self, include_version: bool = True) -> dict:
         """Return local Suricata readiness without modifying the host system."""
         executable = shutil.which("suricata")
@@ -508,6 +551,14 @@ class NetworkWatcher:
         if self._ssm_runtime:
             self._ssm_runtime.stop()
             self._ssm_runtime = None
+        if self._suricata_process:
+            if self._suricata_process.poll() is None:
+                self._suricata_process.terminate()
+                try:
+                    self._suricata_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._suricata_process.kill()
+            self._suricata_process = None
         self._add_log("info", "NetworkWatcher stopped.")
         logging.info("[NetworkWatcher] Stopped.")
 
@@ -648,6 +699,11 @@ class NetworkWatcher:
         self._add_log("info", f"Tailing Suricata EVE JSON: {self.suricata_eve_path}")
         try:
             while not self._stop_event.is_set():
+                if self._suricata_process and self._suricata_process.poll() is not None:
+                    self.capture_error = "Suricata exited before the watcher was stopped. Check its local configuration and capture permissions."
+                    self._add_log("error", self.capture_error)
+                    self.running = False
+                    return
                 try:
                     stat = os.stat(self.suricata_eve_path)
                     rotated = inode is not None and inode != stat.st_ino

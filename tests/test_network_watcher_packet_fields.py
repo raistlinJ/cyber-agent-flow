@@ -204,3 +204,31 @@ def test_suricata_readiness_gate_blocks_eve_mode_when_binary_is_missing(monkeypa
             "run", "ignored", "", "", "",
             capture_source="suricata_eve",
         )
+
+
+def test_suricata_mode_launches_the_selected_interface_and_uses_eve_log_directory(tmp_path, monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    watcher.interface = "en0"
+    watcher.suricata_eve_path = str(tmp_path / "suricata" / "eve.json")
+    watcher.suricata_status = {"available": True, "executable": "/usr/local/bin/suricata", "version": ""}
+    commands = []
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(network_watcher.subprocess, "Popen", lambda command, **_kwargs: commands.append(command) or fake_process)
+
+    watcher._start_suricata_capture()
+
+    assert commands == [["/usr/local/bin/suricata", "-i", "en0", "-l", str(tmp_path / "suricata")]]
+    assert watcher._suricata_process is fake_process
+
+
+def test_suricata_mode_requires_exactly_one_interface():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.interface = "en0,en1"
+
+    with pytest.raises(RuntimeError, match="exactly one selected network interface"):
+        watcher._start_suricata_capture()
