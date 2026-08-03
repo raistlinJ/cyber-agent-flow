@@ -1181,10 +1181,27 @@
                                     <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
                                         <div class="input-group nw-ssm-model-path" style="margin:0">
                                             <label for="nw-ssm-model-path">Local recurrent GGUF model path</label>
-                                            <div class="input-with-icon">
-                                                <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
-                                                <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
+                                            <div style="display:flex;gap:0.5rem;align-items:center">
+                                                <div class="input-with-icon" style="flex:1">
+                                                    <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                    <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
+                                                </div>
+                                                <button type="button" id="nw-fetch-local-models-btn" class="btn btn-secondary" style="width:auto;padding:0.6rem 0.85rem;flex-shrink:0" title="Find local GGUF models">
+                                                    <i class="ph ph-folder-open"></i> Fetch
+                                                </button>
                                             </div>
+                                            <div class="input-with-icon" style="margin-top:0.5rem">
+                                                <i class="ph ph-folder icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                <input type="text" id="nw-ssm-model-root" placeholder="Optional model folder to scan recursively" autocomplete="off">
+                                            </div>
+                                            <div class="select-wrapper" style="margin-top:0.5rem">
+                                                <i class="ph ph-robot icon-left"></i>
+                                                <select id="nw-local-model-select" disabled>
+                                                    <option value="" selected>Fetch local GGUF models first</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <div id="nw-local-model-fetch-status" class="input-hint" style="display:none;margin-top:0.45rem"></div>
                                             <span class="input-hint">This path is on the machine running the watcher. The model must be a llama.cpp-supported recurrent/SSM GGUF, not a standard transformer GGUF.</span>
                                         </div>
                                         <div class="nw-config-grid">

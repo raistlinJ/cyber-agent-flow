@@ -110,6 +110,7 @@ If nothing interesting is found, say that clearly.`
         packetFields,
         analysisEngine: $('nw-analysis-engine')?.value,
         ssmModelPath: $('nw-ssm-model-path')?.value,
+        ssmModelRoot: $('nw-ssm-model-root')?.value,
         ssmGpuLayers: $('nw-ssm-gpu-layers')?.value,
         ssmContextTokens: $('nw-ssm-context-tokens')?.value,
         ssmMaxFlows: $('nw-ssm-max-flows')?.value,
@@ -161,6 +162,7 @@ If nothing interesting is found, say that clearly.`
       }
       if (settings.analysisEngine && $('nw-analysis-engine')) $('nw-analysis-engine').value = settings.analysisEngine;
       if (settings.ssmModelPath !== undefined && $('nw-ssm-model-path')) $('nw-ssm-model-path').value = settings.ssmModelPath;
+      if (settings.ssmModelRoot !== undefined && $('nw-ssm-model-root')) $('nw-ssm-model-root').value = settings.ssmModelRoot;
       if (settings.ssmGpuLayers && $('nw-ssm-gpu-layers')) $('nw-ssm-gpu-layers').value = settings.ssmGpuLayers;
       if (settings.ssmContextTokens && $('nw-ssm-context-tokens')) $('nw-ssm-context-tokens').value = settings.ssmContextTokens;
       if (settings.ssmMaxFlows && $('nw-ssm-max-flows')) $('nw-ssm-max-flows').value = settings.ssmMaxFlows;
@@ -545,6 +547,75 @@ If nothing interesting is found, say that clearly.`
     } finally {
       btn.disabled = false;
       btn.querySelector('i')?.classList.remove('spin');
+    }
+  }
+
+  function _formatLocalModelSize(sizeBytes) {
+    const size = Number(sizeBytes) || 0;
+    if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+    if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  async function _fetchLocalSsmModels() {
+    const button = $('nw-fetch-local-models-btn');
+    const selector = $('nw-local-model-select');
+    const root = ($('nw-ssm-model-root')?.value || '').trim();
+    const status = $('nw-local-model-fetch-status');
+    if (!button || !selector) return;
+
+    if (status) status.style.display = 'none';
+    button.disabled = true;
+    button.querySelector('i')?.classList.add('spin');
+    try {
+      const response = await fetch('/api/network_watcher/local-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root }),
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'Could not search local GGUF models.');
+      const models = Array.isArray(data.models) ? data.models : [];
+      if (!models.length) {
+        selector.innerHTML = '<option value="" selected>No local GGUF models found</option>';
+        selector.disabled = true;
+        if (status) {
+          const roots = (data.search_roots || []).join(', ');
+          status.textContent = roots
+            ? `No .gguf files found below: ${roots}`
+            : 'No readable model folders were found. Enter a local model folder and fetch again.';
+          status.style.display = '';
+          status.style.color = 'var(--text-secondary)';
+        }
+        return;
+      }
+
+      const currentPath = $('nw-ssm-model-path')?.value || '';
+      selector.innerHTML = models.map((model) => {
+        const description = `${model.relative_path || model.label} · ${_formatLocalModelSize(model.size_bytes)}`;
+        return `<option value="${_esc(model.id)}">${_esc(description)}</option>`;
+      }).join('');
+      selector.disabled = false;
+      if (currentPath && [...selector.options].some((option) => option.value === currentPath)) {
+        selector.value = currentPath;
+      }
+      if (status) {
+        const suffix = data.truncated ? ' (showing the first 1,000)' : '';
+        status.textContent = `Found ${models.length} local GGUF model${models.length === 1 ? '' : 's'}${suffix}.`;
+        status.style.display = '';
+        status.style.color = 'var(--success)';
+      }
+    } catch (error) {
+      selector.innerHTML = '<option value="" selected>Fetch local GGUF models first</option>';
+      selector.disabled = true;
+      if (status) {
+        status.textContent = error.message || 'Could not search local GGUF models.';
+        status.style.display = '';
+        status.style.color = 'var(--error)';
+      }
+    } finally {
+      button.disabled = false;
+      button.querySelector('i')?.classList.remove('spin');
     }
   }
 
@@ -1230,6 +1301,14 @@ If nothing interesting is found, say that clearly.`
     $('nw-analysis-engine')?.addEventListener('change', () => { _updateNetworkEngineUi(); _saveFormSettings(); });
     ['nw-ssm-model-path', 'nw-ssm-gpu-layers', 'nw-ssm-context-tokens', 'nw-ssm-max-flows', 'nw-ssm-alert-threshold', 'nw-ssm-alert-cooldown'].forEach((id) => {
       $(id)?.addEventListener(id === 'nw-ssm-model-path' ? 'input' : 'change', () => { _updateStartBtnState(); _saveFormSettings(); });
+    });
+    $('nw-fetch-local-models-btn')?.addEventListener('click', _fetchLocalSsmModels);
+    $('nw-ssm-model-root')?.addEventListener('input', _saveFormSettings);
+    $('nw-local-model-select')?.addEventListener('change', () => {
+      const path = $('nw-local-model-select')?.value || '';
+      if ($('nw-ssm-model-path') && path) $('nw-ssm-model-path').value = path;
+      _updateStartBtnState();
+      _saveFormSettings();
     });
     $('watcher-model-select')?.addEventListener('change', () => {
       _updateSameLlmIndicator();

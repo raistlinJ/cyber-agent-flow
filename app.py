@@ -27,6 +27,64 @@ except Exception as _system_loggers_import_err:
 
 app = Flask(__name__)
 
+LOCAL_GGUF_MODEL_SEARCH_ENV = "CYBER_AGENT_FLOW_GGUF_DIR"
+MAX_LOCAL_GGUF_MODEL_RESULTS = 1_000
+MAX_LOCAL_GGUF_SEARCH_DEPTH = 12
+
+
+def _default_local_gguf_search_roots() -> list[str]:
+    """Return small, explicit model roots; recursive scanning happens below them."""
+    roots = [
+        os.environ.get(LOCAL_GGUF_MODEL_SEARCH_ENV, ""),
+        os.path.join(app.root_path, "models"),
+        os.path.expanduser("~/models"),
+        "/models",
+    ]
+    unique_roots = []
+    for root in roots:
+        normalized = os.path.abspath(os.path.expanduser(root)) if root else ""
+        if normalized and normalized not in unique_roots:
+            unique_roots.append(normalized)
+    return unique_roots
+
+
+def _discover_local_gguf_models(search_roots: list[str]) -> tuple[list[dict], list[str]]:
+    """Find GGUF files below trusted operator-selected roots without following links."""
+    models = []
+    scanned_roots = []
+    for search_root in search_roots:
+        root = os.path.abspath(os.path.expanduser(str(search_root or "")))
+        if not os.path.isdir(root):
+            continue
+        scanned_roots.append(root)
+        root_depth = root.rstrip(os.sep).count(os.sep)
+        for directory, subdirectories, filenames in os.walk(root, followlinks=False):
+            depth = directory.rstrip(os.sep).count(os.sep) - root_depth
+            if depth >= MAX_LOCAL_GGUF_SEARCH_DEPTH:
+                subdirectories[:] = []
+            subdirectories[:] = [name for name in subdirectories if not name.startswith(".")]
+            for filename in filenames:
+                if not filename.lower().endswith(".gguf"):
+                    continue
+                path = os.path.join(directory, filename)
+                try:
+                    models.append({
+                        "id": path,
+                        "label": filename,
+                        "relative_path": os.path.relpath(path, root),
+                        "size_bytes": os.path.getsize(path),
+                    })
+                except OSError:
+                    continue
+                if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+                    break
+            if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+                break
+        if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+            break
+    models.sort(key=lambda model: (model["label"].lower(), model["id"].lower()))
+    return models, scanned_roots
+
 # Keylogger integration
 def _running_in_docker() -> bool:
     """Detect whether we are executing inside a Docker container."""
@@ -1622,6 +1680,21 @@ def get_models():
     except requests.exceptions.RequestException:
         provider_label = _provider_display_name(provider)
         return jsonify({'success': False, 'error': f'Could not reach the selected {provider_label} endpoint.'}), 400
+
+
+@app.route('/api/network_watcher/local-models', methods=['POST'])
+def network_watcher_local_models():
+    """Discover local GGUF files for the llama.cpp recurrent SSM runtime."""
+    data = request.get_json(silent=True) or {}
+    requested_root = str(data.get('root') or '').strip()
+    roots = [requested_root] if requested_root else _default_local_gguf_search_roots()
+    models, scanned_roots = _discover_local_gguf_models(roots)
+    return jsonify({
+        'success': True,
+        'models': models,
+        'search_roots': scanned_roots,
+        'truncated': len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS,
+    })
 
 
 # -----------------------------------------------------------------------

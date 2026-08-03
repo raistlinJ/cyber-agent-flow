@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import network_watcher
+from app import _discover_local_gguf_models
 from network_watcher import DEFAULT_PACKET_FIELDS, NetworkWatcher
 
 
@@ -95,6 +96,24 @@ def test_periodic_batch_engine_remains_distinct_from_the_flow_ssm_engines():
     watcher.analysis_interval_seconds = 10
 
     assert "periodic packet-batch LLM" in watcher._engine_label()
+
+
+def test_local_gguf_discovery_recurses_into_model_subfolders(tmp_path):
+    nested = tmp_path / "recurrent" / "mamba"
+    nested.mkdir(parents=True)
+    expected = nested / "mamba-130m.gguf"
+    expected.write_bytes(b"GGUF")
+    (tmp_path / "recurrent" / "notes.txt").write_text("not a model", encoding="utf-8")
+
+    models, roots = _discover_local_gguf_models([str(tmp_path)])
+
+    assert roots == [str(tmp_path)]
+    assert models == [{
+        "id": str(expected),
+        "label": "mamba-130m.gguf",
+        "relative_path": "recurrent/mamba/mamba-130m.gguf",
+        "size_bytes": 4,
+    }]
 
 
 def test_ssm_alert_threshold_respects_per_flow_cooldown():
