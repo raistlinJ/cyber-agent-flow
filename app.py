@@ -2974,6 +2974,9 @@ def network_watcher_start():
     ssm_max_flows = data.get('ssm_max_flows', 256)
     ssm_alert_threshold = data.get('ssm_alert_threshold', 0.72)
     ssm_alert_cooldown_seconds = data.get('ssm_alert_cooldown_seconds', 60)
+    capture_source = data.get('capture_source', 'python')
+    suricata_eve_path = data.get('suricata_eve_path', '/var/log/suricata/eve.json')
+    suricata_event_types = data.get('suricata_event_types')
     try:
         _network_watcher.start(
             run_id,
@@ -2995,6 +2998,9 @@ def network_watcher_start():
             ssm_max_flows,
             ssm_alert_threshold,
             ssm_alert_cooldown_seconds,
+            capture_source,
+            suricata_eve_path,
+            suricata_event_types,
         )
         return jsonify({'success': True})
     except Exception as e:

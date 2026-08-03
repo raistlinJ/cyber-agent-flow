@@ -28,6 +28,8 @@ DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
 MAX_ANALYSIS_INTERVAL_SECONDS = 300
 DEFAULT_SSM_ALERT_THRESHOLD = 0.72
 DEFAULT_SSM_ALERT_COOLDOWN_SECONDS = 60
+DEFAULT_SURICATA_EVE_PATH = "/var/log/suricata/eve.json"
+DEFAULT_SURICATA_EVENT_TYPES = frozenset({"flow", "dns", "http", "tls", "alert", "anomaly", "fileinfo"})
 PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
 
 # These defaults match the previously hard-coded packet record: core metadata,
@@ -88,6 +90,9 @@ class NetworkWatcher:
         self.max_packet_payload_bytes = DEFAULT_MAX_PACKET_PAYLOAD_BYTES
         self.max_packets_per_analysis = DEFAULT_MAX_PACKETS_PER_ANALYSIS
         self.packet_fields = set(DEFAULT_PACKET_FIELDS)
+        self.capture_source = "python"
+        self.suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
+        self.suricata_event_types = set(DEFAULT_SURICATA_EVENT_TYPES)
         self.analysis_engine = "remote_llm"
         self.ssm_alert_threshold = DEFAULT_SSM_ALERT_THRESHOLD
         self.ssm_alert_cooldown_seconds = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS
@@ -301,9 +306,12 @@ class NetworkWatcher:
               ssm_model_path: str = "", ssm_gpu_layers: int = 0,
               ssm_context_tokens: int = 1024, ssm_max_flows: int = 256,
               ssm_alert_threshold: float = DEFAULT_SSM_ALERT_THRESHOLD,
-              ssm_alert_cooldown_seconds: int = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS):
-        if not self.watcher_available:
-            raise RuntimeError("pyshark is not installed.")
+              ssm_alert_cooldown_seconds: int = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS,
+              capture_source: str = "python", suricata_eve_path: str = DEFAULT_SURICATA_EVE_PATH,
+              suricata_event_types: list[str] | None = None):
+        self.capture_source = "suricata_eve" if capture_source == "suricata_eve" else "python"
+        if self.capture_source == "python" and not self.watcher_available:
+            raise RuntimeError("pyshark is not installed. Select Suricata EVE JSON or install pyshark.")
 
         self.stop()
         self.run_id = run_id
@@ -328,6 +336,8 @@ class NetworkWatcher:
         )
         self.max_packets_per_analysis = self._normalize_max_packets(max_packets_per_analysis)
         self.packet_fields = self._normalize_packet_fields(packet_fields)
+        self.suricata_eve_path = str(suricata_eve_path or DEFAULT_SURICATA_EVE_PATH).strip()
+        self.suricata_event_types = self._normalize_suricata_event_types(suricata_event_types)
         self.analysis_engine = "llamacpp_ssm" if analysis_engine == "llamacpp_ssm" else "remote_llm"
         self.ssm_alert_threshold = self._bounded_float(
             ssm_alert_threshold, DEFAULT_SSM_ALERT_THRESHOLD, 0.05, 1.0
@@ -365,7 +375,7 @@ class NetworkWatcher:
 
         self._add_log(
             "info",
-            f"NetworkWatcher started on interface: {self.interface} "
+            f"NetworkWatcher started from {self._capture_source_label()} "
             f"({self._engine_label()}; payload cap {self.max_packet_payload_bytes} B)",
         )
 
@@ -407,6 +417,14 @@ class NetworkWatcher:
         return {str(field) for field in packet_fields if str(field) in DEFAULT_PACKET_FIELDS}
 
     @staticmethod
+    def _normalize_suricata_event_types(event_types) -> set[str]:
+        if event_types is None:
+            return set(DEFAULT_SURICATA_EVENT_TYPES)
+        if not isinstance(event_types, (list, tuple, set)):
+            return set(DEFAULT_SURICATA_EVENT_TYPES)
+        return {str(event_type) for event_type in event_types if str(event_type) in DEFAULT_SURICATA_EVENT_TYPES}
+
+    @staticmethod
     def _normalize_max_packets(value) -> int | None:
         """Treat zero as unlimited, while retaining a safe queue-backed upper bound."""
         try:
@@ -428,6 +446,11 @@ class NetworkWatcher:
         if self.analysis_engine == "llamacpp_ssm":
             return "local llama.cpp recurrent SSM; every packet processed immediately"
         return f"remote model every {self.analysis_interval_seconds}s; up to {self._max_packets_label()} packets"
+
+    def _capture_source_label(self) -> str:
+        if self.capture_source == "suricata_eve":
+            return f"Suricata EVE JSON ({self.suricata_eve_path})"
+        return f"Python packet decoder on interface {self.interface}"
 
     def stop(self):
         self.running = False
@@ -464,18 +487,21 @@ class NetworkWatcher:
         if self.inference_count > 0:
             avg_inference = self.total_inference_time / self.inference_count
 
-        bpf_ok = self._check_bpf_permissions()
+        bpf_ok = self.capture_source != "python" or self._check_bpf_permissions()
         with self._interaction_lock:
             interaction_revision = self.interaction_revision
             interaction_count = len(self.interactions)
 
         return {
-            "available": self.watcher_available,
+            "available": self.watcher_available if self.capture_source == "python" else True,
             "running": self.running,
             "interface": self.interface,
             "api_url": self.api_url,
             "model": self.model,
             "configuration": {
+                "capture_source": self.capture_source,
+                "suricata_eve_path": self.suricata_eve_path,
+                "suricata_event_types": sorted(self.suricata_event_types),
                 "analysis_engine": self.analysis_engine,
                 "analysis_interval_seconds": self.analysis_interval_seconds,
                 "max_packet_payload_bytes": self.max_packet_payload_bytes,
@@ -507,6 +533,10 @@ class NetworkWatcher:
         }
 
     def _capture_loop(self):
+        if self.capture_source == "suricata_eve":
+            self._suricata_eve_loop()
+            return
+
         self.capture_error = None
         if not self._check_bpf_permissions():
             msg = "BPF Permission Denied: /dev/bpf* is not readable. Run 'sudo chmod 666 /dev/bpf*' in terminal to allow packet capture."
@@ -536,15 +566,8 @@ class NetworkWatcher:
                     break
 
                 try:
-                    self.packets_captured += 1
                     record, payload_bytes = self._packet_record(packet)
-                    self.bytes_extracted += payload_bytes
-                    try:
-                        self._buffer.put_nowait(record)
-                    except queue.Full:
-                        self.packets_dropped += 1
-                    if self.packets_captured % 10 == 0:
-                        self._add_log("packet", f"Captured {self.packets_captured} packets ({self.bytes_extracted} bytes payload)")
+                    self._enqueue_record(record, payload_bytes, "Captured")
                 except Exception:
                     continue
         except Exception as e:
@@ -553,6 +576,120 @@ class NetworkWatcher:
             self._add_log("error", err_msg)
             self.capture_error = err_msg
             self.running = False
+
+    def _enqueue_record(self, record: dict, extracted_bytes: int, noun: str):
+        self.packets_captured += 1
+        self.bytes_extracted += extracted_bytes
+        try:
+            self._buffer.put_nowait(record)
+        except queue.Full:
+            self.packets_dropped += 1
+        if self.packets_captured % 10 == 0:
+            self._add_log("packet", f"{noun} {self.packets_captured} events ({self.bytes_extracted} bytes normalized)")
+
+    def _suricata_eve_loop(self):
+        """Tail newly-written EVE JSON lines and normalize selected event types."""
+        self.capture_error = None
+        handle = None
+        inode = None
+        position = 0
+        self._add_log("info", f"Tailing Suricata EVE JSON: {self.suricata_eve_path}")
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    stat = os.stat(self.suricata_eve_path)
+                    rotated = inode is not None and inode != stat.st_ino
+                    truncated = handle is not None and stat.st_size < position
+                    if handle is None or rotated or truncated:
+                        if handle:
+                            handle.close()
+                        handle = open(self.suricata_eve_path, "r", encoding="utf-8", errors="replace")
+                        handle.seek(0, os.SEEK_END)
+                        position = handle.tell()
+                        inode = stat.st_ino
+                        self._add_log("info", "Connected to Suricata EVE stream; reading new events only.")
+
+                    line = handle.readline()
+                    if not line:
+                        self._stop_event.wait(0.2)
+                        continue
+                    position = handle.tell()
+                    try:
+                        eve_event = json.loads(line)
+                    except json.JSONDecodeError:
+                        self._add_log("error", "Skipped malformed Suricata EVE JSON line.")
+                        continue
+                    if not isinstance(eve_event, dict):
+                        self._add_log("error", "Skipped non-object Suricata EVE JSON record.")
+                        continue
+                    record = self._suricata_record(eve_event)
+                    if record is not None:
+                        self._enqueue_record(record, len(line.encode("utf-8")), "Ingested")
+                except FileNotFoundError:
+                    self._add_log("info", f"Waiting for Suricata EVE file: {self.suricata_eve_path}")
+                    self._stop_event.wait(1)
+                except OSError as exc:
+                    self.capture_error = f"Suricata EVE read failed: {exc}"
+                    self._add_log("error", self.capture_error)
+                    self._stop_event.wait(1)
+        finally:
+            if handle:
+                handle.close()
+
+    def _suricata_record(self, eve_event: dict) -> dict | None:
+        """Reduce an EVE record to bounded, model-safe network features."""
+        event_type = str(eve_event.get("event_type") or "")
+        if event_type not in self.suricata_event_types:
+            return None
+
+        proto = str(eve_event.get("proto") or "").lower()
+        app_proto = str(eve_event.get("app_proto") or "").lower()
+        source_ip = self._safe_value(eve_event.get("src_ip"))
+        destination_ip = self._safe_value(eve_event.get("dest_ip"))
+        source_port = self._safe_value(eve_event.get("src_port"))
+        destination_port = self._safe_value(eve_event.get("dest_port"))
+        headers = {
+            "ip": {"src": source_ip, "dst": destination_ip},
+            "suricata": self._suricata_summary(eve_event, event_type),
+        }
+        if proto in {"tcp", "udp"}:
+            headers[proto] = {"srcport": source_port, "dstport": destination_port}
+        if event_type in {"http", "dns", "tls"}:
+            headers[event_type] = {"present": True}
+
+        return {
+            "timestamp": self._safe_value(eve_event.get("timestamp")),
+            "length": self._safe_value((eve_event.get("flow") or {}).get("bytes_toserver") or "0"),
+            "highest_protocol": app_proto or proto or event_type,
+            "protocol_stack": ["suricata", event_type, *([app_proto] if app_proto else [])],
+            "headers": headers,
+        }
+
+    def _suricata_summary(self, eve_event: dict, event_type: str) -> dict:
+        """Allowlist EVE fields so large/unsafe nested JSON never reaches the model."""
+        summary = {
+            "event_type": event_type,
+            "flow_id": self._safe_value(eve_event.get("flow_id")),
+            "community_id": self._safe_value(eve_event.get("community_id")),
+            "proto": self._safe_value(eve_event.get("proto")),
+            "app_proto": self._safe_value(eve_event.get("app_proto")),
+        }
+        nested_fields = {
+            "flow": ("pkts_toserver", "pkts_toclient", "bytes_toserver", "bytes_toclient", "state", "reason"),
+            "dns": ("type", "rrname", "rrtype", "rcode"),
+            "http": ("hostname", "url", "http_method", "status", "http_user_agent"),
+            "tls": ("sni", "version", "cipher", "ja3", "ja3s", "ja4"),
+            "alert": ("signature", "category", "severity", "action", "gid", "signature_id"),
+            "anomaly": ("type", "event", "layer", "code"),
+            "fileinfo": ("filename", "magic", "mime", "sha256", "state", "size"),
+        }
+        nested = eve_event.get(event_type) or {}
+        if isinstance(nested, dict):
+            for field_name in nested_fields.get(event_type, ()):
+                value = self._safe_value(nested.get(field_name))
+                if value:
+                    summary[field_name] = value
+        return {key: value for key, value in summary.items() if value not in ("", None)}
 
     def _analyzer_loop(self):
         if self.analysis_engine == "llamacpp_ssm":

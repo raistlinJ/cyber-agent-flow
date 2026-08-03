@@ -84,6 +84,12 @@ In Watcher → Setup → Network, select **Local recurrent SSM
 Standard transformer GGUF files are rejected for this path because they do not
 provide the intended bounded recurrent state per flow.
 
+The Network Watcher can also consume a running Suricata deployment through its
+newline-delimited EVE JSON output. In Watcher → Setup → Network, choose
+**Suricata EVE JSON**, provide the readable `eve.json` path, and select the EVE
+event types to normalize. The watcher tails new events and does not start,
+configure, or replace Suricata itself.
+
 ---
 
 ## Installation & Setup

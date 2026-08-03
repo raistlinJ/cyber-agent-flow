@@ -121,6 +121,7 @@ If nothing interesting is found, say that clearly.`
     try {
       const selectedIfaces = Array.from(document.querySelectorAll('.nw-iface-cb:checked')).map(cb => cb.value);
       const packetFields = Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map(cb => cb.value);
+      const suricataEventTypes = Array.from(document.querySelectorAll('.nw-suricata-event-cb:checked')).map(cb => cb.value);
       const promptEl = $('watcher-system-prompt');
       if (promptEl) {
         _customPrompts[_currentMode] = promptEl.value;
@@ -139,6 +140,9 @@ If nothing interesting is found, say that clearly.`
         timerInterval: $('watcher-timer-interval')?.value,
         timerSpan: $('watcher-timer-span')?.value,
         selectedInterfaces: selectedIfaces,
+        captureSource: $('nw-capture-source')?.value,
+        suricataEvePath: $('nw-suricata-eve-path')?.value,
+        suricataEventTypes,
         analysisInterval: $('nw-analysis-interval')?.value,
         maxPacketPayloadBytes: $('nw-max-payload-bytes')?.value,
         maxPacketsPerAnalysis: $('nw-max-packets-per-analysis')?.value,
@@ -187,6 +191,13 @@ If nothing interesting is found, say that clearly.`
       if (settings.analysisInterval && $('nw-analysis-interval')) $('nw-analysis-interval').value = settings.analysisInterval;
       if (settings.maxPacketPayloadBytes && $('nw-max-payload-bytes')) $('nw-max-payload-bytes').value = settings.maxPacketPayloadBytes;
       if (settings.maxPacketsPerAnalysis && $('nw-max-packets-per-analysis')) $('nw-max-packets-per-analysis').value = settings.maxPacketsPerAnalysis;
+      if (settings.captureSource && $('nw-capture-source')) $('nw-capture-source').value = settings.captureSource;
+      if (settings.suricataEvePath !== undefined && $('nw-suricata-eve-path')) $('nw-suricata-eve-path').value = settings.suricataEvePath;
+      if (Array.isArray(settings.suricataEventTypes)) {
+        document.querySelectorAll('.nw-suricata-event-cb').forEach((checkbox) => {
+          checkbox.checked = settings.suricataEventTypes.includes(checkbox.value);
+        });
+      }
       if (settings.analysisEngine && $('nw-analysis-engine')) $('nw-analysis-engine').value = settings.analysisEngine;
       if (settings.ssmModelPath !== undefined && $('nw-ssm-model-path')) $('nw-ssm-model-path').value = settings.ssmModelPath;
       if (settings.ssmGpuLayers && $('nw-ssm-gpu-layers')) $('nw-ssm-gpu-layers').value = settings.ssmGpuLayers;
@@ -215,6 +226,7 @@ If nothing interesting is found, say that clearly.`
         _updateMetricsView();
       }
       _updatePromptField();
+      _updateCaptureSourceUi();
       _updateNetworkEngineUi();
 
       if (settings.url) {
@@ -236,6 +248,19 @@ If nothing interesting is found, say that clearly.`
 
   function _isLocalSsmEngine() {
     return _currentMode === 'network' && $('nw-analysis-engine')?.value === 'llamacpp_ssm';
+  }
+
+  function _isSuricataSource() {
+    return _currentMode === 'network' && $('nw-capture-source')?.value === 'suricata_eve';
+  }
+
+  function _updateCaptureSourceUi() {
+    const suricata = _isSuricataSource();
+    const pythonSettings = $('nw-python-source-settings');
+    const suricataSettings = $('nw-suricata-source-settings');
+    if (pythonSettings) pythonSettings.style.display = _currentMode === 'network' && !suricata ? '' : 'none';
+    if (suricataSettings) suricataSettings.style.display = _currentMode === 'network' && suricata ? '' : 'none';
+    if (_currentMode === 'network' && !suricata) _fetchNetworkInterfaces();
   }
 
   function _updateNetworkEngineUi() {
@@ -279,6 +304,7 @@ If nothing interesting is found, say that clearly.`
   // ─── Mode toggle ─────────────────────────────────────────────────────────
   let _interfacesFetched = false;
   async function _fetchNetworkInterfaces() {
+    if (_isSuricataSource()) return;
     if (_interfacesFetched) return;
     const container = $('nw-interface-container');
     if (!container) return;
@@ -322,7 +348,7 @@ If nothing interesting is found, say that clearly.`
         const nwSettings = $('watcher-network-settings');
         if (nwSettings) {
           nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
-          if (_currentMode === 'network') _fetchNetworkInterfaces();
+          if (_currentMode === 'network') _updateCaptureSourceUi();
         }
         _updateNetworkEngineUi();
         _updateMetricsView();
@@ -358,6 +384,9 @@ If nothing interesting is found, say that clearly.`
     if (_currentMode === 'network') {
       return {
         watch_mode: 'network',
+        capture_source: $('nw-capture-source')?.value || 'python',
+        suricata_eve_path: $('nw-suricata-eve-path')?.value?.trim() || '/var/log/suricata/eve.json',
+        suricata_event_types: Array.from(document.querySelectorAll('.nw-suricata-event-cb:checked')).map((checkbox) => checkbox.value),
         analysis_engine: $('nw-analysis-engine')?.value || 'llamacpp_ssm',
         analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
         max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
@@ -622,7 +651,7 @@ If nothing interesting is found, say that clearly.`
         let requestBody = { url, model, provider, api_key: apiKey, ssl_verify: ssl, timeout, system_prompt: systemPrompt, ...modeConfig };
         if (isNwMode) {
           const cbs = document.querySelectorAll('.nw-iface-cb:checked');
-          requestBody.interfaces = Array.from(cbs).map(cb => cb.value);
+          requestBody.interfaces = modeConfig.capture_source === 'python' ? Array.from(cbs).map(cb => cb.value) : [];
         }
 
         const res = await fetch(isNwMode ? '/api/network_watcher/start' : '/api/watcher/start', {
@@ -799,6 +828,9 @@ If nothing interesting is found, say that clearly.`
         const mem = $('nw-metric-mem'); if (mem) mem.textContent = `${data.metrics.mem_used_mb || 0} / ${(data.metrics.mem_used_mb || 0) + (data.metrics.mem_free_mb || 0)} MB`;
         const pkts = $('nw-metric-packets'); if (pkts) pkts.textContent = (data.metrics.packets_captured || 0).toLocaleString();
         const analyzed = $('nw-metric-analyzed'); if (analyzed) analyzed.textContent = (data.metrics.packets_analyzed || 0).toLocaleString();
+        const suricataSource = data.configuration?.capture_source === 'suricata_eve';
+        const capturedLabel = $('nw-metric-captured-label'); if (capturedLabel) capturedLabel.textContent = suricataSource ? 'EVE Events Seen' : 'Packets Sniffed';
+        const bytesLabel = $('nw-metric-bytes-label'); if (bytesLabel) bytesLabel.textContent = suricataSource ? 'EVE Data Ingested' : 'Payload Extracted';
 
         const bytesEl = $('nw-metric-bytes');
         if (bytesEl) {
@@ -816,7 +848,11 @@ If nothing interesting is found, say that clearly.`
         const pulseDot = $('nw-pulse-dot');
         const statusText = $('nw-status-banner-text');
         const ifaceLabel = $('nw-status-interface-label');
-        if (ifaceLabel) ifaceLabel.textContent = `Interface: ${data.interface || 'en0'}`;
+        if (ifaceLabel) {
+          ifaceLabel.textContent = data.configuration?.capture_source === 'suricata_eve'
+            ? `Suricata EVE: ${data.configuration?.suricata_eve_path || 'eve.json'}`
+            : `Interface: ${data.interface || 'en0'}`;
+        }
 
         const bpfAlert = $('nw-bpf-alert');
         if (data.bpf_permission_ok === false || data.capture_error) {
@@ -1094,6 +1130,11 @@ If nothing interesting is found, say that clearly.`
     $('nw-max-payload-bytes')?.addEventListener('change', _saveFormSettings);
     $('nw-max-packets-per-analysis')?.addEventListener('change', _saveFormSettings);
     document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
+      checkbox.addEventListener('change', _saveFormSettings);
+    });
+    $('nw-capture-source')?.addEventListener('change', () => { _updateCaptureSourceUi(); _saveFormSettings(); });
+    $('nw-suricata-eve-path')?.addEventListener('input', _saveFormSettings);
+    document.querySelectorAll('.nw-suricata-event-cb').forEach((checkbox) => {
       checkbox.addEventListener('change', _saveFormSettings);
     });
     $('nw-analysis-engine')?.addEventListener('change', () => { _updateNetworkEngineUi(); _saveFormSettings(); });

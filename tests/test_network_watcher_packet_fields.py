@@ -95,3 +95,36 @@ def test_ssm_alert_threshold_respects_per_flow_cooldown():
     assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.90)
     assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.71)
     assert watcher._should_emit_ssm_alert("tcp|c:1|d:443", 0.90)
+
+
+def test_suricata_eve_record_is_normalized_to_the_shared_flow_shape():
+    watcher = NetworkWatcher(event_store=None)
+    eve = {
+        "timestamp": "2026-08-03T16:00:00.000000+0000",
+        "event_type": "tls",
+        "flow_id": 123456,
+        "community_id": "1:example",
+        "src_ip": "192.0.2.10",
+        "dest_ip": "198.51.100.20",
+        "src_port": 50000,
+        "dest_port": 443,
+        "proto": "TCP",
+        "app_proto": "tls",
+        "tls": {"sni": "api.example.test", "version": "TLS 1.3", "ja3": "abc"},
+    }
+
+    record = watcher._suricata_record(eve)
+
+    assert record["highest_protocol"] == "tls"
+    assert record["headers"]["ip"] == {"src": "192.0.2.10", "dst": "198.51.100.20"}
+    assert record["headers"]["tcp"] == {"srcport": "50000", "dstport": "443"}
+    assert record["headers"]["suricata"]["sni"] == "api.example.test"
+    assert record["headers"]["tls"] == {"present": True}
+
+
+def test_suricata_event_selection_filters_unselected_types():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.suricata_event_types = {"flow"}
+
+    assert watcher._suricata_record({"event_type": "dns"}) is None
+    assert watcher._suricata_record({"event_type": "flow", "flow": {"state": "established"}})

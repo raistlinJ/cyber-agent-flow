@@ -1163,6 +1163,18 @@
                                 <!-- ── Network mode settings ─────────────── -->
                                 <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
                                     <div class="input-group" style="margin:0">
+                                        <label for="nw-capture-source">Telemetry source</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-share-network icon-left"></i>
+                                            <select id="nw-capture-source">
+                                                <option value="python" selected>Python packet decoder (PyShark)</option>
+                                                <option value="suricata_eve">Suricata EVE JSON</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
+                                        <span class="input-hint">Python mode decodes live packets by network layer. Suricata mode tails already-parsed EVE JSON and sends only selected event types into the same SSM pipeline.</span>
+                                    </div>
+                                    <div class="input-group" style="margin:0">
                                         <label for="nw-analysis-engine">Network analysis engine</label>
                                         <div class="select-wrapper">
                                             <i class="ph ph-cpu icon-left"></i>
@@ -1209,6 +1221,46 @@
                                         <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
                                     </div>
 
+                                    <div id="nw-suricata-source-settings" style="display:none">
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-suricata-eve-path">Suricata EVE JSON path</label>
+                                            <div class="input-with-icon">
+                                                <i class="ph ph-file-text icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                <input type="text" id="nw-suricata-eve-path" value="/var/log/suricata/eve.json" autocomplete="off">
+                                            </div>
+                                            <span class="input-hint">The watcher reads newly appended lines only and follows rotation. This path must be readable by the app process.</span>
+                                        </div>
+                                        <div class="nw-packet-fields">
+                                            <div>
+                                                <label class="nw-packet-fields-title">Suricata EVE event types sent to the SSM/LLM</label>
+                                                <p class="input-hint">Select the structured telemetry to normalize. All current event types are selected by default.</p>
+                                            </div>
+                                            <div class="nw-packet-fields-table-wrap">
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Network flow</span><small>Flow counters, state, Community ID</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody><tr><td><input class="nw-suricata-event-cb" type="checkbox" value="flow" checked></td><th scope="row">Flow</th><td>Packet/byte counters, direction, state, and close reason</td></tr></tbody></table>
+                                                </details>
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Application protocols</span><small>DNS, HTTP, TLS</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="dns" checked></td><th scope="row">DNS</th><td>Query name, type, and response code</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="http" checked></td><th scope="row">HTTP</th><td>Host, URL, method, status, and user agent</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="tls" checked></td><th scope="row">TLS</th><td>SNI, version, cipher, and available fingerprints</td></tr>
+                                                    </tbody></table>
+                                                </details>
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Detection and files</span><small>Alert, anomaly, file info</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="alert" checked></td><th scope="row">Alert</th><td>Signature, category, severity, and action</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="anomaly" checked></td><th scope="row">Anomaly</th><td>Decoder and protocol anomalies</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="fileinfo" checked></td><th scope="row">File info</th><td>File metadata, MIME type, size, and available hashes</td></tr>
+                                                    </tbody></table>
+                                                </details>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div id="nw-python-source-settings">
                                     <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote batch mode uses the shared LLM settings above and sends decoded packet batches on the cadence below. Local SSM mode processes each packet immediately; packet batching controls are retained only for switching back to remote mode.</p>
                                     <div class="input-group" style="margin:0">
                                         <label>Network Interface(s)</label>
@@ -1329,6 +1381,7 @@
                                             </details>
                                         </div>
                                     </div>
+                                    </div>
                                 </div>
 
                                 <p class="watcher-config-hint" id="watcher-config-hint-text">
@@ -1439,7 +1492,7 @@
                                             <div id="nw-metric-mem" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">-- / -- MB</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
-                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Sniffed</h4>
+                                            <h4 id="nw-metric-captured-label" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Sniffed</h4>
                                             <div id="nw-metric-packets" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
@@ -1447,7 +1500,7 @@
                                             <div id="nw-metric-analyzed" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
-                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Payload Extracted</h4>
+                                            <h4 id="nw-metric-bytes-label" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Payload Extracted</h4>
                                             <div id="nw-metric-bytes" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0 KB</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
