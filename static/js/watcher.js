@@ -223,6 +223,9 @@ If nothing interesting is found, say that clearly.`
     const captureSummary = $('nw-capture-interface-summary');
     const interfaceLabel = $('nw-interface-label');
     const interfaceHint = $('nw-interface-hint');
+    if (suricata && pythonSettings && suricataSettings && pythonSettings.parentElement === suricataSettings.parentElement) {
+      suricataSettings.parentElement.insertBefore(pythonSettings, suricataSettings);
+    }
     if (pythonSettings) pythonSettings.style.display = '';
     if (pythonPacketFields) pythonPacketFields.style.display = suricata ? 'none' : '';
     if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
