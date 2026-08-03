@@ -84,3 +84,14 @@ def test_unlimited_packet_cap_serializes_all_available_records():
 
     watcher.max_packets_per_analysis = None
     assert json.loads(watcher._serialize_packet_batch(records))["packet_count"] == 3
+
+
+def test_ssm_alert_threshold_respects_per_flow_cooldown():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.ssm_alert_threshold = 0.72
+    watcher.ssm_alert_cooldown_seconds = 60
+
+    assert watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.72)
+    assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.90)
+    assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.71)
+    assert watcher._should_emit_ssm_alert("tcp|c:1|d:443", 0.90)

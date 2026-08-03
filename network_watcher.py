@@ -8,6 +8,7 @@ import queue
 import logging
 import psutil
 from datetime import datetime
+from ssm_stream import LlamaCppSsmRuntime, packet_flow_key, packet_stream_event
 
 try:
     import pyshark
@@ -25,6 +26,8 @@ MAX_CONFIGURED_PACKETS_PER_ANALYSIS = 500
 MAX_ANALYSIS_CHARS = 8_000
 DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
 MAX_ANALYSIS_INTERVAL_SECONDS = 300
+DEFAULT_SSM_ALERT_THRESHOLD = 0.72
+DEFAULT_SSM_ALERT_COOLDOWN_SECONDS = 60
 PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
 
 # These defaults match the previously hard-coded packet record: core metadata,
@@ -85,6 +88,11 @@ class NetworkWatcher:
         self.max_packet_payload_bytes = DEFAULT_MAX_PACKET_PAYLOAD_BYTES
         self.max_packets_per_analysis = DEFAULT_MAX_PACKETS_PER_ANALYSIS
         self.packet_fields = set(DEFAULT_PACKET_FIELDS)
+        self.analysis_engine = "remote_llm"
+        self.ssm_alert_threshold = DEFAULT_SSM_ALERT_THRESHOLD
+        self.ssm_alert_cooldown_seconds = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS
+        self._ssm_runtime = None
+        self._last_alert_by_flow = {}
 
         self._buffer = queue.Queue(maxsize=500)
         self._last_flush_time = 0
@@ -289,7 +297,11 @@ class NetworkWatcher:
               analysis_interval_seconds: int = DEFAULT_ANALYSIS_INTERVAL_SECONDS,
               max_packet_payload_bytes: int = DEFAULT_MAX_PACKET_PAYLOAD_BYTES,
               max_packets_per_analysis: int = DEFAULT_MAX_PACKETS_PER_ANALYSIS,
-              packet_fields: list[str] | None = None):
+              packet_fields: list[str] | None = None, analysis_engine: str = "remote_llm",
+              ssm_model_path: str = "", ssm_gpu_layers: int = 0,
+              ssm_context_tokens: int = 1024, ssm_max_flows: int = 256,
+              ssm_alert_threshold: float = DEFAULT_SSM_ALERT_THRESHOLD,
+              ssm_alert_cooldown_seconds: int = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS):
         if not self.watcher_available:
             raise RuntimeError("pyshark is not installed.")
 
@@ -316,6 +328,23 @@ class NetworkWatcher:
         )
         self.max_packets_per_analysis = self._normalize_max_packets(max_packets_per_analysis)
         self.packet_fields = self._normalize_packet_fields(packet_fields)
+        self.analysis_engine = "llamacpp_ssm" if analysis_engine == "llamacpp_ssm" else "remote_llm"
+        self.ssm_alert_threshold = self._bounded_float(
+            ssm_alert_threshold, DEFAULT_SSM_ALERT_THRESHOLD, 0.05, 1.0
+        )
+        self.ssm_alert_cooldown_seconds = self._bounded_int(
+            ssm_alert_cooldown_seconds, DEFAULT_SSM_ALERT_COOLDOWN_SECONDS, 0, 3600
+        )
+        self._last_alert_by_flow = {}
+        self._ssm_runtime = None
+        if self.analysis_engine == "llamacpp_ssm":
+            self._ssm_runtime = LlamaCppSsmRuntime(
+                ssm_model_path,
+                n_ctx=ssm_context_tokens,
+                n_gpu_layers=ssm_gpu_layers,
+                max_flows=ssm_max_flows,
+            )
+            self._ssm_runtime.start()
 
         # Reset metrics & logs
         self.packets_captured = 0
@@ -337,8 +366,7 @@ class NetworkWatcher:
         self._add_log(
             "info",
             f"NetworkWatcher started on interface: {self.interface} "
-            f"(send every {self.analysis_interval_seconds}s; up to {self._max_packets_label()} packets; "
-            f"payload cap {self.max_packet_payload_bytes} B)",
+            f"({self._engine_label()}; payload cap {self.max_packet_payload_bytes} B)",
         )
 
         self._thread = threading.Thread(
@@ -360,6 +388,13 @@ class NetworkWatcher:
     def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
         try:
             return max(minimum, min(int(value), maximum))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _bounded_float(value, default: float, minimum: float, maximum: float) -> float:
+        try:
+            return max(minimum, min(float(value), maximum))
         except (TypeError, ValueError):
             return default
 
@@ -389,6 +424,11 @@ class NetworkWatcher:
     def _max_packets_label(self) -> str:
         return "unlimited" if self.max_packets_per_analysis is None else str(self.max_packets_per_analysis)
 
+    def _engine_label(self) -> str:
+        if self.analysis_engine == "llamacpp_ssm":
+            return "local llama.cpp recurrent SSM; every packet processed immediately"
+        return f"remote model every {self.analysis_interval_seconds}s; up to {self._max_packets_label()} packets"
+
     def stop(self):
         self.running = False
         self._stop_event.set()
@@ -398,6 +438,9 @@ class NetworkWatcher:
             self._analyzer_thread.join(timeout=3)
         self._thread = None
         self._analyzer_thread = None
+        if self._ssm_runtime:
+            self._ssm_runtime.stop()
+            self._ssm_runtime = None
         self._add_log("info", "NetworkWatcher stopped.")
         logging.info("[NetworkWatcher] Stopped.")
 
@@ -433,11 +476,15 @@ class NetworkWatcher:
             "api_url": self.api_url,
             "model": self.model,
             "configuration": {
+                "analysis_engine": self.analysis_engine,
                 "analysis_interval_seconds": self.analysis_interval_seconds,
                 "max_packet_payload_bytes": self.max_packet_payload_bytes,
                 "max_packets_per_analysis": self.max_packets_per_analysis,
                 "packet_fields": sorted(self.packet_fields),
+                "ssm_alert_threshold": self.ssm_alert_threshold,
+                "ssm_alert_cooldown_seconds": self.ssm_alert_cooldown_seconds,
             },
+            "ssm_runtime": self._ssm_runtime.status() if self._ssm_runtime else None,
             "bpf_permission_ok": bpf_ok,
             "capture_error": getattr(self, 'capture_error', None),
             "interaction_revision": interaction_revision,
@@ -508,6 +555,9 @@ class NetworkWatcher:
             self.running = False
 
     def _analyzer_loop(self):
+        if self.analysis_engine == "llamacpp_ssm":
+            self._stream_analyzer_loop()
+            return
         while not self._stop_event.is_set():
             batch = []
             # Gather a bounded number of decoded packet records in each batch.
@@ -523,6 +573,84 @@ class NetworkWatcher:
 
             # Wait between sends, but allow stop() to interrupt immediately.
             self._stop_event.wait(self.analysis_interval_seconds)
+
+    def _stream_analyzer_loop(self):
+        """Consume events as they arrive; no batch prompt or network round trip."""
+        while not self._stop_event.is_set():
+            try:
+                record = self._buffer.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            self.packets_analyzed += 1
+            self._analyze_stream_record(record)
+
+    def _analyze_stream_record(self, record: dict):
+        if not self._ssm_runtime:
+            return
+        started = time.time()
+        flow_key = packet_flow_key(record)
+        event = packet_stream_event(record)
+        interaction_id = self._record_interaction({
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "engine": "llamacpp_ssm",
+            "model": self._ssm_runtime.model_path,
+            "endpoint": "local llama-cpp-python runtime",
+            "request": {"flow": flow_key, "event": event},
+            "prompt": "",
+            "response": "",
+            "http_status": None,
+            "elapsed_ms": None,
+            "outcome": "pending",
+            "error": "",
+            "analysis": "",
+        })
+        try:
+            observation = self._ssm_runtime.observe(flow_key, event)
+            elapsed = time.time() - started
+            self.total_inference_time += elapsed
+            self.inference_count += 1
+            self.total_tokens_analyzed += len(observation.event) // 4
+            is_alert = self._should_emit_ssm_alert(observation.flow_key, observation.score)
+            analysis = (
+                f"{'Alert' if is_alert else 'Stream score'} {observation.score:.3f} "
+                f"for flow {observation.flow_key} ({observation.active_flows} active flow states)."
+            )
+            self._update_interaction(
+                interaction_id,
+                response=json.dumps({"score": observation.score, "flow": observation.flow_key}),
+                elapsed_ms=round(elapsed * 1000),
+                outcome="success",
+                analysis=analysis,
+            )
+            if is_alert:
+                self.alerts_emitted += 1
+                self._add_log("alert", f"SSM alert score {observation.score:.3f}: {observation.flow_key}")
+                self._emit_alert(
+                    f"Local SSM anomaly score {observation.score:.3f} exceeded the "
+                    f"{self.ssm_alert_threshold:.2f} threshold for flow {observation.flow_key}."
+                )
+        except Exception as exc:
+            elapsed = time.time() - started
+            self.total_inference_time += elapsed
+            self.inference_count += 1
+            self._update_interaction(
+                interaction_id,
+                elapsed_ms=round(elapsed * 1000),
+                outcome="error",
+                error=str(exc),
+                analysis="",
+            )
+            self._add_log("error", f"Local SSM event evaluation failed: {exc}")
+
+    def _should_emit_ssm_alert(self, flow_key: str, score: float) -> bool:
+        if score < self.ssm_alert_threshold:
+            return False
+        now = time.monotonic()
+        last_alert = self._last_alert_by_flow.get(flow_key)
+        if last_alert is not None and now - last_alert < self.ssm_alert_cooldown_seconds:
+            return False
+        self._last_alert_by_flow[flow_key] = now
+        return True
 
     def _analyze_batch(self, batch: list[dict]):
         serialized_batch = self._serialize_packet_batch(batch)

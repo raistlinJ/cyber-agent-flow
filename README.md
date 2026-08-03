@@ -65,6 +65,25 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 - **LLM Provider**: [Ollama](https://ollama.com/) or another Ollama-compatible endpoint
 - **Model**: A capable tool-calling model (e.g. `ollama pull llama3` or `qwen3-coder`)
 
+### Optional: local recurrent SSM Network Watcher
+
+The `codex/ssm-llamacpp-stream-analyzer` branch adds a local stream engine for
+the Network Watcher. It loads a llama.cpp-supported recurrent/SSM GGUF through
+`llama-cpp-python`, keeps bounded state per network flow, and scores normalized
+packet events immediately rather than posting packet batches to a chat API.
+
+Install its optional runtime with the accelerator-specific build configuration
+that matches the machine hosting the watcher:
+
+```bash
+pip install -r requirements-ssm.txt
+```
+
+In Watcher → Setup → Network, select **Local recurrent SSM
+(llama-cpp-python)** and provide the GGUF path on the machine running the app.
+Standard transformer GGUF files are rejected for this path because they do not
+provide the intended bounded recurrent state per flow.
+
 ---
 
 ## Installation & Setup

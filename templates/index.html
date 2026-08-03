@@ -990,10 +990,11 @@
                     <!-- Setup Panel -->
                     <div class="watcher-subtab-panel active" id="watcher-setup-panel" style="padding:0 1rem;">
                         <div class="watcher-config-card" style="max-width: 800px; margin: 0 auto;">
-                                <h3 class="section-title" style="margin-bottom:1rem; font-size:0.95rem">
+                                <h3 class="section-title" id="watcher-model-heading" style="margin-bottom:1rem; font-size:0.95rem">
                                     <span>🔭</span> Watcher LLM
                                 </h3>
 
+                            <div id="watcher-remote-model-settings">
                                 <!-- Same-LLM warning -->
                                 <div id="watcher-same-llm-chip" class="watcher-same-llm-chip" style="display:none">
                                     <span>⚠️</span>
@@ -1091,6 +1092,7 @@
                                     <textarea id="watcher-system-prompt" rows="6" style="width:100%; font-family:'SFMono-Regular',Consolas,Monaco,monospace; font-size:0.8rem; background:var(--bg-surface-2); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; padding:0.65rem; resize:vertical; line-height:1.4;" placeholder="System prompt instructions..."></textarea>
                                     <span class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Customize LLM instructions for the active mode. Click 'Default' to restore.</span>
                                 </div>
+                            </div>
                                 <div class="input-group">
                                     <label>Analysis Mode</label>
                                     <div class="watcher-mode-toggle" id="watcher-mode-toggle">
@@ -1160,6 +1162,54 @@
 
                                 <!-- ── Network mode settings ─────────────── -->
                                 <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
+                                    <div class="input-group" style="margin:0">
+                                        <label for="nw-analysis-engine">Network analysis engine</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-cpu icon-left"></i>
+                                            <select id="nw-analysis-engine">
+                                                <option value="llamacpp_ssm" selected>Local recurrent SSM (llama-cpp-python)</option>
+                                                <option value="remote_llm">Remote batch LLM (legacy)</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
+                                        <span class="input-hint">The local SSM processes each normalized packet in this watcher process and retains a bounded state per flow. It does not send packets to an API.</span>
+                                    </div>
+
+                                    <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
+                                        <div class="input-group nw-ssm-model-path" style="margin:0">
+                                            <label for="nw-ssm-model-path">Local recurrent GGUF model path</label>
+                                            <div class="input-with-icon">
+                                                <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
+                                            </div>
+                                            <span class="input-hint">This path is on the machine running the watcher. The model must be a llama.cpp-supported recurrent/SSM GGUF, not a standard transformer GGUF.</span>
+                                        </div>
+                                        <div class="nw-config-grid">
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-gpu-layers">GPU layers</label>
+                                                <div class="select-wrapper"><i class="ph ph-gpu icon-left"></i><select id="nw-ssm-gpu-layers"><option value="0">CPU only</option><option value="20">20 layers</option><option value="40">40 layers</option><option value="-1">All supported layers</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-context-tokens">State/context tokens</label>
+                                                <div class="select-wrapper"><i class="ph ph-text-align-justify icon-left"></i><select id="nw-ssm-context-tokens"><option value="512">512</option><option value="1024" selected>1,024</option><option value="2048">2,048</option><option value="4096">4,096</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-max-flows">Max active flow states</label>
+                                                <div class="select-wrapper"><i class="ph ph-tree-structure icon-left"></i><select id="nw-ssm-max-flows"><option value="128">128</option><option value="256" selected>256</option><option value="512">512</option><option value="1024">1,024</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-alert-threshold">Alert threshold</label>
+                                                <div class="select-wrapper"><i class="ph ph-warning-circle icon-left"></i><select id="nw-ssm-alert-threshold"><option value="0.50">0.50 — sensitive</option><option value="0.72" selected>0.72 — balanced</option><option value="0.85">0.85 — high confidence</option><option value="0.95">0.95 — critical only</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                        </div>
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-ssm-alert-cooldown">Per-flow alert cooldown</label>
+                                            <div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-ssm-alert-cooldown"><option value="0">No cooldown</option><option value="30">30 seconds</option><option value="60" selected>1 minute</option><option value="300">5 minutes</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                        </div>
+                                        <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
+                                    </div>
+
+                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote batch mode uses the shared LLM settings above and sends decoded packet batches on the cadence below. Local SSM mode processes each packet immediately; packet batching controls are retained only for switching back to remote mode.</p>
                                     <div class="input-group" style="margin:0">
                                         <label>Network Interface(s)</label>
                                         <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
@@ -1348,10 +1398,10 @@
                                 <section id="nw-findings-panel" class="config-card-lite" style="padding:0.9rem 1rem;">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.7rem;">
                                         <h3 class="section-title" style="font-size:0.95rem; margin:0;"><i class="ph ph-sparkle"></i> SLM/LLM Findings <span id="nw-findings-count" style="font-weight:400; color:var(--text-secondary);"></span></h3>
-                                        <span style="font-size:0.76rem; color:var(--text-secondary);">Formatted model responses</span>
+                                        <span style="font-size:0.76rem; color:var(--text-secondary);">Threshold-crossing stream alerts</span>
                                     </div>
                                     <div class="nw-findings-body">
-                                        <div id="nw-findings-empty" style="color:var(--text-secondary); font-size:0.84rem;">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
+                                        <div id="nw-findings-empty" style="color:var(--text-secondary); font-size:0.84rem;">No SSM alerts yet. Local stream alerts appear here when a flow crosses the configured threshold.</div>
                                         <div id="nw-findings-list" class="nw-findings-list scrollable-panel"></div>
                                     </div>
                                 </section>
@@ -1359,8 +1409,8 @@
                                 <details id="nw-interactions-panel" class="config-card-lite" style="padding:0; overflow:hidden;">
                                     <summary style="display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0.8rem 1rem; cursor:pointer; user-select:none;">
                                         <span style="display:flex; flex-direction:column; gap:0.15rem;">
-                                            <span style="font-weight:600; font-size:0.9rem;"><i class="ph ph-brain"></i> SLM/LLM Interaction Details <span id="nw-interactions-count" style="font-weight:400; color:var(--text-secondary);"></span></span>
-                                            <span style="font-size:0.76rem; color:var(--text-secondary);">Prompts, raw responses, request metadata, and processing time</span>
+                                            <span style="font-weight:600; font-size:0.9rem;"><i class="ph ph-brain"></i> SSM Stream Details <span id="nw-interactions-count" style="font-weight:400; color:var(--text-secondary);"></span></span>
+                                            <span style="font-size:0.76rem; color:var(--text-secondary);">Normalized events, per-flow scores, runtime metadata, and processing time</span>
                                         </span>
                                         <button type="button" id="nw-clear-interactions-btn" class="watcher-btn-ghost" style="flex-shrink:0;" title="Clear SLM/LLM interaction history">Clear</button>
                                     </summary>
@@ -1411,6 +1461,14 @@
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
                                             <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Alerts Emitted</h4>
                                             <div id="nw-metric-alerts" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--error);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Active Flow States</h4>
+                                            <div id="nw-metric-flows" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Latest SSM Score</h4>
+                                            <div id="nw-metric-score" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">--</div>
                                         </div>
                                     </div>
                                 </div>

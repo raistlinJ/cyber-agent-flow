@@ -143,6 +143,13 @@ If nothing interesting is found, say that clearly.`
         maxPacketPayloadBytes: $('nw-max-payload-bytes')?.value,
         maxPacketsPerAnalysis: $('nw-max-packets-per-analysis')?.value,
         packetFields,
+        analysisEngine: $('nw-analysis-engine')?.value,
+        ssmModelPath: $('nw-ssm-model-path')?.value,
+        ssmGpuLayers: $('nw-ssm-gpu-layers')?.value,
+        ssmContextTokens: $('nw-ssm-context-tokens')?.value,
+        ssmMaxFlows: $('nw-ssm-max-flows')?.value,
+        ssmAlertThreshold: $('nw-ssm-alert-threshold')?.value,
+        ssmAlertCooldown: $('nw-ssm-alert-cooldown')?.value,
         customPrompts: _customPrompts
       };
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -180,6 +187,13 @@ If nothing interesting is found, say that clearly.`
       if (settings.analysisInterval && $('nw-analysis-interval')) $('nw-analysis-interval').value = settings.analysisInterval;
       if (settings.maxPacketPayloadBytes && $('nw-max-payload-bytes')) $('nw-max-payload-bytes').value = settings.maxPacketPayloadBytes;
       if (settings.maxPacketsPerAnalysis && $('nw-max-packets-per-analysis')) $('nw-max-packets-per-analysis').value = settings.maxPacketsPerAnalysis;
+      if (settings.analysisEngine && $('nw-analysis-engine')) $('nw-analysis-engine').value = settings.analysisEngine;
+      if (settings.ssmModelPath !== undefined && $('nw-ssm-model-path')) $('nw-ssm-model-path').value = settings.ssmModelPath;
+      if (settings.ssmGpuLayers && $('nw-ssm-gpu-layers')) $('nw-ssm-gpu-layers').value = settings.ssmGpuLayers;
+      if (settings.ssmContextTokens && $('nw-ssm-context-tokens')) $('nw-ssm-context-tokens').value = settings.ssmContextTokens;
+      if (settings.ssmMaxFlows && $('nw-ssm-max-flows')) $('nw-ssm-max-flows').value = settings.ssmMaxFlows;
+      if (settings.ssmAlertThreshold && $('nw-ssm-alert-threshold')) $('nw-ssm-alert-threshold').value = settings.ssmAlertThreshold;
+      if (settings.ssmAlertCooldown && $('nw-ssm-alert-cooldown')) $('nw-ssm-alert-cooldown').value = settings.ssmAlertCooldown;
       if (Array.isArray(settings.packetFields)) {
         document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
           checkbox.checked = settings.packetFields.includes(checkbox.value);
@@ -201,6 +215,7 @@ If nothing interesting is found, say that clearly.`
         _updateMetricsView();
       }
       _updatePromptField();
+      _updateNetworkEngineUi();
 
       if (settings.url) {
         _fetchModels().then(() => {
@@ -218,6 +233,25 @@ If nothing interesting is found, say that clearly.`
 
   // ─── DOM ─────────────────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
+
+  function _isLocalSsmEngine() {
+    return _currentMode === 'network' && $('nw-analysis-engine')?.value === 'llamacpp_ssm';
+  }
+
+  function _updateNetworkEngineUi() {
+    const localSsm = _isLocalSsmEngine();
+    const remoteSettings = $('watcher-remote-model-settings');
+    const heading = $('watcher-model-heading');
+    const localSettings = $('nw-local-ssm-settings');
+    const remoteNote = $('nw-remote-batch-note');
+    const sameModel = $('watcher-same-llm-chip');
+    if (remoteSettings) remoteSettings.style.display = localSsm ? 'none' : '';
+    if (heading) heading.innerHTML = localSsm ? '<span>🧠</span> Local SSM Runtime' : '<span>🔭</span> Watcher LLM';
+    if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
+    if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
+    if (sameModel && localSsm) sameModel.style.display = 'none';
+    _updateStartBtnState();
+  }
 
   // ─── Same-LLM indicator ───────────────────────────────────────────────────
   function _updateSameLlmIndicator() {
@@ -287,9 +321,10 @@ If nothing interesting is found, say that clearly.`
         $('watcher-timer-settings').style.display = _currentMode === 'timer' ? '' : 'none';
         const nwSettings = $('watcher-network-settings');
         if (nwSettings) {
-            nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
-            if (_currentMode === 'network') _fetchNetworkInterfaces();
+          nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
+          if (_currentMode === 'network') _fetchNetworkInterfaces();
         }
+        _updateNetworkEngineUi();
         _updateMetricsView();
         _updatePromptField();
         _saveFormSettings();
@@ -323,10 +358,17 @@ If nothing interesting is found, say that clearly.`
     if (_currentMode === 'network') {
       return {
         watch_mode: 'network',
+        analysis_engine: $('nw-analysis-engine')?.value || 'llamacpp_ssm',
         analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
         max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
         max_packets_per_analysis: parseInt($('nw-max-packets-per-analysis')?.value || '12'),
         packet_fields: Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map((checkbox) => checkbox.value),
+        ssm_model_path: $('nw-ssm-model-path')?.value?.trim() || '',
+        ssm_gpu_layers: parseInt($('nw-ssm-gpu-layers')?.value || '0'),
+        ssm_context_tokens: parseInt($('nw-ssm-context-tokens')?.value || '1024'),
+        ssm_max_flows: parseInt($('nw-ssm-max-flows')?.value || '256'),
+        ssm_alert_threshold: parseFloat($('nw-ssm-alert-threshold')?.value || '0.72'),
+        ssm_alert_cooldown_seconds: parseInt($('nw-ssm-alert-cooldown')?.value || '60'),
       };
     }
     if (_currentMode === 'continuous') {
@@ -528,6 +570,13 @@ If nothing interesting is found, say that clearly.`
   }
 
   // ─── Start / Stop ─────────────────────────────────────────────────────────
+  function _showWatcherStartError(message, localSsm = false) {
+    const error = localSsm ? $('nw-ssm-start-error') : $('watcher-fetch-error');
+    if (!error) return;
+    error.textContent = message;
+    error.style.display = '';
+  }
+
   async function _toggleWatcher() {
     const btn = $('watcher-start-btn');
     if (!btn) return;
@@ -558,9 +607,13 @@ If nothing interesting is found, say that clearly.`
       const ssl = $('watcher-ssl-toggle')?.checked !== false;
       const modeConfig = _getModeConfig();
 
-      if (!model) { alert('Select a model first.'); btn.disabled = false; return; }
+      const localSsm = isNwMode && modeConfig.analysis_engine === 'llamacpp_ssm';
+      if (localSsm && !modeConfig.ssm_model_path) { _showWatcherStartError('Enter the local recurrent GGUF model path first.', true); btn.disabled = false; return; }
+      if (!localSsm && !model) { _showWatcherStartError('Select a model first.'); btn.disabled = false; return; }
       const errEl = $('watcher-fetch-error');
       if (errEl) errEl.style.display = 'none';
+      const ssmErrEl = $('nw-ssm-start-error');
+      if (ssmErrEl) ssmErrEl.style.display = 'none';
 
       try {
         const isNwMode = _currentMode === 'network';
@@ -579,12 +632,12 @@ If nothing interesting is found, say that clearly.`
         });
         const data = await res.json();
         if (!data.success) {
-          if (errEl) { errEl.textContent = data.error || 'Failed to start.'; errEl.style.display = ''; }
+          _showWatcherStartError(data.error || 'Failed to start.', localSsm);
           btn.disabled = false; return;
         }
 
         if (isNwMode) {
-          _setStatus(true, null, { watching_mode: 'network', model: model }, true);
+          _setStatus(true, null, { watching_mode: 'network', model: localSsm ? 'Local llama.cpp SSM' : model }, true);
           _startNwStatusPoll();
           const nwLiveLog = $('nw-live-log');
           if (nwLiveLog) nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
@@ -602,7 +655,7 @@ If nothing interesting is found, say that clearly.`
         // A successful start always opens the live metrics view.
         switchWatcherTab('metrics');
       } catch (err) {
-        if (errEl) { errEl.textContent = err.message; errEl.style.display = ''; }
+        _showWatcherStartError(err.message, localSsm);
         btn.disabled = false;
       }
     }
@@ -657,7 +710,9 @@ If nothing interesting is found, say that clearly.`
     if (!list || !empty || !count) return;
 
     const findings = (Array.isArray(interactions) ? interactions : [])
-      .filter((entry) => entry.outcome !== 'pending');
+      .filter((entry) => entry.outcome !== 'pending' && (
+        entry.engine !== 'llamacpp_ssm' || String(entry.analysis || '').startsWith('Alert')
+      ));
     count.textContent = findings.length ? `(${findings.length})` : '';
     empty.style.display = findings.length ? 'none' : '';
     list.replaceChildren();
@@ -708,14 +763,14 @@ If nothing interesting is found, say that clearly.`
 
       const promptLabel = document.createElement('div');
       promptLabel.style.cssText = 'padding:0.55rem 0.7rem 0.25rem; font-weight:600; font-size:0.8rem;';
-      promptLabel.textContent = 'Prompt';
+      promptLabel.textContent = entry.engine === 'llamacpp_ssm' ? 'Normalized stream event' : 'Prompt';
       const prompt = document.createElement('pre');
       prompt.style.cssText = 'margin:0 0.7rem 0.6rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:0.76rem/1.45 var(--font-mono); color:var(--text-secondary);';
-      prompt.textContent = entry.prompt || '';
+      prompt.textContent = entry.engine === 'llamacpp_ssm' ? JSON.stringify(entry.request || {}, null, 2) : (entry.prompt || '');
 
       const responseLabel = document.createElement('div');
       responseLabel.style.cssText = 'padding:0 0.7rem 0.25rem; font-weight:600; font-size:0.8rem;';
-      responseLabel.textContent = entry.error ? 'Response / Error' : 'Raw response';
+      responseLabel.textContent = entry.engine === 'llamacpp_ssm' ? (entry.error ? 'Runtime error' : 'Score result') : (entry.error ? 'Response / Error' : 'Raw response');
       const response = document.createElement('pre');
       response.style.cssText = 'margin:0 0.7rem 0.7rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:0.76rem/1.45 var(--font-mono); color:var(--text-secondary);';
       response.textContent = entry.response || entry.error || '(empty response)';
@@ -754,6 +809,9 @@ If nothing interesting is found, say that clearly.`
         const tokensEl = $('nw-metric-tokens'); if (tokensEl) tokensEl.textContent = (data.metrics.total_tokens || 0).toLocaleString();
         const inf = $('nw-metric-inference'); if (inf) inf.textContent = `${data.metrics.avg_inference_sec || 0} s`;
         const alertsEl = $('nw-metric-alerts'); if (alertsEl) alertsEl.textContent = data.metrics.alerts_emitted || 0;
+        const runtime = data.ssm_runtime || {};
+        const flowsEl = $('nw-metric-flows'); if (flowsEl) flowsEl.textContent = runtime.active_flows ?? 0;
+        const scoreEl = $('nw-metric-score'); if (scoreEl) scoreEl.textContent = runtime.last_score == null ? '--' : Number(runtime.last_score).toFixed(3);
 
         const pulseDot = $('nw-pulse-dot');
         const statusText = $('nw-status-banner-text');
@@ -797,6 +855,8 @@ If nothing interesting is found, say that clearly.`
     const tokensEl = $('nw-metric-tokens'); if (tokensEl) tokensEl.textContent = '0';
     const inf = $('nw-metric-inference'); if (inf) inf.textContent = '-- s';
     const alertsEl = $('nw-metric-alerts'); if (alertsEl) alertsEl.textContent = '0';
+    const flowsEl = $('nw-metric-flows'); if (flowsEl) flowsEl.textContent = '0';
+    const scoreEl = $('nw-metric-score'); if (scoreEl) scoreEl.textContent = '--';
     const pulseDot = $('nw-pulse-dot'); if (pulseDot) { pulseDot.style.background = 'var(--text-muted)'; pulseDot.style.boxShadow = 'none'; }
     const statusText = $('nw-status-banner-text'); if (statusText) statusText.textContent = 'Network Watcher Idle';
     _nwInteractionRevision = null;
@@ -817,7 +877,7 @@ If nothing interesting is found, say that clearly.`
     const model = $('watcher-model-select')?.value;
     if (!btn) return;
     if (_currentMode === 'network') {
-      btn.disabled = !model;
+      btn.disabled = _isLocalSsmEngine() ? !($('nw-ssm-model-path')?.value || '').trim() : !model;
     } else {
       btn.disabled = !model || !_sessionMeta;
     }
@@ -1036,6 +1096,10 @@ If nothing interesting is found, say that clearly.`
     document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
       checkbox.addEventListener('change', _saveFormSettings);
     });
+    $('nw-analysis-engine')?.addEventListener('change', () => { _updateNetworkEngineUi(); _saveFormSettings(); });
+    ['nw-ssm-model-path', 'nw-ssm-gpu-layers', 'nw-ssm-context-tokens', 'nw-ssm-max-flows', 'nw-ssm-alert-threshold', 'nw-ssm-alert-cooldown'].forEach((id) => {
+      $(id)?.addEventListener(id === 'nw-ssm-model-path' ? 'input' : 'change', () => { _updateStartBtnState(); _saveFormSettings(); });
+    });
     $('watcher-model-select')?.addEventListener('change', () => {
       _updateSameLlmIndicator();
       const btn = $('watcher-start-btn');
@@ -1051,6 +1115,7 @@ If nothing interesting is found, say that clearly.`
 
     // Restore saved form settings
     _loadFormSettings();
+    _updateNetworkEngineUi();
 
     // Scaffold modal
     $('watcher-modal-close')?.addEventListener('click', () => { $('watcher-modal-overlay').style.display = 'none'; });

@@ -2967,6 +2967,13 @@ def network_watcher_start():
     max_packet_payload_bytes = data.get('max_packet_payload_bytes', 384)
     max_packets_per_analysis = data.get('max_packets_per_analysis', 12)
     packet_fields = data.get('packet_fields')
+    analysis_engine = data.get('analysis_engine', 'remote_llm')
+    ssm_model_path = data.get('ssm_model_path', '')
+    ssm_gpu_layers = data.get('ssm_gpu_layers', 0)
+    ssm_context_tokens = data.get('ssm_context_tokens', 1024)
+    ssm_max_flows = data.get('ssm_max_flows', 256)
+    ssm_alert_threshold = data.get('ssm_alert_threshold', 0.72)
+    ssm_alert_cooldown_seconds = data.get('ssm_alert_cooldown_seconds', 60)
     try:
         _network_watcher.start(
             run_id,
@@ -2981,6 +2988,13 @@ def network_watcher_start():
             max_packet_payload_bytes,
             max_packets_per_analysis,
             packet_fields,
+            analysis_engine,
+            ssm_model_path,
+            ssm_gpu_layers,
+            ssm_context_tokens,
+            ssm_max_flows,
+            ssm_alert_threshold,
+            ssm_alert_cooldown_seconds,
         )
         return jsonify({'success': True})
     except Exception as e:
@@ -3119,18 +3133,18 @@ def network_watcher_live_results():
 
     <section class="findings-panel">
         <div class="findings-header">
-            <span>✨ SLM/LLM Findings <span id="findings-count"></span></span>
-            <small>Formatted model responses</small>
+            <span>✨ SSM Stream Alerts <span id="findings-count"></span></span>
+            <small>Threshold-crossing stream scores</small>
         </div>
-        <div id="findings-empty" class="findings-empty">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
+        <div id="findings-empty" class="findings-empty">No SSM alerts yet. Flows appear here when they cross the configured threshold.</div>
         <div id="findings-list" class="findings-list"></div>
     </section>
 
     <details class="interaction-panel">
         <summary>
             <div>
-                <span>🧠 SLM/LLM Interaction Details <span id="interaction-count"></span></span>
-                <small>Prompts, raw responses, request metadata, and processing time</small>
+                <span>🧠 SSM Stream Details <span id="interaction-count"></span></span>
+                <small>Normalized events, per-flow scores, runtime metadata, and processing time</small>
             </div>
             <button class="btn" id="clear-interactions" type="button">Clear</button>
         </summary>
@@ -3183,7 +3197,7 @@ def network_watcher_live_results():
             const list = document.getElementById('findings-list');
             const empty = document.getElementById('findings-empty');
             const count = document.getElementById('findings-count');
-            const findings = (Array.isArray(interactions) ? interactions : []).filter((entry) => entry.outcome !== 'pending');
+            const findings = (Array.isArray(interactions) ? interactions : []).filter((entry) => entry.outcome !== 'pending' && (entry.engine !== 'llamacpp_ssm' || String(entry.analysis || '').startsWith('Alert')));
             count.textContent = findings.length ? `(${findings.length})` : '';
             empty.style.display = findings.length ? 'none' : '';
             list.replaceChildren();
@@ -3222,9 +3236,9 @@ def network_watcher_live_results():
                 const fields = [
                     ['interaction-entry-header', `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`],
                     ['interaction-meta', `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`],
-                    ['interaction-label', 'Prompt'],
-                    ['', entry.prompt || '', 'pre'],
-                    ['interaction-label', entry.error ? 'Response / Error' : 'Raw response'],
+                    ['interaction-label', entry.engine === 'llamacpp_ssm' ? 'Normalized stream event' : 'Prompt'],
+                    ['', entry.engine === 'llamacpp_ssm' ? JSON.stringify(entry.request || {}, null, 2) : (entry.prompt || ''), 'pre'],
+                    ['interaction-label', entry.engine === 'llamacpp_ssm' ? (entry.error ? 'Runtime error' : 'Score result') : (entry.error ? 'Response / Error' : 'Raw response')],
                     ['', entry.response || entry.error || '(empty response)', 'pre'],
                 ];
                 fields.forEach(([className, text, tag = 'div']) => {
