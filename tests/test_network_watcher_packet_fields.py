@@ -116,6 +116,18 @@ def test_local_gguf_discovery_recurses_into_model_subfolders(tmp_path):
     }]
 
 
+def test_local_gguf_discovery_accepts_a_model_path_and_hidden_subfolder(tmp_path):
+    model_dir = tmp_path / ".model-cache" / "download"
+    model_dir.mkdir(parents=True)
+    expected = model_dir / "recurrent.gguf"
+    expected.write_bytes(b"GGUF")
+
+    models, roots = _discover_local_gguf_models([str(expected)])
+
+    assert roots == [str(model_dir)]
+    assert [model["id"] for model in models] == [str(expected)]
+
+
 def test_ssm_alert_threshold_respects_per_flow_cooldown():
     watcher = NetworkWatcher(event_store=None)
     watcher.ssm_alert_threshold = 0.72

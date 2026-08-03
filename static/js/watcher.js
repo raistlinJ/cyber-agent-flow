@@ -560,7 +560,8 @@ If nothing interesting is found, say that clearly.`
   async function _fetchLocalSsmModels() {
     const button = $('nw-fetch-local-models-btn');
     const selector = $('nw-local-model-select');
-    const root = ($('nw-ssm-model-root')?.value || '').trim();
+    const configuredRoot = ($('nw-ssm-model-root')?.value || '').trim();
+    const root = configuredRoot || ($('nw-ssm-model-path')?.value || '').trim();
     const status = $('nw-local-model-fetch-status');
     if (!button || !selector) return;
 

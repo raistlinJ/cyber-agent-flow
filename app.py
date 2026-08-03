@@ -38,6 +38,10 @@ def _default_local_gguf_search_roots() -> list[str]:
         os.environ.get(LOCAL_GGUF_MODEL_SEARCH_ENV, ""),
         os.path.join(app.root_path, "models"),
         os.path.expanduser("~/models"),
+        os.path.expanduser("~/.cache/llama.cpp"),
+        os.path.expanduser("~/.cache/huggingface/hub"),
+        os.path.expanduser("~/.lmstudio/models"),
+        os.path.expanduser("~/Library/Application Support/LM Studio/models"),
         "/models",
     ]
     unique_roots = []
@@ -48,21 +52,34 @@ def _default_local_gguf_search_roots() -> list[str]:
     return unique_roots
 
 
+def _normalize_local_gguf_search_root(raw_root: str) -> str:
+    """Accept a directory, an existing GGUF path, or a typed GGUF destination."""
+    root = os.path.abspath(os.path.expanduser(str(raw_root or "")))
+    if root.lower().endswith(".gguf"):
+        return os.path.dirname(root)
+    return root
+
+
 def _discover_local_gguf_models(search_roots: list[str]) -> tuple[list[dict], list[str]]:
-    """Find GGUF files below trusted operator-selected roots without following links."""
+    """Find GGUF files recursively below operator-selected roots."""
     models = []
     scanned_roots = []
     for search_root in search_roots:
-        root = os.path.abspath(os.path.expanduser(str(search_root or "")))
+        root = _normalize_local_gguf_search_root(search_root)
         if not os.path.isdir(root):
             continue
         scanned_roots.append(root)
         root_depth = root.rstrip(os.sep).count(os.sep)
-        for directory, subdirectories, filenames in os.walk(root, followlinks=False):
+        visited_directories = set()
+        for directory, subdirectories, filenames in os.walk(root, followlinks=True):
+            resolved_directory = os.path.realpath(directory)
+            if resolved_directory in visited_directories:
+                subdirectories[:] = []
+                continue
+            visited_directories.add(resolved_directory)
             depth = directory.rstrip(os.sep).count(os.sep) - root_depth
             if depth >= MAX_LOCAL_GGUF_SEARCH_DEPTH:
                 subdirectories[:] = []
-            subdirectories[:] = [name for name in subdirectories if not name.startswith(".")]
             for filename in filenames:
                 if not filename.lower().endswith(".gguf"):
                     continue
