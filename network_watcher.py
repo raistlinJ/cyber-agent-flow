@@ -32,7 +32,7 @@ DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
 MAX_ANALYSIS_INTERVAL_SECONDS = 300
 DEFAULT_SSM_ALERT_THRESHOLD = 0.72
 DEFAULT_SSM_ALERT_COOLDOWN_SECONDS = 60
-DEFAULT_SURICATA_EVE_PATH = "/var/log/suricata/eve.json"
+DEFAULT_SURICATA_EVE_PATH = "/tmp/cyber-agent-flow/suricata/eve.json"
 DEFAULT_SURICATA_EVENT_TYPES = frozenset({"flow", "dns", "http", "tls", "alert", "anomaly", "fileinfo"})
 PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
 
@@ -354,7 +354,9 @@ class NetworkWatcher:
         )
         self.max_packets_per_analysis = self._normalize_max_packets(max_packets_per_analysis)
         self.packet_fields = self._normalize_packet_fields(packet_fields)
-        self.suricata_eve_path = str(suricata_eve_path or DEFAULT_SURICATA_EVE_PATH).strip()
+        # The watcher owns this temporary EVE stream so its launched Suricata
+        # process and tailer always agree on the same path.
+        self.suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
         self.suricata_event_types = self._normalize_suricata_event_types(suricata_event_types)
         self.use_cyber_agent_flow_data = bool(use_cyber_agent_flow_data)
         self._caf_context_mtime = None

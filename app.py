@@ -151,11 +151,12 @@ _event_store.recover_interrupted_work()
 
 # Network Watcher — background agent that sniffs packets for SSM analysis
 try:
-    from network_watcher import NetworkWatcher
+    from network_watcher import NetworkWatcher, DEFAULT_SURICATA_EVE_PATH
     _network_watcher = NetworkWatcher(_event_store)
 except Exception as _nw_import_err:
     print(f"[app] NetworkWatcher unavailable: {_nw_import_err}", flush=True)
     _network_watcher = None
+    DEFAULT_SURICATA_EVE_PATH = "/tmp/cyber-agent-flow/suricata/eve.json"
 
 # Path to plugins/ directory — AI-generated tools and playbooks, kept
 # separate from the hand-built kali_tools.json catalog
@@ -3110,7 +3111,7 @@ def network_watcher_start():
     ssm_alert_threshold = data.get('ssm_alert_threshold', 0.72)
     ssm_alert_cooldown_seconds = data.get('ssm_alert_cooldown_seconds', 60)
     capture_source = data.get('capture_source', 'python')
-    suricata_eve_path = data.get('suricata_eve_path', '/var/log/suricata/eve.json')
+    suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
     suricata_event_types = data.get('suricata_event_types')
     use_cyber_agent_flow_data = bool(data.get('use_cyber_agent_flow_data', False))
     try:

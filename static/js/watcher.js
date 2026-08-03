@@ -102,7 +102,6 @@ If nothing interesting is found, say that clearly.`
         networkUseCyberAgentFlowData: $('nw-use-caf-data')?.checked,
         selectedInterfaces: selectedIfaces,
         captureSource: $('nw-capture-source')?.value,
-        suricataEvePath: $('nw-suricata-eve-path')?.value,
         suricataEventTypes,
         analysisInterval: $('nw-analysis-interval')?.value,
         maxPacketPayloadBytes: $('nw-max-payload-bytes')?.value,
@@ -153,7 +152,6 @@ If nothing interesting is found, say that clearly.`
       if (settings.maxPacketPayloadBytes && $('nw-max-payload-bytes')) $('nw-max-payload-bytes').value = settings.maxPacketPayloadBytes;
       if (settings.maxPacketsPerAnalysis && $('nw-max-packets-per-analysis')) $('nw-max-packets-per-analysis').value = settings.maxPacketsPerAnalysis;
       if (settings.captureSource && $('nw-capture-source')) $('nw-capture-source').value = settings.captureSource;
-      if (settings.suricataEvePath !== undefined && $('nw-suricata-eve-path')) $('nw-suricata-eve-path').value = settings.suricataEvePath;
       if (Array.isArray(settings.suricataEventTypes)) {
         document.querySelectorAll('.nw-suricata-event-cb').forEach((checkbox) => {
           checkbox.checked = settings.suricataEventTypes.includes(checkbox.value);
@@ -221,11 +219,9 @@ If nothing interesting is found, say that clearly.`
     const pythonSettings = $('nw-python-source-settings');
     const pythonPacketFields = $('nw-python-packet-fields');
     const suricataSettings = $('nw-suricata-source-settings');
-    const evePathGroup = $('nw-suricata-eve-path-group');
     if (pythonSettings) pythonSettings.style.display = '';
     if (pythonPacketFields) pythonPacketFields.style.display = suricata ? 'none' : '';
     if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
-    if (evePathGroup) evePathGroup.style.display = suricata ? '' : 'none';
     _fetchNetworkInterfaces();
   }
 
@@ -480,7 +476,6 @@ If nothing interesting is found, say that clearly.`
     const maxContext = parseInt($('watcher-context-size')?.value || '64000');
     const packetConfig = {
       capture_source: $('nw-capture-source')?.value || 'python',
-      suricata_eve_path: $('nw-suricata-eve-path')?.value?.trim() || '/var/log/suricata/eve.json',
       suricata_event_types: Array.from(document.querySelectorAll('.nw-suricata-event-cb:checked')).map((checkbox) => checkbox.value),
       analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
       max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
@@ -1317,7 +1312,6 @@ If nothing interesting is found, say that clearly.`
       _saveFormSettings();
     });
     $('nw-refresh-suricata-btn')?.addEventListener('click', _fetchSuricataStatus);
-    $('nw-suricata-eve-path')?.addEventListener('input', _saveFormSettings);
     document.querySelectorAll('.nw-suricata-event-cb').forEach((checkbox) => {
       checkbox.addEventListener('change', _saveFormSettings);
     });
