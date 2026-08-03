@@ -1060,7 +1060,9 @@
                                 </div>
 
                                 <div id="watcher-request-limits-setup-slot">
-                                <div id="watcher-request-limits" class="nw-config-grid">
+                                <details id="watcher-request-limits" class="watcher-config-section" open>
+                                    <summary><span>LLM request limits</span><small>Context and timeout</small></summary>
+                                    <div class="nw-config-grid watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
                                         <label for="watcher-context-size">Max Context Size (Chars)</label>
                                         <div class="select-wrapper">
@@ -1088,7 +1090,8 @@
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
                                     </div>
-                                </div>
+                                    </div>
+                                </details>
                                 </div>
                                 <div class="input-group">
                                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
@@ -1117,6 +1120,9 @@
 
                                 <!-- ── Optional CyberAgentFlow context for periodic packet batches ──── -->
                                 <div id="watcher-periodic-settings" class="watcher-mode-settings">
+                                    <details class="watcher-config-section" open>
+                                        <summary><span>Periodic packet-batch settings</span><small>Cadence and optional session context</small></summary>
+                                        <div class="watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
                                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
                                             <input type="checkbox" id="watcher-periodic-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
@@ -1125,6 +1131,8 @@
                                         <span id="watcher-periodic-caf-data-hint" class="input-hint">Optionally append active CyberAgentFlow session data to packet batches. Start Service to enable it.</span>
                                     </div>
                                     <div id="watcher-periodic-stream-limits-slot"></div>
+                                        </div>
+                                    </details>
                                 </div>
 
                                 <!-- ── Shared packet telemetry settings ───── -->
@@ -1138,6 +1146,9 @@
                                         <span id="nw-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
                                     </div>
                                     <div id="nw-stream-runtime-config"></div>
+                                    <details class="watcher-config-section" open>
+                                        <summary><span>Telemetry source</span><small>Packet decoder or Suricata EVE</small></summary>
+                                        <div class="watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
                                         <label for="nw-capture-source">Telemetry source</label>
                                         <div class="select-wrapper">
@@ -1154,8 +1165,12 @@
                                             <button type="button" id="nw-refresh-suricata-btn" class="watcher-btn-ghost" style="font-size:0.75rem">Refresh</button>
                                         </div>
                                     </div>
+                                        </div>
+                                    </details>
                                     <div id="nw-engine-settings-setup-slot">
-                                    <div id="nw-engine-settings-section">
+                                    <details id="nw-engine-settings-section" class="watcher-config-section" open>
+                                    <summary><span>Continuous SSM runtime</span><small>Flow state and alerting</small></summary>
+                                    <div class="watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
                                         <label for="nw-analysis-engine">Continuous analysis engine</label>
                                         <div class="select-wrapper">
@@ -1217,9 +1232,12 @@
                                         <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
                                     </div>
                                     </div>
+                                    </details>
                                     </div>
 
-                                    <div class="nw-config-grid" id="nw-stream-limits">
+                                    <details id="nw-stream-limits" class="watcher-config-section" open>
+                                        <summary><span>Packet batching and payload limits</span><small>Batch size and sample bounds</small></summary>
+                                    <div class="nw-config-grid watcher-config-section-body">
                                         <div class="input-group nw-batch-only" style="margin:0">
                                             <label for="nw-analysis-interval">Send packet data every</label>
                                             <div class="select-wrapper">
@@ -1273,12 +1291,15 @@
                                             <span class="input-hint">Caps each batch when batch analysis is in use.</span>
                                         </div>
                                     </div>
+                                    </details>
 
-                                    <div id="nw-suricata-source-settings" style="display:none">
+                                    <details id="nw-suricata-source-settings" class="watcher-config-section" style="display:none" open>
+                                        <summary><span>Suricata EVE event types</span><small>Ingested and normalized for the SSM/LLM</small></summary>
+                                        <div class="watcher-config-section-body">
                                         <div class="nw-packet-fields">
                                             <div>
-                                                <label class="nw-packet-fields-title">Suricata EVE event types sent to the SSM/LLM</label>
-                                                <p class="input-hint">Select the structured telemetry to normalize. All current event types are selected by default.</p>
+                                                <label class="nw-packet-fields-title">Suricata EVE event types ingested and normalized for the SSM/LLM</label>
+                                                <p class="input-hint">These native EVE event types are emitted only when enabled and observed. All supported types are selected by default.</p>
                                             </div>
                                             <div class="nw-packet-fields-table-wrap">
                                                 <details class="nw-packet-layer">
@@ -1303,9 +1324,12 @@
                                                 </details>
                                             </div>
                                         </div>
-                                    </div>
+                                        </div>
+                                    </details>
 
-                                    <div id="nw-python-source-settings">
+                                    <details id="nw-python-source-settings" class="watcher-config-section" open>
+                                    <summary><span>PyShark decoder and fields</span><small>Interfaces and decoded packet data</small></summary>
+                                    <div class="watcher-config-section-body">
                                     <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service, which retains its own per-flow state.</p>
                                     <div class="input-group" style="margin:0">
                                         <label>Network Interface(s)</label>
@@ -1372,6 +1396,7 @@
                                         </div>
                                     </div>
                                     </div>
+                                    </details>
                                 </div>
 
                                 <p class="watcher-config-hint" id="watcher-config-hint-text">
