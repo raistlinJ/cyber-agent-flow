@@ -1002,7 +1002,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-provider-select">Provider</label>
+                                    <label id="watcher-provider-label" for="watcher-provider-select">Provider</label>
                                     <div class="select-wrapper">
                                         <i class="ph ph-stack icon-left"></i>
                                         <select id="watcher-provider-select">
@@ -1016,7 +1016,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-url-input">LLM URL</label>
+                                    <label id="watcher-url-label" for="watcher-url-input">LLM URL</label>
                                     <div class="input-with-icon">
                                         <i class="ph ph-link icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
                                         <input type="url" id="watcher-url-input" placeholder="http://localhost:11434">
@@ -1039,7 +1039,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-model-select">Model</label>
+                                    <label id="watcher-model-label" for="watcher-model-select">Model</label>
                                     <div style="display:flex;gap:0.5rem;align-items:center">
                                         <div class="select-wrapper" style="flex:1">
                                             <i class="ph ph-robot icon-left"></i>
@@ -1053,6 +1053,8 @@
                                         </button>
                                     </div>
                                     <div id="watcher-fetch-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem;margin-top:0.4rem"></div>
+                                    <div id="watcher-ssm-compatibility" class="input-hint" style="display:none;margin-top:0.45rem"></div>
+                                    <span id="watcher-ssm-provider-hint" class="input-hint" style="display:none;margin-top:0.45rem">Discovery is advisory: a remote service must explicitly support persistent per-flow SSM state. Local mode uses the GGUF path below.</span>
                                 </div>
 
                                 <div class="input-group">
@@ -1180,11 +1182,11 @@
                                             <i class="ph ph-cpu icon-left"></i>
                                             <select id="nw-analysis-engine">
                                                 <option value="llamacpp_ssm" selected>Local recurrent SSM (llama-cpp-python)</option>
-                                                <option value="remote_llm">Remote batch LLM (legacy)</option>
+                                                <option value="remote_ssm">Remote SSM stream service</option>
                                             </select>
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
-                                        <span class="input-hint">The local SSM processes each normalized packet in this watcher process and retains a bounded state per flow. It does not send packets to an API.</span>
+                                        <span class="input-hint">Local mode retains flow state in this watcher process. Remote mode sends normalized events to an SSM service that owns the flow state; ordinary chat APIs are not stream-state compatible.</span>
                                     </div>
 
                                     <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
@@ -1261,7 +1263,7 @@
                                     </div>
 
                                     <div id="nw-python-source-settings">
-                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote batch mode uses the shared LLM settings above and sends decoded packet batches on the cadence below. Local SSM mode processes each packet immediately; packet batching controls are retained only for switching back to remote mode.</p>
+                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service. The Python packet cadence controls below only apply if you later select a non-stream batch implementation.</p>
                                     <div class="input-group" style="margin:0">
                                         <label>Network Interface(s)</label>
                                         <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">

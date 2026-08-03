@@ -128,3 +128,10 @@ def test_suricata_event_selection_filters_unselected_types():
 
     assert watcher._suricata_record({"event_type": "dns"}) is None
     assert watcher._suricata_record({"event_type": "flow", "flow": {"state": "established"}})
+
+
+def test_remote_ssm_endpoint_uses_the_explicit_stream_contract():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.api_url = "https://gpu.example.test/v1/models"
+
+    assert watcher._remote_ssm_endpoint() == "https://gpu.example.test/v1/ssm/events"

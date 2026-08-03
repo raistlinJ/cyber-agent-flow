@@ -449,16 +449,52 @@ def _format_model_label(model_name: str, model_family: str = '') -> str:
     return f"{model_name} ({arch}, MCP: {mcp})"
 
 
+def _detect_ssm_compatibility(model_name: str, model_family: str = '') -> dict:
+    """Describe whether discovery metadata suggests a recurrent SSM model.
+
+    This is intentionally advisory.  A model name/family does not tell us
+    whether a remote OpenAI-compatible server exposes persistent per-flow
+    state, which is a separate runtime capability.
+    """
+    value = f"{model_name} {model_family}".lower()
+    if any(term in value for term in ("falcon-mamba", "mamba", "rwkv", "recurrentgemma")):
+        return {
+            "status": "likely_recurrent",
+            "label": "Likely recurrent SSM",
+            "detail": "Name or provider metadata indicates a recurrent/SSM family. Verify the GGUF or remote runtime supports persistent state.",
+        }
+    if any(term in value for term in ("jamba", "zamba", "samba", "hybrid")):
+        return {
+            "status": "hybrid_verify",
+            "label": "Hybrid — verify",
+            "detail": "This appears to be a hybrid architecture. It is not accepted by the current pure recurrent local runtime without explicit support.",
+        }
+    if _detect_model_arch(model_name, model_family) == "Transformer":
+        return {
+            "status": "not_ssm",
+            "label": "Not an SSM",
+            "detail": "Discovery metadata identifies a transformer family, so it is not suitable for the persistent SSM stream path.",
+        }
+    return {
+        "status": "unknown",
+        "label": "SSM compatibility unknown",
+        "detail": "The provider did not expose enough architecture metadata. Check the model card and runtime capabilities before using it for a stream state.",
+    }
+
+
 def _extract_provider_models(provider: str, payload: dict) -> list[dict]:
     if provider in {'litellm', 'openai', 'claude'}:
-        return [
-            {
-                "id": str(model.get('id')),
-                "label": _format_model_label(str(model.get('id')))
-            }
-            for model in payload.get('data', [])
-            if isinstance(model, dict) and model.get('id')
-        ]
+        models = []
+        for model in payload.get('data', []):
+            if not isinstance(model, dict) or not model.get('id'):
+                continue
+            model_id = str(model.get('id'))
+            models.append({
+                "id": model_id,
+                "label": _format_model_label(model_id),
+                "ssm_compatibility": _detect_ssm_compatibility(model_id),
+            })
+        return models
 
     models = []
     for model in payload.get('models', []):
@@ -468,7 +504,11 @@ def _extract_provider_models(provider: str, payload: dict) -> list[dict]:
         m_name = str(model.get('name'))
         m_family = model.get('details', {}).get('family', '').lower()
 
-        models.append({"id": m_name, "label": _format_model_label(m_name, m_family)})
+        models.append({
+            "id": m_name,
+            "label": _format_model_label(m_name, m_family),
+            "ssm_compatibility": _detect_ssm_compatibility(m_name, m_family),
+        })
 
     return models
 
@@ -2967,7 +3007,7 @@ def network_watcher_start():
     max_packet_payload_bytes = data.get('max_packet_payload_bytes', 384)
     max_packets_per_analysis = data.get('max_packets_per_analysis', 12)
     packet_fields = data.get('packet_fields')
-    analysis_engine = data.get('analysis_engine', 'remote_llm')
+    analysis_engine = data.get('analysis_engine', 'llamacpp_ssm')
     ssm_model_path = data.get('ssm_model_path', '')
     ssm_gpu_layers = data.get('ssm_gpu_layers', 0)
     ssm_context_tokens = data.get('ssm_context_tokens', 1024)

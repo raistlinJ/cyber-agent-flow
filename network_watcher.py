@@ -8,7 +8,7 @@ import queue
 import logging
 import psutil
 from datetime import datetime
-from ssm_stream import LlamaCppSsmRuntime, packet_flow_key, packet_stream_event
+from ssm_stream import LlamaCppSsmRuntime, SsmObservation, packet_flow_key, packet_stream_event
 
 try:
     import pyshark
@@ -93,7 +93,7 @@ class NetworkWatcher:
         self.capture_source = "python"
         self.suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
         self.suricata_event_types = set(DEFAULT_SURICATA_EVENT_TYPES)
-        self.analysis_engine = "remote_llm"
+        self.analysis_engine = "llamacpp_ssm"
         self.ssm_alert_threshold = DEFAULT_SSM_ALERT_THRESHOLD
         self.ssm_alert_cooldown_seconds = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS
         self._ssm_runtime = None
@@ -302,7 +302,7 @@ class NetworkWatcher:
               analysis_interval_seconds: int = DEFAULT_ANALYSIS_INTERVAL_SECONDS,
               max_packet_payload_bytes: int = DEFAULT_MAX_PACKET_PAYLOAD_BYTES,
               max_packets_per_analysis: int = DEFAULT_MAX_PACKETS_PER_ANALYSIS,
-              packet_fields: list[str] | None = None, analysis_engine: str = "remote_llm",
+              packet_fields: list[str] | None = None, analysis_engine: str = "llamacpp_ssm",
               ssm_model_path: str = "", ssm_gpu_layers: int = 0,
               ssm_context_tokens: int = 1024, ssm_max_flows: int = 256,
               ssm_alert_threshold: float = DEFAULT_SSM_ALERT_THRESHOLD,
@@ -338,7 +338,7 @@ class NetworkWatcher:
         self.packet_fields = self._normalize_packet_fields(packet_fields)
         self.suricata_eve_path = str(suricata_eve_path or DEFAULT_SURICATA_EVE_PATH).strip()
         self.suricata_event_types = self._normalize_suricata_event_types(suricata_event_types)
-        self.analysis_engine = "llamacpp_ssm" if analysis_engine == "llamacpp_ssm" else "remote_llm"
+        self.analysis_engine = analysis_engine if analysis_engine in {"llamacpp_ssm", "remote_ssm"} else "llamacpp_ssm"
         self.ssm_alert_threshold = self._bounded_float(
             ssm_alert_threshold, DEFAULT_SSM_ALERT_THRESHOLD, 0.05, 1.0
         )
@@ -355,6 +355,8 @@ class NetworkWatcher:
                 max_flows=ssm_max_flows,
             )
             self._ssm_runtime.start()
+        elif not self.model:
+            raise RuntimeError("Select an SSM model exposed by the remote SSM service.")
 
         # Reset metrics & logs
         self.packets_captured = 0
@@ -445,7 +447,7 @@ class NetworkWatcher:
     def _engine_label(self) -> str:
         if self.analysis_engine == "llamacpp_ssm":
             return "local llama.cpp recurrent SSM; every packet processed immediately"
-        return f"remote model every {self.analysis_interval_seconds}s; up to {self._max_packets_label()} packets"
+        return "remote SSM stream service; every normalized event is sent immediately"
 
     def _capture_source_label(self) -> str:
         if self.capture_source == "suricata_eve":
@@ -510,7 +512,13 @@ class NetworkWatcher:
                 "ssm_alert_threshold": self.ssm_alert_threshold,
                 "ssm_alert_cooldown_seconds": self.ssm_alert_cooldown_seconds,
             },
-            "ssm_runtime": self._ssm_runtime.status() if self._ssm_runtime else None,
+            "ssm_runtime": self._ssm_runtime.status() if self._ssm_runtime else ({
+                "available": True,
+                "loaded": self.running,
+                "remote": True,
+                "endpoint": self._remote_ssm_endpoint(),
+                "model": self.model,
+            } if self.analysis_engine == "remote_ssm" else None),
             "bpf_permission_ok": bpf_ok,
             "capture_error": getattr(self, 'capture_error', None),
             "interaction_revision": interaction_revision,
@@ -692,7 +700,7 @@ class NetworkWatcher:
         return {key: value for key, value in summary.items() if value not in ("", None)}
 
     def _analyzer_loop(self):
-        if self.analysis_engine == "llamacpp_ssm":
+        if self.analysis_engine in {"llamacpp_ssm", "remote_ssm"}:
             self._stream_analyzer_loop()
             return
         while not self._stop_event.is_set():
@@ -722,7 +730,7 @@ class NetworkWatcher:
             self._analyze_stream_record(record)
 
     def _analyze_stream_record(self, record: dict):
-        if not self._ssm_runtime:
+        if self.analysis_engine == "llamacpp_ssm" and not self._ssm_runtime:
             return
         started = time.time()
         flow_key = packet_flow_key(record)
@@ -730,8 +738,8 @@ class NetworkWatcher:
         interaction_id = self._record_interaction({
             "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
             "engine": "llamacpp_ssm",
-            "model": self._ssm_runtime.model_path,
-            "endpoint": "local llama-cpp-python runtime",
+            "model": self._ssm_runtime.model_path if self._ssm_runtime else self.model,
+            "endpoint": "local llama-cpp-python runtime" if self._ssm_runtime else self._remote_ssm_endpoint(),
             "request": {"flow": flow_key, "event": event},
             "prompt": "",
             "response": "",
@@ -742,7 +750,7 @@ class NetworkWatcher:
             "analysis": "",
         })
         try:
-            observation = self._ssm_runtime.observe(flow_key, event)
+            observation = self._ssm_runtime.observe(flow_key, event) if self._ssm_runtime else self._observe_remote_ssm(flow_key, event)
             elapsed = time.time() - started
             self.total_inference_time += elapsed
             self.inference_count += 1
@@ -777,7 +785,44 @@ class NetworkWatcher:
                 error=str(exc),
                 analysis="",
             )
-            self._add_log("error", f"Local SSM event evaluation failed: {exc}")
+            self._add_log("error", f"SSM event evaluation failed: {exc}")
+
+    def _remote_ssm_endpoint(self) -> str:
+        """Map an existing provider base URL to the explicit stream-service contract."""
+        target_url = (self.api_url or "").rstrip("/")
+        for suffix in ("/v1/chat/completions", "/v1/completions", "/api/chat", "/v1/models", "/api/tags"):
+            if target_url.endswith(suffix):
+                target_url = target_url[:-len(suffix)]
+                break
+        if target_url.endswith("/v1"):
+            target_url = target_url[:-3]
+        return f"{target_url}/v1/ssm/events"
+
+    def _observe_remote_ssm(self, flow_key: str, event: dict) -> SsmObservation:
+        """Send one normalized event to a remote service that owns per-flow state."""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        response = requests.post(
+            self._remote_ssm_endpoint(),
+            json={"model": self.model, "flow_key": flow_key, "event": event},
+            headers=headers,
+            timeout=(10, self.request_timeout),
+            verify=self.ssl_verify,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Remote SSM service returned HTTP {response.status_code}.")
+        payload = response.json() or {}
+        score = self._bounded_float(
+            payload.get("score", payload.get("anomaly_score")), 0.0, 0.0, 1.0
+        )
+        return SsmObservation(
+            flow_key=str(payload.get("flow_key") or flow_key),
+            event=json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+            score=score,
+            model_score=score,
+            active_flows=self._bounded_int(payload.get("active_flows"), 0, 0, 1_000_000),
+        )
 
     def _should_emit_ssm_alert(self, flow_key: str, score: float) -> bool:
         if score < self.ssm_alert_threshold:

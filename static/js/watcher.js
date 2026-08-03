@@ -31,6 +31,7 @@
   let _statusPollInterval = null;
   let _nwStatusPollInterval = null;
   let _nwInteractionRevision = null;
+  let _modelSsmCompatibility = new Map();
   let _currentMode = 'continuous'; // 'continuous' | 'timer' | 'network'
 
   // ─── Storage ─────────────────────────────────────────────────────────────
@@ -265,17 +266,49 @@ If nothing interesting is found, say that clearly.`
 
   function _updateNetworkEngineUi() {
     const localSsm = _isLocalSsmEngine();
+    const networkMode = _currentMode === 'network';
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
     const localSettings = $('nw-local-ssm-settings');
     const remoteNote = $('nw-remote-batch-note');
     const sameModel = $('watcher-same-llm-chip');
-    if (remoteSettings) remoteSettings.style.display = localSsm ? 'none' : '';
-    if (heading) heading.innerHTML = localSsm ? '<span>🧠</span> Local SSM Runtime' : '<span>🔭</span> Watcher LLM';
+    const providerLabel = $('watcher-provider-label');
+    const urlLabel = $('watcher-url-label');
+    const modelLabel = $('watcher-model-label');
+    const providerHint = $('watcher-ssm-provider-hint');
+    if (remoteSettings) remoteSettings.style.display = '';
+    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Watcher LLM';
+    if (providerLabel) providerLabel.textContent = networkMode ? 'SSM provider / discovery endpoint' : 'Provider';
+    if (urlLabel) urlLabel.textContent = networkMode ? 'Provider endpoint URL' : 'LLM URL';
+    if (modelLabel) modelLabel.textContent = networkMode ? 'Discovered SSM model' : 'Model';
+    if (providerHint) {
+      providerHint.style.display = networkMode ? '' : 'none';
+      providerHint.textContent = localSsm
+        ? 'Provider discovery is optional in local mode; the GGUF path below selects the actual local SSM. Compatibility is inferred from returned model metadata.'
+        : 'Remote mode requires a persistent SSM service at POST /v1/ssm/events. Fetching a provider model confirms only a likely model family, not stream-state support.';
+    }
     if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
     if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
     if (sameModel && localSsm) sameModel.style.display = 'none';
     _updateStartBtnState();
+    _renderSsmCompatibility();
+  }
+
+  function _renderSsmCompatibility() {
+    const target = $('watcher-ssm-compatibility');
+    if (!target) return;
+    if (_currentMode !== 'network') { target.style.display = 'none'; return; }
+    const modelId = $('watcher-model-select')?.value || '';
+    const compatibility = _modelSsmCompatibility.get(modelId);
+    if (!modelId || !compatibility) {
+      target.textContent = 'Fetch models to inspect any SSM architecture metadata exposed by this provider.';
+      target.style.display = '';
+      target.style.color = 'var(--text-secondary)';
+      return;
+    }
+    target.textContent = `${compatibility.label}: ${compatibility.detail}`;
+    target.style.display = '';
+    target.style.color = compatibility.status === 'likely_recurrent' ? 'var(--success)' : (compatibility.status === 'not_ssm' ? 'var(--error)' : 'var(--text-secondary)');
   }
 
   // ─── Same-LLM indicator ───────────────────────────────────────────────────
@@ -441,10 +474,14 @@ If nothing interesting is found, say that clearly.`
       });
       const data = await res.json();
       if (!data.success || !data.models?.length) throw new Error(data.error || 'No models found.');
+      _modelSsmCompatibility = new Map();
       sel.innerHTML = data.models.map((m) => {
         const val = typeof m === 'string' ? m : m.id;
         const lbl = typeof m === 'string' ? m : m.label;
-        return `<option value="${_esc(val)}">${_esc(lbl)}</option>`;
+        const compatibility = typeof m === 'string' ? null : m.ssm_compatibility;
+        if (compatibility) _modelSsmCompatibility.set(val, compatibility);
+        const suffix = compatibility ? ` · SSM: ${compatibility.label}` : '';
+        return `<option value="${_esc(val)}">${_esc(`${lbl}${suffix}`)}</option>`;
       }).join('');
       sel.disabled = false;
       let savedModel = null;
@@ -459,8 +496,9 @@ If nothing interesting is found, say that clearly.`
         sel.value = _sessionMeta.model;
       }
       _saveFormSettings();
-      $('watcher-start-btn').disabled = false;
+      _updateStartBtnState();
       _updateSameLlmIndicator();
+      _renderSsmCompatibility();
     } catch (err) {
       if (errEl) { errEl.textContent = err.message; errEl.style.display = ''; }
     } finally {
@@ -1143,8 +1181,8 @@ If nothing interesting is found, say that clearly.`
     });
     $('watcher-model-select')?.addEventListener('change', () => {
       _updateSameLlmIndicator();
-      const btn = $('watcher-start-btn');
-      if (btn) btn.disabled = !$('watcher-model-select').value;
+      _renderSsmCompatibility();
+      _updateStartBtnState();
       _saveFormSettings();
     });
     $('watcher-provider-select')?.addEventListener('change', () => {

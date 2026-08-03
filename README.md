@@ -84,6 +84,14 @@ In Watcher → Setup → Network, select **Local recurrent SSM
 Standard transformer GGUF files are rejected for this path because they do not
 provide the intended bounded recurrent state per flow.
 
+The same provider/model selector remains available for model discovery. It
+labels models as likely recurrent SSM, hybrid/verify, not SSM, or unknown based
+on provider metadata. This is advisory: a normal chat-completions endpoint does
+not expose persistent per-flow state. For remote execution, expose a stream
+service at `POST /v1/ssm/events` that accepts
+`{"model", "flow_key", "event"}` and returns at least
+`{"score": 0.0..1.0}` (optionally `flow_key` and `active_flows`).
+
 The Network Watcher can also consume a running Suricata deployment through its
 newline-delimited EVE JSON output. In Watcher → Setup → Network, choose
 **Suricata EVE JSON**, provide the readable `eve.json` path, and select the EVE
