@@ -3175,13 +3175,18 @@ def network_watcher_status():
 def network_watcher_interactions():
     """Return or clear the transient SLM/LLM diagnostic history."""
     if not _network_watcher:
-        return jsonify({'available': False, 'interactions': [], 'revision': 0}), 503
+        return jsonify({'available': False, 'interactions': [], 'flows': [], 'revision': 0}), 503
     if request.method == 'POST':
-        _network_watcher.clear_interactions()
+        payload = request.get_json(silent=True) or {}
+        if payload.get('scope') == 'old':
+            _network_watcher.clear_old_stream_interactions()
+        else:
+            _network_watcher.clear_interactions()
     revision, interactions = _network_watcher.get_interactions()
     return jsonify({
         'available': True,
         'interactions': interactions,
+        'flows': _network_watcher.get_stream_flows(),
         'revision': revision,
     })
 
@@ -3247,8 +3252,22 @@ def network_watcher_live_results():
         .interaction-panel summary { cursor: pointer; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 0.9rem; font-weight: 600; }
         .interaction-panel summary > div { display: flex; flex-direction: column; gap: 0.15rem; }
         .interaction-panel summary small { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; }
-        .interaction-list { border-top: 1px solid var(--border); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: 320px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-        .interaction-empty { color: var(--text-muted); font-size: 0.84rem; }
+        .flow-browser { border-top: 1px solid var(--border); display: grid; grid-template-columns: minmax(215px, 0.7fr) minmax(0, 1.5fr); height: 420px; min-height: 0; }
+        .flow-list-pane, .flow-output-pane { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+        .flow-list-pane { border-right: 1px solid var(--border); background: rgba(0, 0, 0, 0.12); }
+        .flow-pane-header { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.77rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+        .flow-actions { display: flex; gap: 0.35rem; }
+        .flow-actions .btn { padding: 0.28rem 0.45rem; font-size: 0.72rem; }
+        .flow-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0.45rem; display: flex; flex-direction: column; gap: 0.35rem; }
+        .flow-row { width: 100%; appearance: none; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); padding: 0.55rem 0.6rem; cursor: pointer; text-align: left; }
+        .flow-row:hover, .flow-row.selected { background: var(--surface-2); border-color: var(--accent); }
+        .flow-row.dead { color: #707887; opacity: 0.7; }
+        .flow-row-title { display: flex; align-items: center; gap: 0.35rem; font: 0.74rem/1.35 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+        .flow-state-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px rgba(16, 185, 129, 0.65); }
+        .flow-row.dead .flow-state-dot { background: #6b7280; box-shadow: none; }
+        .flow-row-meta { margin-top: 0.35rem; font-size: 0.69rem; color: var(--text-muted); }
+        .flow-output { flex: 1; padding: 0.75rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 0.55rem; }
+        .interaction-empty { color: var(--text-muted); font-size: 0.84rem; padding: 0.75rem; }
         .interaction-entry { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
         .interaction-entry > summary { list-style: none; cursor: pointer; padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
         .interaction-entry > summary::-webkit-details-marker { display: none; }
@@ -3259,6 +3278,7 @@ def network_watcher_live_results():
         .interaction-meta { padding: 0.55rem 0.7rem 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.74rem; color: var(--text-muted); overflow-wrap: anywhere; }
         .interaction-label { padding: 0.55rem 0.7rem 0.25rem; font-size: 0.8rem; font-weight: 600; }
         .interaction-entry pre { margin: 0 0.7rem 0.7rem; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.76rem/1.45 "SFMono-Regular", Consolas, monospace; color: var(--text-muted); }
+        @media (max-width: 700px) { .flow-browser { grid-template-columns: 1fr; height: 560px; } .flow-list-pane { border-right: 0; border-bottom: 1px solid var(--border); max-height: 210px; } }
         .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; display: flex; flex-direction: column; height: 360px; }
         .findings-header { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 600; }
         .findings-header small { color: var(--text-muted); font-weight: 400; }
@@ -3307,12 +3327,28 @@ def network_watcher_live_results():
         <summary>
             <div>
                 <span>🧠 SSM Stream Details <span id="interaction-count"></span></span>
-                <small>Normalized events, per-flow scores, runtime metadata, and processing time</small>
+                <small>Select a flow to inspect its normalized events, scores, and runtime output</small>
             </div>
-            <button class="btn" id="clear-interactions" type="button">Clear</button>
         </summary>
-        <div id="interaction-list" class="interaction-list">
-            <div id="interaction-empty" class="interaction-empty">No SLM/LLM interactions recorded yet.</div>
+        <div class="flow-browser">
+            <section class="flow-list-pane" aria-label="SSM flows">
+                <div class="flow-pane-header">
+                    <span>Flows <span id="flow-count"></span></span>
+                    <div class="flow-actions">
+                        <button class="btn" id="clear-old-flows" type="button" title="Clear saved details for inactive flows">Clear old</button>
+                        <button class="btn" id="clear-all-flows" type="button" title="Clear all saved flow details">Clear all</button>
+                    </div>
+                </div>
+                <div id="flow-list" class="flow-list">
+                    <div id="flow-empty" class="interaction-empty">No SSM flows observed yet.</div>
+                </div>
+            </section>
+            <section class="flow-output-pane" aria-label="Selected flow output">
+                <div id="flow-output-header" class="flow-pane-header">Select a flow to view its details</div>
+                <div id="flow-output" class="flow-output">
+                    <div id="interaction-empty" class="interaction-empty">Normalized stream data and scores for the selected flow appear here.</div>
+                </div>
+            </section>
         </div>
     </details>
 
@@ -3329,6 +3365,7 @@ def network_watcher_live_results():
     <script>
         let autoScroll = true;
         let interactionRevision = null;
+        let selectedFlowKey = null;
         const consoleEl = document.getElementById('console');
 
         function formatBytes(bytes) {
@@ -3404,17 +3441,65 @@ def network_watcher_live_results():
             });
         }
 
-        function renderInteractions(interactions) {
-            const list = document.getElementById('interaction-list');
-            const empty = document.getElementById('interaction-empty');
+        function renderInteractions(interactions, flowSummaries = []) {
+            const flowList = document.getElementById('flow-list');
+            const flowEmpty = document.getElementById('flow-empty');
+            const output = document.getElementById('flow-output');
+            const outputHeader = document.getElementById('flow-output-header');
             const count = document.getElementById('interaction-count');
+            const flowCount = document.getElementById('flow-count');
             const records = Array.isArray(interactions) ? interactions : [];
+            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const flowKeys = new Set(flows.map(flow => flow.key));
             renderFindings(records);
-            count.textContent = records.length ? `(${records.length})` : '';
-            empty.style.display = records.length ? 'none' : '';
-            list.replaceChildren(empty);
+            count.textContent = flows.length ? `(${flows.length})` : '';
+            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+            if (!selectedFlowKey || !flowKeys.has(selectedFlowKey)) {
+                selectedFlowKey = flows[0]?.key || null;
+            }
 
-            records.slice().reverse().forEach((entry) => {
+            flowEmpty.style.display = flows.length ? 'none' : '';
+            flowList.replaceChildren(flowEmpty);
+            flows.forEach((flow) => {
+                const button = document.createElement('button');
+                const isSelected = flow.key === selectedFlowKey;
+                button.type = 'button';
+                button.className = `flow-row${isSelected ? ' selected' : ''}${flow.active ? '' : ' dead'}`;
+                button.setAttribute('aria-pressed', String(isSelected));
+                const title = document.createElement('div');
+                title.className = 'flow-row-title';
+                const dot = document.createElement('span');
+                dot.className = 'flow-state-dot';
+                const key = document.createElement('span');
+                key.textContent = flow.key;
+                title.append(dot, key);
+                const meta = document.createElement('div');
+                meta.className = 'flow-row-meta';
+                meta.textContent = `${flow.active ? 'Active' : 'Inactive'} · ${flow.event_count} event${flow.event_count === 1 ? '' : 's'} · ${formatTimestamp(flow.last_timestamp)}`;
+                button.append(title, meta);
+                button.addEventListener('click', () => {
+                    selectedFlowKey = flow.key;
+                    renderInteractions(records, flows);
+                });
+                flowList.appendChild(button);
+            });
+
+            output.replaceChildren();
+            if (!selectedFlowKey) {
+                outputHeader.textContent = 'Select a flow to view its details';
+                const empty = document.createElement('div');
+                empty.className = 'interaction-empty';
+                empty.textContent = 'Normalized stream data and scores for the selected flow appear here.';
+                output.append(empty);
+                return;
+            }
+            const selectedFlow = flows.find(flow => flow.key === selectedFlowKey);
+            outputHeader.textContent = `${selectedFlow?.active ? 'Active' : 'Inactive'} flow · ${selectedFlowKey}`;
+            const selectedRecords = records.filter(entry =>
+                entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
+            );
+
+            selectedRecords.slice().reverse().forEach((entry) => {
                 const item = document.createElement('details');
                 item.className = 'interaction-entry';
                 const outcome = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
@@ -3426,10 +3511,10 @@ def network_watcher_live_results():
                 body.className = 'interaction-entry-body';
                 const fields = [
                     ['interaction-meta', `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`],
-                    ['interaction-label', entry.engine === 'llamacpp_ssm' ? 'Normalized stream event' : 'Prompt'],
-                    ['', entry.engine === 'llamacpp_ssm' ? JSON.stringify(entry.request || {}, null, 2) : (entry.prompt || ''), 'pre'],
-                    ['interaction-label', entry.engine === 'llamacpp_ssm' ? (entry.error ? 'Runtime error' : 'Score result') : (entry.error ? 'Response / Error' : 'Raw response')],
-                    ['', entry.response || entry.error || '(empty response)', 'pre'],
+                    ['interaction-label', 'Normalized stream event'],
+                    ['', JSON.stringify(entry.request || {}, null, 2), 'pre'],
+                    ['interaction-label', entry.error ? 'Runtime error' : 'SSM output'],
+                    ['', `${entry.analysis ? `${entry.analysis}\n\n` : ''}${entry.response || entry.error || '(awaiting output)'}`, 'pre'],
                 ];
                 fields.forEach(([className, text, tag = 'div']) => {
                     const element = document.createElement(tag);
@@ -3438,7 +3523,7 @@ def network_watcher_live_results():
                     body.appendChild(element);
                 });
                 item.append(header, body);
-                list.appendChild(item);
+                output.appendChild(item);
             });
         }
 
@@ -3447,7 +3532,7 @@ def network_watcher_live_results():
             const res = await fetch('/api/network_watcher/interactions');
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions);
+            renderInteractions(data.interactions, data.flows);
         }
 
         async function poll() {
@@ -3501,14 +3586,19 @@ def network_watcher_live_results():
             consoleEl.innerHTML = '';
         }
 
-        document.getElementById('clear-interactions').addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const res = await fetch('/api/network_watcher/interactions', { method: 'POST' });
+        async function clearFlowDetails(scope) {
+            const res = await fetch('/api/network_watcher/interactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope }),
+            });
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions);
-        });
+            renderInteractions(data.interactions, data.flows);
+        }
+
+        document.getElementById('clear-old-flows').addEventListener('click', () => clearFlowDetails('old'));
+        document.getElementById('clear-all-flows').addEventListener('click', () => clearFlowDetails('all'));
 
         setInterval(poll, 2000);
         poll();

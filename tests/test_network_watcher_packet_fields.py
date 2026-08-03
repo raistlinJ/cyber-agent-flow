@@ -1,5 +1,6 @@
 import json
 import queue
+import time
 from collections import deque
 from types import SimpleNamespace
 
@@ -190,6 +191,35 @@ def test_idle_flow_cleanup_releases_local_runtime_state():
 
     assert watcher._flow_last_seen == {}
     assert watcher._ssm_runtime.forgotten == {"tcp|a:1|b:443"}
+
+
+def test_stream_flow_list_marks_inactive_flows_and_clears_old_history():
+    watcher = NetworkWatcher(event_store=None)
+    active_flow = "tcp|a:1|b:443"
+    old_flow = "tcp|c:2|d:53"
+    watcher._flow_last_seen = {active_flow: time.monotonic()}
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T17:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": active_flow},
+        "outcome": "success",
+    })
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T16:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": old_flow},
+        "outcome": "success",
+    })
+
+    flows = watcher.get_stream_flows()
+
+    assert [(flow["key"], flow["active"]) for flow in flows] == [
+        (active_flow, True),
+        (old_flow, False),
+    ]
+    assert watcher.clear_old_stream_interactions() == 1
+    _, interactions = watcher.get_interactions()
+    assert [entry["request"]["flow"] for entry in interactions] == [active_flow]
 
 
 def test_suricata_eve_record_is_normalized_to_the_shared_flow_shape():

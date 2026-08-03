@@ -181,6 +181,50 @@ class NetworkWatcher:
             self.interactions = []
             self.interaction_revision += 1
 
+    def get_stream_flows(self) -> list[dict]:
+        """Return the retained SSM flows with their current liveness state."""
+        self._expire_idle_flows()
+        active_flow_keys = set(self._flow_last_seen)
+        flows: dict[str, dict] = {}
+        with self._interaction_lock:
+            for entry in self.interactions:
+                if entry.get("engine") != "llamacpp_ssm":
+                    continue
+                flow_key = str((entry.get("request") or {}).get("flow") or "")
+                if not flow_key:
+                    continue
+                flow = flows.setdefault(flow_key, {
+                    "key": flow_key,
+                    "event_count": 0,
+                    "last_timestamp": "",
+                    "last_outcome": "pending",
+                    "active": False,
+                })
+                flow["event_count"] += 1
+                flow["last_timestamp"] = str(entry.get("timestamp") or flow["last_timestamp"])
+                flow["last_outcome"] = str(entry.get("outcome") or "pending")
+                flow["active"] = flow_key in active_flow_keys
+        return sorted(flows.values(), key=lambda flow: (
+            flow["active"],
+            flow["last_timestamp"],
+        ), reverse=True)
+
+    def clear_old_stream_interactions(self) -> int:
+        """Remove retained diagnostics for flows that are no longer active."""
+        self._expire_idle_flows()
+        active_flow_keys = set(self._flow_last_seen)
+        with self._interaction_lock:
+            original_count = len(self.interactions)
+            self.interactions = [
+                entry for entry in self.interactions
+                if entry.get("engine") != "llamacpp_ssm"
+                or str((entry.get("request") or {}).get("flow") or "") in active_flow_keys
+            ]
+            removed = original_count - len(self.interactions)
+            if removed:
+                self.interaction_revision += 1
+            return removed
+
     def _add_log(self, kind: str, message: str):
         entry = {
             "timestamp": time.strftime("%H:%M:%S"),
