@@ -3222,7 +3222,7 @@ def network_watcher_live_results():
             --text-muted: #9ca3af;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg); color: var(--text); padding: 1rem; height: 100vh; display: flex; flex-direction: column; gap: 1rem; }
+        body { background: var(--bg); color: var(--text); padding: 1rem; min-height: 100vh; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
         header { display: flex; align-items: center; justify-content: space-between; background: var(--surface); padding: 0.75rem 1.25rem; border-radius: 8px; border: 1px solid var(--border); }
         .status-badge { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
@@ -3250,7 +3250,12 @@ def network_watcher_live_results():
         .interaction-list { border-top: 1px solid var(--border); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: 320px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
         .interaction-empty { color: var(--text-muted); font-size: 0.84rem; }
         .interaction-entry { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
-        .interaction-entry-header { padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        .interaction-entry > summary { list-style: none; cursor: pointer; padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+        .interaction-entry > summary::-webkit-details-marker { display: none; }
+        .interaction-entry > summary::after { content: '▸'; color: var(--accent); font-size: 1rem; }
+        .interaction-entry[open] > summary { border-bottom: 1px solid var(--border); }
+        .interaction-entry[open] > summary::after { content: '▾'; }
+        .interaction-entry-body { padding-top: 0.05rem; }
         .interaction-meta { padding: 0.55rem 0.7rem 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.74rem; color: var(--text-muted); overflow-wrap: anywhere; }
         .interaction-label { padding: 0.55rem 0.7rem 0.25rem; font-size: 0.8rem; font-weight: 600; }
         .interaction-entry pre { margin: 0 0.7rem 0.7rem; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.76rem/1.45 "SFMono-Regular", Consolas, monospace; color: var(--text-muted); }
@@ -3298,7 +3303,7 @@ def network_watcher_live_results():
         <div id="findings-list" class="findings-list"></div>
     </section>
 
-    <details class="interaction-panel">
+    <details class="interaction-panel" open>
         <summary>
             <div>
                 <span>🧠 SSM Stream Details <span id="interaction-count"></span></span>
@@ -3410,13 +3415,16 @@ def network_watcher_live_results():
             list.replaceChildren(empty);
 
             records.slice().reverse().forEach((entry) => {
-                const item = document.createElement('article');
+                const item = document.createElement('details');
                 item.className = 'interaction-entry';
                 const outcome = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
                 const timing = entry.elapsed_ms == null ? 'In progress' : `${entry.elapsed_ms} ms`;
                 const { messages, ...requestMeta } = entry.request || {};
+                const header = document.createElement('summary');
+                header.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`;
+                const body = document.createElement('div');
+                body.className = 'interaction-entry-body';
                 const fields = [
-                    ['interaction-entry-header', `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`],
                     ['interaction-meta', `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`],
                     ['interaction-label', entry.engine === 'llamacpp_ssm' ? 'Normalized stream event' : 'Prompt'],
                     ['', entry.engine === 'llamacpp_ssm' ? JSON.stringify(entry.request || {}, null, 2) : (entry.prompt || ''), 'pre'],
@@ -3427,8 +3435,9 @@ def network_watcher_live_results():
                     const element = document.createElement(tag);
                     if (className) element.className = className;
                     element.textContent = text;
-                    item.appendChild(element);
+                    body.appendChild(element);
                 });
+                item.append(header, body);
                 list.appendChild(item);
             });
         }
