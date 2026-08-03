@@ -1120,16 +1120,16 @@
 
                                 <!-- ── Optional CyberAgentFlow context for periodic packet batches ──── -->
                                 <div id="watcher-periodic-settings" class="watcher-mode-settings">
-                                    <details class="watcher-config-section" open>
-                                        <summary><span>Periodic packet-batch settings</span><small>Cadence and optional session context</small></summary>
-                                        <div class="watcher-config-section-body">
-                                    <div class="input-group" style="margin:0">
+                                    <div id="watcher-periodic-caf-data-section" class="input-group" style="margin:0">
                                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
                                             <input type="checkbox" id="watcher-periodic-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
                                             Use CyberAgentFlow data
                                         </label>
                                         <span id="watcher-periodic-caf-data-hint" class="input-hint">Optionally append active CyberAgentFlow session data to packet batches. Start Service to enable it.</span>
                                     </div>
+                                    <details class="watcher-config-section" open>
+                                        <summary><span>Periodic packet-batch settings</span><small>Cadence and packet limits</small></summary>
+                                        <div class="watcher-config-section-body">
                                     <div id="watcher-periodic-stream-limits-slot"></div>
                                         </div>
                                     </details>
