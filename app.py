@@ -3110,6 +3110,13 @@ def network_watcher_start():
     ssm_max_flows = data.get('ssm_max_flows', 256)
     ssm_alert_threshold = data.get('ssm_alert_threshold', 0.72)
     ssm_alert_cooldown_seconds = data.get('ssm_alert_cooldown_seconds', 60)
+    max_queued_events = data.get('max_queued_events', 500)
+    queue_overflow_policy = data.get('queue_overflow_policy', 'drop_newest')
+    max_normalized_event_bytes = data.get('max_normalized_event_bytes', 8192)
+    per_flow_events_per_second = data.get('per_flow_events_per_second', 0)
+    flow_idle_timeout_seconds = data.get('flow_idle_timeout_seconds', 300)
+    payload_sample_every = data.get('payload_sample_every', 1)
+    burst_alert_window_seconds = data.get('burst_alert_window_seconds', 0)
     capture_source = data.get('capture_source', 'python')
     suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
     suricata_event_types = data.get('suricata_event_types')
@@ -3135,6 +3142,13 @@ def network_watcher_start():
             ssm_max_flows,
             ssm_alert_threshold,
             ssm_alert_cooldown_seconds,
+            max_queued_events,
+            queue_overflow_policy,
+            max_normalized_event_bytes,
+            per_flow_events_per_second,
+            flow_idle_timeout_seconds,
+            payload_sample_every,
+            burst_alert_window_seconds,
             capture_source,
             suricata_eve_path,
             suricata_event_types,

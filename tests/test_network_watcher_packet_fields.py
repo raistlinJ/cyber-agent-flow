@@ -1,4 +1,6 @@
 import json
+import queue
+from collections import deque
 from types import SimpleNamespace
 
 import pytest
@@ -137,6 +139,57 @@ def test_ssm_alert_threshold_respects_per_flow_cooldown():
     assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.90)
     assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.71)
     assert watcher._should_emit_ssm_alert("tcp|c:1|d:443", 0.90)
+
+
+def test_continuous_intake_limits_bound_payloads_rate_and_queue():
+    watcher = NetworkWatcher(event_store=None)
+    record = {
+        "highest_protocol": "tcp",
+        "headers": {
+            "ip": {"src": "192.0.2.1", "dst": "198.51.100.2"},
+            "tcp": {"srcport": "50000", "dstport": "443"},
+        },
+        "payloads": {"tcp": {"data": "x" * 4000}},
+    }
+    watcher.max_normalized_event_bytes = 512
+    bounded = watcher._bounded_normalized_record(record)
+    assert "payloads" not in bounded
+    assert bounded["headers"]["tcp"]["dstport"] == "443"
+
+    watcher._buffer = queue.Queue(maxsize=1)
+    watcher.queue_overflow_policy = "drop_oldest"
+    watcher.max_normalized_event_bytes = 8192
+    watcher._enqueue_record({"id": "first"}, 0, "Captured")
+    watcher._enqueue_record({"id": "second"}, 0, "Captured")
+    assert watcher.events_overflowed == 1
+    assert watcher._buffer.get_nowait()["id"] == "second"
+
+    watcher._buffer = queue.Queue(maxsize=10)
+    watcher.per_flow_events_per_second = 1
+    watcher._enqueue_record(record, 0, "Captured")
+    watcher._enqueue_record(record, 0, "Captured")
+    assert watcher.events_rate_limited == 1
+
+
+def test_idle_flow_cleanup_releases_local_runtime_state():
+    class Runtime:
+        def __init__(self):
+            self.forgotten = set()
+
+        def forget_flows(self, flow_keys):
+            self.forgotten.update(flow_keys)
+            return len(flow_keys)
+
+    watcher = NetworkWatcher(event_store=None)
+    watcher._ssm_runtime = Runtime()
+    watcher.flow_idle_timeout_seconds = 60
+    watcher._flow_last_seen = {"tcp|a:1|b:443": 10.0}
+    watcher._flow_event_times = {"tcp|a:1|b:443": deque()}
+
+    watcher._expire_idle_flows(now=70.0)
+
+    assert watcher._flow_last_seen == {}
+    assert watcher._ssm_runtime.forgotten == {"tcp|a:1|b:443"}
 
 
 def test_suricata_eve_record_is_normalized_to_the_shared_flow_shape():

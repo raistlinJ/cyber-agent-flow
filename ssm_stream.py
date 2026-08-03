@@ -112,6 +112,18 @@ class LlamaCppSsmRuntime:
             self._states.clear()
             self._llm = None
 
+    def forget_flows(self, flow_keys: set[str]) -> int:
+        """Drop explicit flow states and return how many were released."""
+        if not flow_keys:
+            return 0
+        with self._lock:
+            removed = 0
+            for flow_key in flow_keys:
+                if self._states.pop(flow_key, None) is not None:
+                    removed += 1
+            self.state_evictions += removed
+            return removed
+
     def status(self) -> dict[str, Any]:
         return {
             "available": self.available,

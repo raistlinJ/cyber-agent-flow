@@ -10,6 +10,7 @@ import psutil
 import shutil
 import subprocess
 import re
+from collections import deque
 from datetime import datetime
 from ssm_stream import LlamaCppSsmRuntime, SsmObservation, packet_flow_key, packet_stream_event
 
@@ -32,6 +33,12 @@ DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
 MAX_ANALYSIS_INTERVAL_SECONDS = 300
 DEFAULT_SSM_ALERT_THRESHOLD = 0.72
 DEFAULT_SSM_ALERT_COOLDOWN_SECONDS = 60
+DEFAULT_MAX_QUEUED_EVENTS = 500
+DEFAULT_MAX_NORMALIZED_EVENT_BYTES = 8_192
+DEFAULT_PER_FLOW_EVENTS_PER_SECOND = 0
+DEFAULT_FLOW_IDLE_TIMEOUT_SECONDS = 300
+DEFAULT_PAYLOAD_SAMPLE_EVERY = 1
+DEFAULT_BURST_ALERT_WINDOW_SECONDS = 0
 DEFAULT_SURICATA_EVE_PATH = "/tmp/cyber-agent-flow/suricata/eve.json"
 DEFAULT_SURICATA_EVENT_TYPES = frozenset({"flow", "dns", "http", "tls", "alert", "anomaly", "fileinfo"})
 PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
@@ -110,7 +117,19 @@ class NetworkWatcher:
         self._last_alert_by_flow = {}
         self._suricata_process = None
 
-        self._buffer = queue.Queue(maxsize=500)
+        self.max_queued_events = DEFAULT_MAX_QUEUED_EVENTS
+        self.queue_overflow_policy = "drop_newest"
+        self.max_normalized_event_bytes = DEFAULT_MAX_NORMALIZED_EVENT_BYTES
+        self.per_flow_events_per_second = DEFAULT_PER_FLOW_EVENTS_PER_SECOND
+        self.flow_idle_timeout_seconds = DEFAULT_FLOW_IDLE_TIMEOUT_SECONDS
+        self.payload_sample_every = DEFAULT_PAYLOAD_SAMPLE_EVERY
+        self.burst_alert_window_seconds = DEFAULT_BURST_ALERT_WINDOW_SECONDS
+        self._flow_last_seen = {}
+        self._flow_event_times = {}
+        self._flow_payload_counts = {}
+        self._burst_alerts = []
+        self._burst_started_at = None
+        self._buffer = queue.Queue(maxsize=self.max_queued_events)
         self._last_flush_time = 0
 
         # Metrics
@@ -123,6 +142,9 @@ class NetworkWatcher:
         self.inference_count = 0
         self.inference_in_flight = 0
         self.alerts_emitted = 0
+        self.events_rate_limited = 0
+        self.events_oversized = 0
+        self.events_overflowed = 0
         self.logs = []
         # Keep model diagnostics separate from the general operational log so
         # the UI can clear them without losing capture-status context.
@@ -318,6 +340,13 @@ class NetworkWatcher:
               ssm_context_tokens: int = 1024, ssm_max_flows: int = 256,
               ssm_alert_threshold: float = DEFAULT_SSM_ALERT_THRESHOLD,
               ssm_alert_cooldown_seconds: int = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS,
+              max_queued_events: int = DEFAULT_MAX_QUEUED_EVENTS,
+              queue_overflow_policy: str = "drop_newest",
+              max_normalized_event_bytes: int = DEFAULT_MAX_NORMALIZED_EVENT_BYTES,
+              per_flow_events_per_second: int = DEFAULT_PER_FLOW_EVENTS_PER_SECOND,
+              flow_idle_timeout_seconds: int = DEFAULT_FLOW_IDLE_TIMEOUT_SECONDS,
+              payload_sample_every: int = DEFAULT_PAYLOAD_SAMPLE_EVERY,
+              burst_alert_window_seconds: int = DEFAULT_BURST_ALERT_WINDOW_SECONDS,
               capture_source: str = "python", suricata_eve_path: str = DEFAULT_SURICATA_EVE_PATH,
               suricata_event_types: list[str] | None = None,
               use_cyber_agent_flow_data: bool = False):
@@ -368,7 +397,25 @@ class NetworkWatcher:
         self.ssm_alert_cooldown_seconds = self._bounded_int(
             ssm_alert_cooldown_seconds, DEFAULT_SSM_ALERT_COOLDOWN_SECONDS, 0, 3600
         )
+        self.max_queued_events = self._bounded_int(max_queued_events, DEFAULT_MAX_QUEUED_EVENTS, 50, 10_000)
+        self.queue_overflow_policy = queue_overflow_policy if queue_overflow_policy in {"drop_newest", "drop_oldest"} else "drop_newest"
+        self.max_normalized_event_bytes = self._bounded_int(
+            max_normalized_event_bytes, DEFAULT_MAX_NORMALIZED_EVENT_BYTES, 512, 65_536
+        )
+        self.per_flow_events_per_second = self._bounded_int(per_flow_events_per_second, 0, 0, 10_000)
+        self.flow_idle_timeout_seconds = self._bounded_int(
+            flow_idle_timeout_seconds, DEFAULT_FLOW_IDLE_TIMEOUT_SECONDS, 30, 86_400
+        )
+        self.payload_sample_every = self._bounded_int(payload_sample_every, DEFAULT_PAYLOAD_SAMPLE_EVERY, 1, 1_000)
+        self.burst_alert_window_seconds = self._bounded_int(
+            burst_alert_window_seconds, DEFAULT_BURST_ALERT_WINDOW_SECONDS, 0, 3_600
+        )
         self._last_alert_by_flow = {}
+        self._flow_last_seen = {}
+        self._flow_event_times = {}
+        self._flow_payload_counts = {}
+        self._burst_alerts = []
+        self._burst_started_at = None
         self._ssm_runtime = None
         if self.analysis_engine == "llamacpp_ssm":
             self._ssm_runtime = LlamaCppSsmRuntime(
@@ -393,9 +440,12 @@ class NetworkWatcher:
         self.inference_count = 0
         self.inference_in_flight = 0
         self.alerts_emitted = 0
+        self.events_rate_limited = 0
+        self.events_oversized = 0
+        self.events_overflowed = 0
         self.logs = []
         self.clear_interactions()
-        self._buffer = queue.Queue(maxsize=500)
+        self._buffer = queue.Queue(maxsize=self.max_queued_events)
 
         if self.capture_source == "suricata_eve":
             try:
@@ -542,6 +592,7 @@ class NetworkWatcher:
         return status
 
     def stop(self):
+        self._flush_burst_alerts(force=True)
         self.running = False
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -608,6 +659,13 @@ class NetworkWatcher:
                 "use_cyber_agent_flow_data": self.use_cyber_agent_flow_data,
                 "ssm_alert_threshold": self.ssm_alert_threshold,
                 "ssm_alert_cooldown_seconds": self.ssm_alert_cooldown_seconds,
+                "max_queued_events": self.max_queued_events,
+                "queue_overflow_policy": self.queue_overflow_policy,
+                "max_normalized_event_bytes": self.max_normalized_event_bytes,
+                "per_flow_events_per_second": self.per_flow_events_per_second,
+                "flow_idle_timeout_seconds": self.flow_idle_timeout_seconds,
+                "payload_sample_every": self.payload_sample_every,
+                "burst_alert_window_seconds": self.burst_alert_window_seconds,
             },
             "ssm_runtime": self._ssm_runtime.status() if self._ssm_runtime else ({
                 "available": True,
@@ -629,6 +687,9 @@ class NetworkWatcher:
                 "packets_analyzed": self.packets_analyzed,
                 "bytes_extracted": self.bytes_extracted,
                 "packets_dropped": self.packets_dropped,
+                "events_rate_limited": self.events_rate_limited,
+                "events_oversized": self.events_oversized,
+                "events_overflowed": self.events_overflowed,
                 "total_tokens": self.total_tokens_analyzed,
                 "inference_count": self.inference_count,
                 "inference_in_flight": self.inference_in_flight,
@@ -685,12 +746,84 @@ class NetworkWatcher:
     def _enqueue_record(self, record: dict, extracted_bytes: int, noun: str):
         self.packets_captured += 1
         self.bytes_extracted += extracted_bytes
+        now = time.monotonic()
+        flow_key = packet_flow_key(record)
+        self._expire_idle_flows(now)
+
+        event_times = self._flow_event_times.setdefault(flow_key, deque())
+        while event_times and now - event_times[0] >= 1.0:
+            event_times.popleft()
+        if self.per_flow_events_per_second and len(event_times) >= self.per_flow_events_per_second:
+            self.packets_dropped += 1
+            self.events_rate_limited += 1
+            return
+        event_times.append(now)
+        self._flow_last_seen[flow_key] = now
+
+        packet_count = self._flow_payload_counts.get(flow_key, 0) + 1
+        self._flow_payload_counts[flow_key] = packet_count
+        record = self._bounded_normalized_record(record, include_payload=((packet_count - 1) % self.payload_sample_every == 0))
         try:
             self._buffer.put_nowait(record)
         except queue.Full:
             self.packets_dropped += 1
+            self.events_overflowed += 1
+            if self.queue_overflow_policy == "drop_oldest":
+                try:
+                    self._buffer.get_nowait()
+                    self._buffer.put_nowait(record)
+                except queue.Empty:
+                    pass
         if self.packets_captured % 10 == 0:
             self._add_log("packet", f"{noun} {self.packets_captured} events ({self.bytes_extracted} bytes normalized)")
+
+    def _bounded_normalized_record(self, record: dict, *, include_payload: bool = True) -> dict:
+        """Apply payload sampling and a hard serialized-size cap before queueing."""
+        candidate = dict(record)
+        if not include_payload:
+            candidate.pop("payloads", None)
+        if len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= self.max_normalized_event_bytes:
+            return candidate
+
+        self.events_oversized += 1
+        candidate.pop("payloads", None)
+        if len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= self.max_normalized_event_bytes:
+            return candidate
+
+        headers = candidate.get("headers") or {}
+        core_headers = {}
+        for name in ("ip", "ipv6", "tcp", "udp"):
+            values = headers.get(name)
+            if isinstance(values, dict):
+                core_headers[name] = {str(key)[:32]: self._safe_value(value, 80) for key, value in values.items()}
+        compact = {
+            "timestamp": self._safe_value(candidate.get("timestamp"), 64),
+            "length": self._safe_value(candidate.get("length"), 32),
+            "highest_protocol": self._safe_value(candidate.get("highest_protocol"), 64),
+            "protocol_stack": [self._safe_value(item, 32) for item in (candidate.get("protocol_stack") or [])[:12]],
+            "normalization_truncated": True,
+        }
+        if core_headers:
+            compact["headers"] = core_headers
+        # Core fields are deliberately bounded to fit the minimum 512-byte
+        # setting while retaining enough of a 5-tuple to keep stream state.
+        return compact
+
+    def _expire_idle_flows(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        stale = {
+            flow_key for flow_key, last_seen in self._flow_last_seen.items()
+            if now - last_seen >= self.flow_idle_timeout_seconds
+        }
+        if not stale:
+            return
+        for flow_key in stale:
+            self._flow_last_seen.pop(flow_key, None)
+            self._flow_event_times.pop(flow_key, None)
+            self._flow_payload_counts.pop(flow_key, None)
+            self._last_alert_by_flow.pop(flow_key, None)
+        if self._ssm_runtime:
+            self._ssm_runtime.forget_flows(stale)
 
     def _suricata_eve_loop(self):
         """Tail newly-written EVE JSON lines and normalize selected event types."""
@@ -827,9 +960,11 @@ class NetworkWatcher:
             try:
                 record = self._buffer.get(timeout=0.25)
             except queue.Empty:
+                self._flush_burst_alerts()
                 continue
             self.packets_analyzed += 1
             self._analyze_stream_record(record)
+            self._flush_burst_alerts()
 
     def _analyze_stream_record(self, record: dict):
         if self.analysis_engine == "llamacpp_ssm" and not self._ssm_runtime:
@@ -873,12 +1008,16 @@ class NetworkWatcher:
                 analysis=analysis,
             )
             if is_alert:
-                self.alerts_emitted += 1
-                self._add_log("alert", f"SSM alert score {observation.score:.3f}: {observation.flow_key}")
-                self._emit_alert(
-                    f"Local SSM anomaly score {observation.score:.3f} exceeded the "
-                    f"{self.ssm_alert_threshold:.2f} threshold for flow {observation.flow_key}."
-                )
+                if self.burst_alert_window_seconds:
+                    self._burst_alerts.append((observation.flow_key, observation.score))
+                    self._burst_started_at = self._burst_started_at or time.monotonic()
+                else:
+                    self.alerts_emitted += 1
+                    self._add_log("alert", f"SSM alert score {observation.score:.3f}: {observation.flow_key}")
+                    self._emit_alert(
+                        f"SSM anomaly score {observation.score:.3f} exceeded the "
+                        f"{self.ssm_alert_threshold:.2f} threshold for flow {observation.flow_key}."
+                    )
         except Exception as exc:
             elapsed = time.time() - started
             self.total_inference_time += elapsed
@@ -961,6 +1100,25 @@ class NetworkWatcher:
             return False
         self._last_alert_by_flow[flow_key] = now
         return True
+
+    def _flush_burst_alerts(self, *, force: bool = False) -> None:
+        """Emit one operator-facing alert for a short burst of stream scores."""
+        if not self._burst_alerts or self._burst_started_at is None:
+            return
+        if not force and time.monotonic() - self._burst_started_at < self.burst_alert_window_seconds:
+            return
+        alerts = self._burst_alerts
+        self._burst_alerts = []
+        self._burst_started_at = None
+        highest_flow, highest_score = max(alerts, key=lambda alert: alert[1])
+        flow_count = len({flow_key for flow_key, _ in alerts})
+        self.alerts_emitted += 1
+        message = (
+            f"SSM burst alert: {len(alerts)} threshold crossings across {flow_count} flows in "
+            f"{self.burst_alert_window_seconds} seconds; highest score {highest_score:.3f} for {highest_flow}."
+        )
+        self._add_log("alert", message)
+        self._emit_alert(message)
 
     def _analyze_batch(self, batch: list[dict]):
         serialized_batch = self._serialize_packet_batch(batch)
