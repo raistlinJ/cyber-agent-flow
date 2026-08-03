@@ -993,6 +993,8 @@
                     <!-- Setup Panel -->
                     <div class="watcher-subtab-panel active" id="watcher-setup-panel" style="padding:0 1rem;">
                         <div class="watcher-config-card" style="max-width: 800px; margin: 0 auto;">
+                            <div id="watcher-model-discovery-setup-slot">
+                            <div id="watcher-model-discovery-section">
                                 <h3 class="section-title" id="watcher-model-heading" style="margin-bottom:1rem; font-size:0.95rem">
                                     <span>🔭</span> Watcher LLM
                                 </h3>
@@ -1098,7 +1100,9 @@
                                     <span class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Customize LLM instructions for the active mode. Click 'Default' to restore.</span>
                                 </div>
                             </div>
-                                <div class="input-group">
+                            </div>
+                            </div>
+                                <div class="input-group watcher-analysis-mode-group">
                                     <label>Analysis Mode</label>
                                     <div class="watcher-mode-toggle" id="watcher-mode-toggle">
                                         <button type="button" class="watcher-mode-btn active" data-mode="continuous" id="watcher-mode-continuous">
@@ -1182,9 +1186,7 @@
                                             <span>Checking local Suricata availability…</span>
                                             <button type="button" id="nw-refresh-suricata-btn" class="watcher-btn-ghost" style="font-size:0.75rem">Refresh</button>
                                         </div>
-                                    </div>
-                                    <div id="nw-suricata-source-settings" style="display:none">
-                                        <div class="input-group" style="margin:0">
+                                        <div id="nw-suricata-eve-path-group" class="input-group" style="display:none; margin-top:0.85rem">
                                             <label for="nw-suricata-eve-path">Suricata EVE JSON path</label>
                                             <div class="input-with-icon">
                                                 <i class="ph ph-file-text icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
@@ -1192,6 +1194,59 @@
                                             </div>
                                             <span class="input-hint">The watcher reads newly appended lines only and follows rotation. This path must be readable by the app process.</span>
                                         </div>
+                                    </div>
+                                    <div id="nw-engine-settings-setup-slot">
+                                    <div id="nw-engine-settings-section">
+                                    <div class="input-group" style="margin:0">
+                                        <label for="nw-analysis-engine">Network analysis engine</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-cpu icon-left"></i>
+                                            <select id="nw-analysis-engine">
+                                                <option value="llamacpp_ssm" selected>Local recurrent SSM (llama-cpp-python)</option>
+                                                <option value="remote_ssm">Remote SSM stream service</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
+                                        <span class="input-hint">Local mode retains flow state in this watcher process. Remote mode sends normalized events to an SSM service that owns the flow state; ordinary chat APIs are not stream-state compatible.</span>
+                                    </div>
+
+                                    <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
+                                        <div class="input-group nw-ssm-model-path" style="margin:0">
+                                            <label for="nw-ssm-model-path">Local recurrent GGUF model path</label>
+                                            <div class="input-with-icon">
+                                                <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
+                                            </div>
+                                            <span class="input-hint">This path is on the machine running the watcher. The model must be a llama.cpp-supported recurrent/SSM GGUF, not a standard transformer GGUF.</span>
+                                        </div>
+                                        <div class="nw-config-grid">
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-gpu-layers">GPU layers</label>
+                                                <div class="select-wrapper"><i class="ph ph-gpu icon-left"></i><select id="nw-ssm-gpu-layers"><option value="0">CPU only</option><option value="20">20 layers</option><option value="40">40 layers</option><option value="-1">All supported layers</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-context-tokens">State/context tokens</label>
+                                                <div class="select-wrapper"><i class="ph ph-text-align-justify icon-left"></i><select id="nw-ssm-context-tokens"><option value="512">512</option><option value="1024" selected>1,024</option><option value="2048">2,048</option><option value="4096">4,096</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-max-flows">Max active flow states</label>
+                                                <div class="select-wrapper"><i class="ph ph-tree-structure icon-left"></i><select id="nw-ssm-max-flows"><option value="128">128</option><option value="256" selected>256</option><option value="512">512</option><option value="1024">1,024</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-alert-threshold">Alert threshold</label>
+                                                <div class="select-wrapper"><i class="ph ph-warning-circle icon-left"></i><select id="nw-ssm-alert-threshold"><option value="0.50">0.50 — sensitive</option><option value="0.72" selected>0.72 — balanced</option><option value="0.85">0.85 — high confidence</option><option value="0.95">0.95 — critical only</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                        </div>
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-ssm-alert-cooldown">Per-flow alert cooldown</label>
+                                            <div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-ssm-alert-cooldown"><option value="0">No cooldown</option><option value="30">30 seconds</option><option value="60" selected>1 minute</option><option value="300">5 minutes</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                        </div>
+                                        <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
+                                    </div>
+                                    </div>
+                                    </div>
+
+                                    <div id="nw-suricata-source-settings" style="display:none">
                                         <div class="nw-packet-fields">
                                             <div>
                                                 <label class="nw-packet-fields-title">Suricata EVE event types sent to the SSM/LLM</label>
@@ -1376,38 +1431,8 @@
                             <h3 class="section-title" style="margin-bottom:1rem; font-size:0.95rem">
                                 <i class="ph ph-cpu"></i> Network Analysis Engine
                             </h3>
-                            <div class="input-group" style="margin:0">
-                                <label for="nw-analysis-engine">Network analysis engine</label>
-                                <div class="select-wrapper">
-                                    <i class="ph ph-cpu icon-left"></i>
-                                    <select id="nw-analysis-engine">
-                                        <option value="llamacpp_ssm" selected>Local recurrent SSM (llama-cpp-python)</option>
-                                        <option value="remote_ssm">Remote SSM stream service</option>
-                                    </select>
-                                    <i class="ph ph-caret-down icon-right"></i>
-                                </div>
-                                <span class="input-hint">Local mode retains flow state in this watcher process. Remote mode sends normalized events to an SSM service that owns the flow state; ordinary chat APIs are not stream-state compatible.</span>
-                            </div>
-
-                            <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
-                                <div class="input-group nw-ssm-model-path" style="margin:0">
-                                    <label for="nw-ssm-model-path">Local recurrent GGUF model path</label>
-                                    <div class="input-with-icon">
-                                        <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
-                                        <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
-                                    </div>
-                                    <span class="input-hint">This path is on the machine running the watcher. The model must be a llama.cpp-supported recurrent/SSM GGUF, not a standard transformer GGUF.</span>
-                                </div>
-                                <div class="nw-config-grid">
-                                    <div class="input-group" style="margin:0"><label for="nw-ssm-gpu-layers">GPU layers</label><div class="select-wrapper"><i class="ph ph-gpu icon-left"></i><select id="nw-ssm-gpu-layers"><option value="0">CPU only</option><option value="20">20 layers</option><option value="40">40 layers</option><option value="-1">All supported layers</option></select><i class="ph ph-caret-down icon-right"></i></div></div>
-                                    <div class="input-group" style="margin:0"><label for="nw-ssm-context-tokens">State/context tokens</label><div class="select-wrapper"><i class="ph ph-text-align-justify icon-left"></i><select id="nw-ssm-context-tokens"><option value="512">512</option><option value="1024" selected>1,024</option><option value="2048">2,048</option><option value="4096">4,096</option></select><i class="ph ph-caret-down icon-right"></i></div></div>
-                                    <div class="input-group" style="margin:0"><label for="nw-ssm-max-flows">Max active flow states</label><div class="select-wrapper"><i class="ph ph-tree-structure icon-left"></i><select id="nw-ssm-max-flows"><option value="128">128</option><option value="256" selected>256</option><option value="512">512</option><option value="1024">1,024</option></select><i class="ph ph-caret-down icon-right"></i></div></div>
-                                    <div class="input-group" style="margin:0"><label for="nw-ssm-alert-threshold">Alert threshold</label><div class="select-wrapper"><i class="ph ph-warning-circle icon-left"></i><select id="nw-ssm-alert-threshold"><option value="0.50">0.50 — sensitive</option><option value="0.72" selected>0.72 — balanced</option><option value="0.85">0.85 — high confidence</option><option value="0.95">0.95 — critical only</option></select><i class="ph ph-caret-down icon-right"></i></div></div>
-                                </div>
-                                <div class="input-group" style="margin:0"><label for="nw-ssm-alert-cooldown">Per-flow alert cooldown</label><div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-ssm-alert-cooldown"><option value="0">No cooldown</option><option value="30">30 seconds</option><option value="60" selected>1 minute</option><option value="300">5 minutes</option></select><i class="ph ph-caret-down icon-right"></i></div></div>
-                                <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
-                            </div>
-                            <p id="nw-engine-remote-note" class="watcher-config-hint" style="display:none; margin:1rem 0 0;">Configure the provider endpoint and discovered model in Setup. The remote service must accept stream events at <code>POST /v1/ssm/events</code> and retain per-flow state.</p>
+                            <div id="nw-engine-settings-slot"></div>
+                            <div id="watcher-network-runtime-slot"></div>
                         </div>
                     </div>
 

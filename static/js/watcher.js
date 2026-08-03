@@ -260,8 +260,10 @@ If nothing interesting is found, say that clearly.`
     const suricata = _isSuricataSource();
     const pythonSettings = $('nw-python-source-settings');
     const suricataSettings = $('nw-suricata-source-settings');
+    const evePathGroup = $('nw-suricata-eve-path-group');
     if (pythonSettings) pythonSettings.style.display = _currentMode === 'network' && !suricata ? '' : 'none';
     if (suricataSettings) suricataSettings.style.display = _currentMode === 'network' && suricata ? '' : 'none';
+    if (evePathGroup) evePathGroup.style.display = _currentMode === 'network' && suricata ? '' : 'none';
     if (_currentMode === 'network' && !suricata) _fetchNetworkInterfaces();
   }
 
@@ -309,18 +311,28 @@ If nothing interesting is found, say that clearly.`
     const localSsm = _isLocalSsmEngine();
     const networkMode = _currentMode === 'network';
     const engineTab = $('watcher-network-engine-tab-btn');
+    const engineSettings = $('nw-engine-settings-section');
+    const engineSettingsTarget = networkMode ? $('nw-engine-settings-slot') : $('nw-engine-settings-setup-slot');
+    const discoverySection = $('watcher-model-discovery-section');
+    const discoveryTarget = networkMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
     const localSettings = $('nw-local-ssm-settings');
     const remoteNote = $('nw-remote-batch-note');
-    const engineRemoteNote = $('nw-engine-remote-note');
     const sameModel = $('watcher-same-llm-chip');
     const providerLabel = $('watcher-provider-label');
     const urlLabel = $('watcher-url-label');
     const modelLabel = $('watcher-model-label');
     const providerHint = $('watcher-ssm-provider-hint');
-    if (remoteSettings) remoteSettings.style.display = '';
-    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Provider & Model Discovery' : '<span>🔭</span> Watcher LLM';
+    if (engineSettings && engineSettingsTarget && engineSettings.parentElement !== engineSettingsTarget) {
+      engineSettingsTarget.append(engineSettings);
+    }
+    if (discoverySection && discoveryTarget && discoverySection.parentElement !== discoveryTarget) {
+      discoveryTarget.append(discoverySection);
+    }
+    if (discoverySection) discoverySection.style.display = networkMode && localSsm ? 'none' : '';
+    if (remoteSettings) remoteSettings.style.display = !networkMode || !localSsm ? '' : 'none';
+    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Watcher LLM';
     if (providerLabel) providerLabel.textContent = networkMode ? 'SSM provider / discovery endpoint' : 'Provider';
     if (urlLabel) urlLabel.textContent = networkMode ? 'Provider endpoint URL' : 'LLM URL';
     if (modelLabel) modelLabel.textContent = networkMode ? 'Discovered SSM model' : 'Model';
@@ -332,7 +344,6 @@ If nothing interesting is found, say that clearly.`
     }
     if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
     if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
-    if (engineRemoteNote) engineRemoteNote.style.display = networkMode && !localSsm ? '' : 'none';
     if (engineTab) {
       engineTab.disabled = !networkMode;
       engineTab.classList.toggle('config-subtab-btn-muted', !networkMode);

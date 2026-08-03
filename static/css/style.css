@@ -3116,6 +3116,10 @@ option {
     gap: 0.9rem;
 }
 
+.watcher-analysis-mode-group {
+    order: -1;
+}
+
 /* Same-LLM warning chip */
 .watcher-same-llm-chip {
     display: flex;
