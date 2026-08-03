@@ -24,20 +24,20 @@ from prompt_toolkit.formatted_text import ANSI
 class Colors:
     """ANSI color codes matching web UI CSS variables."""
     RESET = "\033[0m"
-    
+
     # Background
     BG_DARK = "\033[38;5;235m"  # #0f1115
-    
+
     # Text
     TEXT_PRIMARY = "\033[38;5;255m"   # #e2e8f0
     TEXT_SECONDARY = "\033[38;5;246m"  # #94a3b8
-    
+
     # Accents
     ACCENT_PRIMARY = "\033[38;5;69m"   # #3b82f6 (blue)
     ACCENT_SUCCESS = "\033[38;5;40m"   # #10b981 (green)
     ACCENT_ERROR = "\033[38;5;196m"    # #ef4444 (red)
     ACCENT_WARNING = "\033[38;5;220m"  # #fbbf24 (yellow)
-    
+
     # Styles
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -465,7 +465,11 @@ def _completion_candidates(
             if key in {"verbose", "scope_enabled", "urgency_enabled", "ssl_verify"}:
                 return [v for v in ("true", "false") if v.startswith(text)]
             if key == "provider":
-                return [v for v in ("ollama", "openai", "anthropic", "google") if v.startswith(text)]
+                return [v for v in ("ollama", "ollama_direct", "openai", "anthropic", "google", "litellm") if v.startswith(text)]
+            if key == "context_window":
+                return [v for v in ("4096", "8192", "16384", "32768", "64000", "128000") if v.startswith(text)]
+            if key == "max_turns":
+                return [v for v in ("10", "20", "30", "50", "100") if v.startswith(text)]
             if key == "tools_config":
                 preferred = _config_path_suggestions(text)
                 fs = _filesystem_path_suggestions(text)
@@ -965,7 +969,7 @@ class TerminalEventHandler:
         elapsed = event.get("elapsed_seconds") or 0
         stdout_len = event.get("stdout_len") or 0
         stderr_len = event.get("stderr_len") or 0
-        
+
         # Only print if not using the live status bar, otherwise update the bar
         msg = f"{Colors.DIM}[{tool} status: {elapsed}s elapsed, {stdout_len}b stdout, {stderr_len}b stderr]{Colors.RESET}"
         if self._bar_active:
@@ -1131,7 +1135,7 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
     _validate_session_args(args)
     enabled_tool_guides = _copy_tools_config_if_requested(args.tools_config)
     server_type = "apt" if "/usr/share/mcp-kali-server/mcp_server.py" in args.server_command else "cli"
-    
+
     run_id = None
     if getattr(args, "continue_run", None) is not None:
         sessions = load_session_list(str(PROJECT_DIR))
@@ -1270,7 +1274,7 @@ async def _run_chat_with_bar(
             _handle_char(ch)
 
     event_handler.activate_bar()
-    
+
     # Add signal handler safely (only works on main thread/local)
     try:
         loop.add_signal_handler(signal.SIGINT, _sigint_handler)
@@ -1365,7 +1369,7 @@ async def _run_prompt(args: argparse.Namespace, event_handler: TerminalEventHand
     prompt = args.prompt_text
     if not prompt:
         raise ValueError("A prompt is required for the run command.")
-    
+
     _owns_session = (session is None)
     try:
         if session is None:
@@ -1439,7 +1443,7 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
             try:
                 prompt_str = f"{Colors.ACCENT_PRIMARY}caf[{active_session_id}]>{Colors.RESET} " if active_session_id else f"{Colors.ACCENT_PRIMARY}caf>{Colors.RESET} "
                 event_handler.prompt_prefix = prompt_str
-                
+
                 # Safety net: ensure terminal is in canonical (cooked) mode
                 if _HAS_TERMIOS and event_handler._is_tty():
                     try:
@@ -1449,15 +1453,17 @@ async def _chat(args: argparse.Namespace, event_handler: TerminalEventHandler = 
                     except Exception:
                         pass
                 event_handler._print_separator()
-                
+
                 if not hasattr(event_handler, "prompt_session"):
                     # Create the PromptSession once per event_handler
                     event_handler.prompt_session = PromptSession(
                         completer=SlashCompleter(lambda: sorted(known_session_ids)),
-                        # output will automatically be correctly routed by prompt_toolkit 
+                        complete_while_typing=True,
+                        complete_in_thread=True,
+                        # output will automatically be correctly routed by prompt_toolkit
                         # in both local and SSH mode (when using PromptToolkitSSHSession)
                     )
-                
+
                 line = await event_handler.prompt_session.prompt_async(ANSI(prompt_str))
                 prompt = line.strip() if line else ""
             except EOFError:

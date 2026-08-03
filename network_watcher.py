@@ -2,16 +2,71 @@ import os
 import threading
 import json
 import time
+import base64
 import requests
 import queue
 import logging
 import psutil
+from datetime import datetime
 
 try:
     import pyshark
     _PYSHARK_AVAILABLE = True
 except ImportError:
     _PYSHARK_AVAILABLE = False
+
+
+DEFAULT_MAX_PACKET_PAYLOAD_BYTES = 384
+MAX_CONFIGURED_PACKET_PAYLOAD_BYTES = 8_192
+MAX_HEADER_FIELDS_PER_PROTOCOL = 24
+MAX_HEADER_VALUE_CHARS = 256
+DEFAULT_MAX_PACKETS_PER_ANALYSIS = 12
+MAX_CONFIGURED_PACKETS_PER_ANALYSIS = 500
+MAX_ANALYSIS_CHARS = 8_000
+DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
+MAX_ANALYSIS_INTERVAL_SECONDS = 300
+PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
+
+# These defaults match the previously hard-coded packet record: core metadata,
+# every decoded protocol header, transport payload samples, application data,
+# and TLS metadata are included unless the operator opts out.
+DEFAULT_PACKET_FIELDS = frozenset({
+    "metadata.timestamp",
+    "metadata.length",
+    "metadata.highest_protocol",
+    "metadata.protocol_stack",
+    "link.ethernet",
+    "link.arp",
+    "network.ipv4",
+    "network.ipv6",
+    "network.icmp",
+    "network.icmpv6",
+    "transport.tcp_headers",
+    "transport.tcp_payload",
+    "transport.udp_headers",
+    "transport.udp_payload",
+    "application.http",
+    "application.http2",
+    "application.dns",
+    "application.tls",
+    "headers.other",
+})
+
+HEADER_LAYER_FIELDS = {
+    "link.ethernet": {"eth", "sll", "sll2"},
+    "link.arp": {"arp"},
+    "network.ipv4": {"ip"},
+    "network.ipv6": {"ipv6"},
+    "network.icmp": {"icmp"},
+    "network.icmpv6": {"icmpv6"},
+    "transport.tcp_headers": {"tcp"},
+    "transport.udp_headers": {"udp"},
+    "application.http": {"http"},
+    "application.http2": {"http2"},
+    "application.dns": {"dns"},
+    "application.tls": {"tls", "ssl"},
+}
+KNOWN_HEADER_LAYERS = frozenset().union(*HEADER_LAYER_FIELDS.values())
 
 
 class NetworkWatcher:
@@ -26,43 +81,273 @@ class NetworkWatcher:
         self.api_key = ""
         self.run_id = None
         self.event_store = event_store
+        self.analysis_interval_seconds = DEFAULT_ANALYSIS_INTERVAL_SECONDS
+        self.max_packet_payload_bytes = DEFAULT_MAX_PACKET_PAYLOAD_BYTES
+        self.max_packets_per_analysis = DEFAULT_MAX_PACKETS_PER_ANALYSIS
+        self.packet_fields = set(DEFAULT_PACKET_FIELDS)
 
-        self._buffer = queue.Queue()
+        self._buffer = queue.Queue(maxsize=500)
         self._last_flush_time = 0
-        
+
         # Metrics
         self.packets_captured = 0
+        self.packets_analyzed = 0
         self.bytes_extracted = 0
+        self.packets_dropped = 0
+        self.total_tokens_analyzed = 0
         self.total_inference_time = 0.0
         self.inference_count = 0
+        self.inference_in_flight = 0
+        self.alerts_emitted = 0
+        self.logs = []
+        # Keep model diagnostics separate from the general operational log so
+        # the UI can clear them without losing capture-status context.
+        self._interaction_lock = threading.Lock()
+        self.interactions = []
+        self.interaction_revision = 0
 
-    def start(self, run_id: str, interface: str, api_url: str, model: str, api_key: str):
+    def _record_interaction(self, interaction: dict):
+        """Retain a bounded, clearable record of each SLM/LLM request."""
+        with self._interaction_lock:
+            interaction = dict(interaction)
+            interaction["id"] = self.interaction_revision + 1
+            self.interactions.append(interaction)
+            if len(self.interactions) > 100:
+                self.interactions = self.interactions[-100:]
+            self.interaction_revision += 1
+            return interaction["id"]
+
+    def _update_interaction(self, interaction_id: int, **updates):
+        """Update a pending interaction once its model request resolves."""
+        with self._interaction_lock:
+            for interaction in reversed(self.interactions):
+                if interaction.get("id") == interaction_id:
+                    interaction.update(updates)
+                    self.interaction_revision += 1
+                    return
+
+    def get_interactions(self) -> tuple[int, list[dict]]:
+        with self._interaction_lock:
+            return self.interaction_revision, [dict(entry) for entry in self.interactions]
+
+    def clear_interactions(self):
+        with self._interaction_lock:
+            self.interactions = []
+            self.interaction_revision += 1
+
+    def _add_log(self, kind: str, message: str):
+        entry = {
+            "timestamp": time.strftime("%H:%M:%S"),
+            "kind": kind,  # 'info', 'alert', 'packet', 'error'
+            "message": message
+        }
+        self.logs.append(entry)
+        if len(self.logs) > 500:
+            self.logs = self.logs[-500:]
+
+    @staticmethod
+    def _safe_value(value, max_chars: int = MAX_HEADER_VALUE_CHARS) -> str:
+        """Normalize PyShark field values into compact, JSON-safe strings."""
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(str(item) for item in value)
+        value = str(value).replace("\x00", "\\x00")
+        return value[:max_chars]
+
+    def _layer_headers(self, layer) -> dict:
+        """Collect bounded decoded header fields from a PyShark protocol layer."""
+        headers = {}
+        for field_name in list(getattr(layer, "field_names", []) or []):
+            if len(headers) >= MAX_HEADER_FIELDS_PER_PROTOCOL:
+                break
+            if field_name in PAYLOAD_FIELD_NAMES or field_name.endswith(".payload"):
+                continue
+            try:
+                value = getattr(layer, field_name, None)
+                if value is None and hasattr(layer, "get_field_value"):
+                    value = layer.get_field_value(field_name)
+                normalized = self._safe_value(value)
+                if normalized:
+                    headers[field_name] = normalized
+            except Exception:
+                continue
+        return headers
+
+    def _payload_summary(self, raw_hex: str) -> tuple[dict | None, int]:
+        """Preserve a bounded TCP/UDP payload without corrupting binary data."""
+        try:
+            raw = bytes.fromhex((raw_hex or "").replace(":", ""))
+        except ValueError:
+            return None, 0
+        if not raw:
+            return None, 0
+
+        sample = raw[:self.max_packet_payload_bytes]
+        is_truncated = len(sample) < len(raw)
+        try:
+            text = sample.decode("utf-8")
+            printable_ratio = sum(char.isprintable() or char in "\r\n\t" for char in text) / max(len(text), 1)
+        except UnicodeDecodeError:
+            text = ""
+            printable_ratio = 0
+
+        if printable_ratio >= 0.85:
+            return {
+                "encoding": "utf-8",
+                "data": text,
+                "original_bytes": len(raw),
+                "truncated": is_truncated,
+            }, len(raw)
+        return {
+            "encoding": "base64",
+            "data": base64.b64encode(sample).decode("ascii"),
+            "original_bytes": len(raw),
+            "truncated": is_truncated,
+        }, len(raw)
+
+    def _headers_enabled_for_layer(self, layer_name: str) -> bool:
+        """Return whether decoded header fields for a protocol should be forwarded."""
+        for field_id, layer_names in HEADER_LAYER_FIELDS.items():
+            if field_id in self.packet_fields and layer_name in layer_names:
+                return True
+        return "headers.other" in self.packet_fields and layer_name not in KNOWN_HEADER_LAYERS
+
+    def _packet_record(self, packet) -> tuple[dict, int]:
+        """Build the compact decoded packet representation sent to the model."""
+        layers = list(getattr(packet, "layers", []) or [])
+        protocol_stack = [getattr(layer, "layer_name", "unknown") for layer in layers]
+        headers = {}
+        for layer in layers:
+            layer_name = getattr(layer, "layer_name", "unknown")
+            if not self._headers_enabled_for_layer(layer_name):
+                continue
+            layer_headers = self._layer_headers(layer)
+            if layer_headers:
+                headers[layer_name] = layer_headers
+
+        record = {}
+        if "metadata.timestamp" in self.packet_fields:
+            record["timestamp"] = str(getattr(packet, "sniff_time", ""))
+        if "metadata.length" in self.packet_fields:
+            record["length"] = self._safe_value(getattr(packet, "length", ""))
+        if "metadata.highest_protocol" in self.packet_fields:
+            record["highest_protocol"] = self._safe_value(getattr(packet, "highest_layer", ""))
+        if "metadata.protocol_stack" in self.packet_fields:
+            record["protocol_stack"] = protocol_stack
+        if headers:
+            record["headers"] = headers
+
+        payloads = {}
+        payload_bytes = 0
+        for protocol, field_id in (("tcp", "transport.tcp_payload"), ("udp", "transport.udp_payload")):
+            if field_id not in self.packet_fields:
+                continue
+            layer = getattr(packet, protocol, None)
+            raw_hex = getattr(layer, "payload", "") if layer else ""
+            summary, size = self._payload_summary(raw_hex)
+            if summary:
+                payloads[protocol] = summary
+                payload_bytes += size
+        for protocol, field_id in (("http", "application.http"), ("http2", "application.http2"), ("dns", "application.dns")):
+            if field_id not in self.packet_fields:
+                continue
+            layer = getattr(packet, protocol, None)
+            if not layer:
+                continue
+            raw_application_data = getattr(layer, "file_data", None) or getattr(layer, "data", None)
+            application_data = self._safe_value(raw_application_data, self.max_packet_payload_bytes)
+            if application_data:
+                payloads[protocol] = {
+                    "encoding": "utf-8",
+                    "data": application_data,
+                    "truncated": len(str(raw_application_data)) > len(application_data),
+                }
+        if "application.tls" in self.packet_fields and (getattr(packet, "tls", None) or getattr(packet, "ssl", None)):
+            payloads["https"] = {
+                "encrypted": True,
+                "note": "TLS record bytes are included in tcp payload; plaintext requires configured TLS decryption keys.",
+            }
+        if payloads:
+            record["payloads"] = payloads
+        return record, payload_bytes
+
+    def _serialize_packet_batch(self, records: list[dict]) -> str:
+        """Keep batch size deterministic before it reaches the model context."""
+        selected = []
+        records_to_serialize = records if self.max_packets_per_analysis is None else records[:self.max_packets_per_analysis]
+        for record in records_to_serialize:
+            candidate = selected + [record]
+            serialized = json.dumps({"packets": candidate}, ensure_ascii=False, separators=(",", ":"))
+            if len(serialized) > MAX_ANALYSIS_CHARS and selected:
+                break
+            selected = candidate
+        return json.dumps({"packet_count": len(selected), "packets": selected}, ensure_ascii=False, separators=(",", ":"))
+
+    def start(self, run_id: str, interface: str, api_url: str, model: str, api_key: str,
+              ssl_verify: bool = True, request_timeout: int = 60, system_prompt: str = "",
+              analysis_interval_seconds: int = DEFAULT_ANALYSIS_INTERVAL_SECONDS,
+              max_packet_payload_bytes: int = DEFAULT_MAX_PACKET_PAYLOAD_BYTES,
+              max_packets_per_analysis: int = DEFAULT_MAX_PACKETS_PER_ANALYSIS,
+              packet_fields: list[str] | None = None):
         if not self.watcher_available:
             raise RuntimeError("pyshark is not installed.")
-        
+
         self.stop()
         self.run_id = run_id
         self.interface = interface
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
-        
-        # Reset metrics
+        self.ssl_verify = bool(ssl_verify)
+        self.request_timeout = int(request_timeout) if request_timeout else 60
+        self.system_prompt = (system_prompt or "").strip()
+        self.analysis_interval_seconds = self._bounded_int(
+            analysis_interval_seconds,
+            DEFAULT_ANALYSIS_INTERVAL_SECONDS,
+            1,
+            MAX_ANALYSIS_INTERVAL_SECONDS,
+        )
+        self.max_packet_payload_bytes = self._bounded_int(
+            max_packet_payload_bytes,
+            DEFAULT_MAX_PACKET_PAYLOAD_BYTES,
+            32,
+            MAX_CONFIGURED_PACKET_PAYLOAD_BYTES,
+        )
+        self.max_packets_per_analysis = self._normalize_max_packets(max_packets_per_analysis)
+        self.packet_fields = self._normalize_packet_fields(packet_fields)
+
+        # Reset metrics & logs
         self.packets_captured = 0
+        self.packets_analyzed = 0
         self.bytes_extracted = 0
+        self.packets_dropped = 0
+        self.total_tokens_analyzed = 0
         self.total_inference_time = 0.0
         self.inference_count = 0
-        
+        self.inference_in_flight = 0
+        self.alerts_emitted = 0
+        self.logs = []
+        self.clear_interactions()
+        self._buffer = queue.Queue(maxsize=500)
+
         self._stop_event.clear()
         self.running = True
-        
+
+        self._add_log(
+            "info",
+            f"NetworkWatcher started on interface: {self.interface} "
+            f"(send every {self.analysis_interval_seconds}s; up to {self._max_packets_label()} packets; "
+            f"payload cap {self.max_packet_payload_bytes} B)",
+        )
+
         self._thread = threading.Thread(
             target=self._capture_loop,
             daemon=True,
             name="network-watcher-capture"
         )
         self._thread.start()
-        
+
         self._analyzer_thread = threading.Thread(
             target=self._analyzer_loop,
             daemon=True,
@@ -70,6 +355,39 @@ class NetworkWatcher:
         )
         self._analyzer_thread.start()
         logging.info(f"[NetworkWatcher] Started on interface {self.interface} for run {self.run_id}")
+
+    @staticmethod
+    def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+        try:
+            return max(minimum, min(int(value), maximum))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _normalize_packet_fields(packet_fields) -> set[str]:
+        if packet_fields is None:
+            return set(DEFAULT_PACKET_FIELDS)
+        if not isinstance(packet_fields, (list, tuple, set)):
+            return set(DEFAULT_PACKET_FIELDS)
+        return {str(field) for field in packet_fields if str(field) in DEFAULT_PACKET_FIELDS}
+
+    @staticmethod
+    def _normalize_max_packets(value) -> int | None:
+        """Treat zero as unlimited, while retaining a safe queue-backed upper bound."""
+        try:
+            if int(value) == 0:
+                return None
+        except (TypeError, ValueError):
+            pass
+        return NetworkWatcher._bounded_int(
+            value,
+            DEFAULT_MAX_PACKETS_PER_ANALYSIS,
+            1,
+            MAX_CONFIGURED_PACKETS_PER_ANALYSIS,
+        )
+
+    def _max_packets_label(self) -> str:
+        return "unlimited" if self.max_packets_per_analysis is None else str(self.max_packets_per_analysis)
 
     def stop(self):
         self.running = False
@@ -80,34 +398,76 @@ class NetworkWatcher:
             self._analyzer_thread.join(timeout=3)
         self._thread = None
         self._analyzer_thread = None
+        self._add_log("info", "NetworkWatcher stopped.")
         logging.info("[NetworkWatcher] Stopped.")
+
+    def _check_bpf_permissions(self) -> bool:
+        """Check if macOS /dev/bpf* devices are accessible by current user."""
+        if os.path.exists('/dev/bpf0'):
+            if not os.access('/dev/bpf0', os.R_OK | os.W_OK):
+                try:
+                    os.system('sudo -n chmod 666 /dev/bpf* >/dev/null 2>&1')
+                except Exception:
+                    pass
+                if not os.access('/dev/bpf0', os.R_OK | os.W_OK):
+                    return False
+        return True
 
     def status(self) -> dict:
         cpu_percent = psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory()
-        
+
         avg_inference = 0.0
         if self.inference_count > 0:
             avg_inference = self.total_inference_time / self.inference_count
-            
+
+        bpf_ok = self._check_bpf_permissions()
+        with self._interaction_lock:
+            interaction_revision = self.interaction_revision
+            interaction_count = len(self.interactions)
+
         return {
             "available": self.watcher_available,
             "running": self.running,
             "interface": self.interface,
             "api_url": self.api_url,
             "model": self.model,
+            "configuration": {
+                "analysis_interval_seconds": self.analysis_interval_seconds,
+                "max_packet_payload_bytes": self.max_packet_payload_bytes,
+                "max_packets_per_analysis": self.max_packets_per_analysis,
+                "packet_fields": sorted(self.packet_fields),
+            },
+            "bpf_permission_ok": bpf_ok,
+            "capture_error": getattr(self, 'capture_error', None),
+            "interaction_revision": interaction_revision,
+            "interaction_count": interaction_count,
             "metrics": {
                 "cpu_percent": cpu_percent,
                 "mem_used_mb": mem.used // (1024 * 1024),
                 "mem_free_mb": mem.available // (1024 * 1024),
                 "mem_percent": mem.percent,
                 "packets_captured": self.packets_captured,
+                "packets_analyzed": self.packets_analyzed,
                 "bytes_extracted": self.bytes_extracted,
-                "avg_inference_sec": round(avg_inference, 2)
+                "packets_dropped": self.packets_dropped,
+                "total_tokens": self.total_tokens_analyzed,
+                "inference_count": self.inference_count,
+                "inference_in_flight": self.inference_in_flight,
+                "avg_inference_sec": round(avg_inference, 2),
+                "alerts_emitted": self.alerts_emitted,
             }
         }
 
     def _capture_loop(self):
+        self.capture_error = None
+        if not self._check_bpf_permissions():
+            msg = "BPF Permission Denied: /dev/bpf* is not readable. Run 'sudo chmod 666 /dev/bpf*' in terminal to allow packet capture."
+            logging.error(f"[NetworkWatcher] {msg}")
+            self._add_log("error", msg)
+            self.capture_error = msg
+            # Try to run chmod 666 /dev/bpf* via sudo helper if available
+
         try:
             # Parse interfaces: if comma separated, make a list
             if isinstance(self.interface, str) and ',' in self.interface:
@@ -115,90 +475,188 @@ class NetworkWatcher:
             else:
                 ifaces = self.interface
 
+            logging.info(f"[NetworkWatcher] Starting LiveCapture on {ifaces}")
+            self._add_log("info", f"Listening on interface: {ifaces}")
+
+            # Keep filtering in libpcap/TShark while Python normalizes only
+            # decoded records that will be forwarded to the model.
             capture = pyshark.LiveCapture(
                 interface=ifaces,
-                bpf_filter="tcp and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)"
+                bpf_filter="tcp or udp or icmp or icmp6 or arp"
             )
             for packet in capture.sniff_continuously():
                 if self._stop_event.is_set():
                     break
-                
+
                 try:
                     self.packets_captured += 1
-                    if hasattr(packet, 'tcp') and hasattr(packet.tcp, 'payload'):
-                        # Extract raw ASCII payload
-                        raw_hex = packet.tcp.payload.replace(':', '')
-                        try:
-                            ascii_text = bytearray.fromhex(raw_hex).decode('utf-8', errors='ignore')
-                            if ascii_text.strip():
-                                self.bytes_extracted += len(ascii_text)
-                                self._buffer.put(ascii_text)
-                        except Exception:
-                            pass
-                except AttributeError:
+                    record, payload_bytes = self._packet_record(packet)
+                    self.bytes_extracted += payload_bytes
+                    try:
+                        self._buffer.put_nowait(record)
+                    except queue.Full:
+                        self.packets_dropped += 1
+                    if self.packets_captured % 10 == 0:
+                        self._add_log("packet", f"Captured {self.packets_captured} packets ({self.bytes_extracted} bytes payload)")
+                except Exception:
                     continue
         except Exception as e:
-            logging.error(f"[NetworkWatcher] Capture error: {e}")
+            err_msg = f"Capture failed: {e}"
+            logging.error(f"[NetworkWatcher] {err_msg}")
+            self._add_log("error", err_msg)
+            self.capture_error = err_msg
             self.running = False
 
     def _analyzer_loop(self):
         while not self._stop_event.is_set():
-            batch = ""
-            # Gather available text in buffer
-            while not self._buffer.empty():
+            batch = []
+            # Gather a bounded number of decoded packet records in each batch.
+            while self.max_packets_per_analysis is None or len(batch) < self.max_packets_per_analysis:
                 try:
-                    batch += self._buffer.get_nowait() + "\n"
+                    batch.append(self._buffer.get_nowait())
                 except queue.Empty:
                     break
-            
-            if batch.strip():
-                self._analyze_batch(batch)
-            
-            # Wait a bit before next batch to prevent spamming
-            time.sleep(5)
 
-    def _analyze_batch(self, batch: str):
-        prompt = (
+            if batch:
+                self.packets_analyzed += len(batch)
+                self._analyze_batch(batch)
+
+            # Wait between sends, but allow stop() to interrupt immediately.
+            self._stop_event.wait(self.analysis_interval_seconds)
+
+    def _analyze_batch(self, batch: list[dict]):
+        serialized_batch = self._serialize_packet_batch(batch)
+        estimated_tokens = len(serialized_batch) // 4
+        self.total_tokens_analyzed += estimated_tokens
+
+        base_instructions = self.system_prompt if (hasattr(self, 'system_prompt') and self.system_prompt and self.system_prompt.strip()) else (
             "You are an anomaly detection SSM watching a live packet stream. "
-            "Describe anything interesting; meaning ascii or anything that can be inferred from it. "
+            "Review the structured packet records: protocol stack, decoded headers, and bounded payloads. "
+            "Treat HTTPS payload bytes as encrypted unless the record explicitly contains decoded HTTP data. "
             "If you see plaintext credentials, API keys, sensitive server banners, or anything notable, "
-            "output a concise JSON alert like {\"alert\": \"<description>\"}. "
-            "If nothing interesting is found, output nothing.\n\n"
-            "PAYLOAD:\n"
-            f"{batch[:4000]}"  # cap to 4k chars per request as safety
+            "state the finding in 2-3 concise sentences. Return only the final observation, with no internal reasoning. "
+            "If nothing interesting is found, say that clearly."
         )
+
+        prompt = f"{base_instructions}\n\nPACKETS_JSON:\n{serialized_batch}"
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 150
-        }
+        target_url = (self.api_url or '').rstrip('/')
+        if not (target_url.endswith('/v1/chat/completions') or target_url.endswith('/api/chat') or target_url.endswith('/v1/completions')):
+            target_url = f"{target_url}/v1/chat/completions"
 
+        if target_url.endswith('/api/chat'):
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0.1}
+            }
+        else:
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 150
+            }
+
+        interaction_id = self._record_interaction({
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "model": self.model,
+            "endpoint": target_url,
+            "request": payload,
+            "prompt": prompt,
+            "response": "",
+            "http_status": None,
+            "elapsed_ms": None,
+            "outcome": "pending",
+            "error": "",
+            "analysis": "",
+        })
+        start_time = time.time()
+        response_text = ""
+        response_received = False
+        response_status = None
+        request_started = False
         try:
-            start_time = time.time()
-            resp = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            self._add_log("info", f"Analyzing {len(batch)} decoded packets ({len(serialized_batch)} chars, ~{estimated_tokens} tokens)...")
+            verify_ssl = getattr(self, 'ssl_verify', True)
+            read_timeout = getattr(self, 'request_timeout', 60)
+            self.inference_in_flight += 1
+            request_started = True
+            resp = requests.post(target_url, json=payload, headers=headers, timeout=(10, read_timeout), verify=verify_ssl)
             elapsed = time.time() - start_time
             self.total_inference_time += elapsed
             self.inference_count += 1
-            
+            response_text = getattr(resp, "text", "")
+            response_received = True
+            response_status = resp.status_code
+
             if resp.status_code == 200:
                 data = resp.json()
-                content = data.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
-                if content and "alert" in content.lower():
-                    # Parse out alert if it is JSON or just output raw
-                    self._emit_alert(content)
+                content = ""
+                reasoning_content = ""
+                if "choices" in data and len(data["choices"]):
+                    message = data["choices"][0].get("message", {})
+                    content = message.get("content", "").strip()
+                    reasoning_content = message.get("reasoning_content", "").strip()
+                elif "message" in data:
+                    content = data["message"].get("content", "").strip()
+                    reasoning_content = data["message"].get("reasoning_content", "").strip()
+                analysis = content or reasoning_content
+
+                if analysis:
+                    self._add_log("alert" if "alert" in analysis.lower() else "info", f"SSM Analysis Output: {analysis}")
+                    if "alert" in analysis.lower():
+                        self.alerts_emitted += 1
+                        self._emit_alert(analysis)
+                else:
+                    self._add_log("info", "Model returned no final analysis text.")
+                self._update_interaction(
+                    interaction_id,
+                    response=response_text,
+                    http_status=resp.status_code,
+                    elapsed_ms=round(elapsed * 1000),
+                    outcome="success",
+                    error="",
+                    analysis=analysis,
+                )
+            else:
+                self._add_log("error", f"SSM API ({target_url}) returned status {resp.status_code}")
+                self._update_interaction(
+                    interaction_id,
+                    response=response_text,
+                    http_status=resp.status_code,
+                    elapsed_ms=round(elapsed * 1000),
+                    outcome="http_error",
+                    error=f"HTTP {resp.status_code}",
+                )
         except Exception as e:
+            elapsed = time.time() - start_time
+            if not response_received:
+                self.total_inference_time += elapsed
+                self.inference_count += 1
             logging.error(f"[NetworkWatcher] SSM API error: {e}")
+            self._add_log("error", f"SSM API request failed: {e}")
+            self._update_interaction(
+                interaction_id,
+                response=response_text,
+                http_status=response_status,
+                elapsed_ms=round(elapsed * 1000),
+                outcome="error",
+                error=str(e),
+            )
+        finally:
+            if request_started:
+                self.inference_in_flight = max(0, self.inference_in_flight - 1)
 
     def _emit_alert(self, message: str):
         if not self.run_id or not self.event_store:
             return
-        
+
         logging.info(f"[NetworkWatcher] Alert emitted: {message}")
         self.event_store.append_event(
             self.run_id,

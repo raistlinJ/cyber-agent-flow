@@ -230,6 +230,8 @@ body {
 
 /* Content Area */
 .content-area {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     min-width: 0;
@@ -244,7 +246,8 @@ body {
 .tab-pane.active {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     min-width: 0;
 }
 
@@ -338,6 +341,34 @@ body {
 
 .config-subtab-panel.active {
     display: flex;
+}
+
+.watcher-subtab-panel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.watcher-subtab-panel.active {
+    display: flex;
+}
+
+.watcher-setup-footer {
+    width: 100%;
+    margin-top: auto;
+    padding: 1rem 0 0;
+}
+
+.watcher-setup-footer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 1rem;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-surface-1);
 }
 
 .form-section {
@@ -3157,9 +3188,63 @@ option {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    max-height: 560px;
-    overflow-y: auto;
     padding-right: 0.25rem;
+}
+
+/* Keep growing watcher output from pushing the rest of the workspace away. */
+.scrollable-panel {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.watcher-cards-container {
+    max-height: min(56vh, 560px);
+}
+
+.nw-findings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    flex: 1;
+    min-height: 0;
+    padding-right: 0.25rem;
+}
+
+.nw-findings-panel,
+#nw-findings-panel {
+    display: flex;
+    flex-direction: column;
+    height: 360px;
+}
+
+.nw-findings-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.nw-interactions-body {
+    border-top: 1px solid var(--border-subtle);
+    padding: 0.85rem 1rem;
+    height: 320px;
+}
+
+#nw-interactions-panel[open] {
+    display: flex;
+    flex-direction: column;
+}
+
+#nw-interactions-panel[open] .nw-interactions-body {
+    flex: 1;
+    min-height: 0;
+}
+
+.nw-interactions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
 }
 
 /* Individual suggestion card */
@@ -3433,6 +3518,112 @@ option {
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
     animation: watcher-pop 0.2s ease;
+}
+
+.nw-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.nw-packet-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.nw-packet-fields-title {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.nw-packet-fields > div > .input-hint {
+    margin: 0.35rem 0 0;
+}
+
+.nw-packet-fields-table-wrap {
+    max-height: 28rem;
+    overflow: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-surface-2);
+}
+
+.nw-packet-layer + .nw-packet-layer {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.nw-packet-layer summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.65rem 0.75rem;
+    cursor: pointer;
+    color: #c4b5fd;
+    font-size: 0.78rem;
+    font-weight: 600;
+    user-select: none;
+}
+
+.nw-packet-layer summary:hover {
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.nw-packet-layer summary small {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 400;
+}
+
+.nw-packet-layer[open] summary {
+    border-bottom: 1px solid var(--border-subtle);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.nw-packet-fields-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    text-align: left;
+}
+
+.nw-packet-fields-table th,
+.nw-packet-fields-table td {
+    padding: 0.48rem 0.6rem;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: top;
+}
+
+.nw-packet-fields-table td:first-child,
+.nw-packet-fields-table th:first-child {
+    width: 3.25rem;
+    text-align: center;
+}
+
+.nw-packet-fields-table tbody th[scope="row"] {
+    width: 10rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.nw-packet-fields-table td {
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+
+.nw-packet-fields-table input {
+    width: 0.95rem;
+    height: 0.95rem;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+@media (max-width: 620px) {
+    .nw-config-grid { grid-template-columns: 1fr; }
+    .nw-packet-fields-table tbody th[scope="row"] { width: auto; }
 }
 
 /* ── Range sliders ─────────────────────────────────────────────────── */

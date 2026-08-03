@@ -55,15 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const logNetworkCaptureToggle = document.getElementById('log-network-capture-toggle');
     const logSyscallsToggle = document.getElementById('log-syscalls-toggle');
 
-    // Network Watcher references
-    const nwEnableToggle = document.getElementById('nw-enable-toggle');
-    const nwInterfaceInput = document.getElementById('nw-interface');
-    const nwApiUrlInput = document.getElementById('nw-api-url');
-    const nwModelInput = document.getElementById('nw-model');
-    const nwApiKeyInput = document.getElementById('nw-api-key');
 
-    const configSubtabBtns = document.querySelectorAll('.config-subtab-btn');
-    const configSubtabPanels = document.querySelectorAll('.config-subtab-panel');
+    const configSubtabBtns = document.querySelectorAll('#config-panel .config-subtab-btn');
+    const configSubtabPanels = document.querySelectorAll('#config-panel .config-subtab-panel');
 
     const statusBadge = document.getElementById('status-badge');
     const statusText = statusBadge.querySelector('.status-text');
@@ -119,13 +113,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolTimeoutWaitSelect = document.getElementById('tool-timeout-wait-select');
     const backgroundToolTimeoutBtn = document.getElementById('background-tool-timeout-btn');
     const killToolTimeoutBtn = document.getElementById('kill-tool-timeout-btn');
-    
+
     const annotationAction = document.getElementById('annotation-action');
     const annotationText = document.getElementById('annotation-text');
     const annotationTextGroup = document.getElementById('annotation-text-group');
     const annotationSpan = document.getElementById('annotation-span');
     const modalTitle = document.getElementById('modal-title');
-    
+
     const chatDownloadBtn = document.getElementById('chat-download-btn');
     const sessionDownloadBtn = document.getElementById('session-download-btn');
     const sessionAnalyzeBtn = document.getElementById('session-analyze-btn');
@@ -135,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const analysisJobsSummary = document.getElementById('analysis-jobs-summary');
     const clearJobsBtn = document.getElementById('clear-jobs-btn');
     const btnZenMode = document.getElementById('btn-zen-mode');
-    
+
     if (btnZenMode) {
         const svgPathCornersOut = "M152,48a8,8,0,0,1,8-8h56a8,8,0,0,1,8,8v56a8,8,0,0,1-16,0V56H160A8,8,0,0,1,152,48ZM48,104a8,8,0,0,0,16,0V56H104a8,8,0,0,0,0-16H48a8,8,0,0,0-8,8V96A8,8,0,0,0,48,104ZM208,152a8,8,0,0,0-8,8v40H160a8,8,0,0,0,0,16h56a8,8,0,0,0,8-8V160A8,8,0,0,0,208,152ZM104,208H64V160a8,8,0,0,0-16,0v56a8,8,0,0,0,8,8h56a8,8,0,0,0,0-16Z";
         const svgPathCornersIn = "M216,96a8,8,0,0,1-8,8H160a8,8,0,0,1-8-8V40a8,8,0,0,1,16,0V88h40A8,8,0,0,1,216,96ZM96,152H40a8,8,0,0,0,0,16H88v48a8,8,0,0,0,16,0V160A8,8,0,0,0,96,152ZM216,160a8,8,0,0,0-8-8H160a8,8,0,0,0-8,8v56a8,8,0,0,0,16,0V168h40A8,8,0,0,0,216,160ZM88,96V40a8,8,0,0,0-16,0V88H32a8,8,0,0,0,0,16H96a8,8,0,0,0,0-16Z";
@@ -152,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    
+
     let _analysisCache = {};
     let _analysisJobsInterval = null;
     let _openAnalysisJobMenuId = null;
@@ -339,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         OPENAI: 'openai',
         CLAUDE: 'claude',
     };
-    
+
     // SVG Templates
     const ICON_SVG = {
         POWER: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 256 256"><path d="M128,24a8,8,0,0,1,8,8v80a8,8,0,0,1-16,0V32A8,8,0,0,1,128,24ZM198.63,62.63a8,8,0,0,0-11.26,11.4c26.46,26.11,26.46,68.63,0,94.74a67,67,0,0,1-94.74,0c-26.46-26.11-26.46-68.63,0-94.74a8,8,0,0,0-11.26-11.4c-32.73,32.31-32.73,84.89,0,117.2a83,83,0,0,0,117.26,0C231.36,147.52,231.36,94.94,198.63,62.63Z"></path></svg>`,
@@ -381,7 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.disabled) return;
             const targetId = btn.getAttribute('data-target');
             switchTab(targetId);
-            
+
             // Handle analysis polling
             if (targetId === 'analysis-pane') {
                 loadAnalysisJobs();
@@ -1873,7 +1867,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const writable = options.writable !== false;
         const sessionKind = options.sessionKind || 'interactive';
         console.log('[createTerminalTab] Creating tab for sessionId:', sessionId, 'tool:', tool, 'argsSummary:', argsSummary);
-        
+
         if (!chatTabBar) {
             console.error('[createTerminalTab] ERROR: chatTabBar is null or undefined');
             return;
@@ -1882,7 +1876,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('[createTerminalTab] ERROR: chatTabsContent is null or undefined');
             return;
         }
-        
+
         if (document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`)) {
             console.log('[createTerminalTab] Tab already exists for', sessionId);
             return;
@@ -1951,7 +1945,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ? `
             <div class="isess-input-row" id="input-row-${sessionId}">
                 <span class="isess-prompt-indicator">></span>
-                <input type="text" class="isess-input" id="input-${sessionId}" 
+                <input type="text" class="isess-input" id="input-${sessionId}"
                     placeholder="Waiting for session to initialize..." disabled>
             </div>`
             : '';
@@ -1984,10 +1978,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (e.key === 'Enter') {
                     const val = inputEl.value.trim();
                     if (!val) return;
-                    
+
                     inputEl.value = '';
                     appendIsessLog(sessionId, `\n> ${val}\n`, 'log-user-input');
-                    
+
                     try {
                         const res = await fetch('/api/session/isess/write', {
                             method: 'POST',
@@ -2274,7 +2268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tab = document.querySelector(`.chat-tab[data-tab-id="${sessionId}"]`);
         const closeEl = tab ? tab.querySelector('.chat-tab-close') : null;
         const sessionWritable = tab?.dataset.sessionWritable !== 'false';
-        
+
         // If it's already closed/dimmed (⏹ icon), clicking again deletes the tab entirely
         if (closeEl && closeEl.textContent === '⏹') {
             removeTerminalTab(sessionId);
@@ -2362,17 +2356,17 @@ document.addEventListener('DOMContentLoaded', () => {
         while (liveLogViewer.children.length > MAX_LIVE_LOG_ENTRIES) {
             const firstChild = liveLogViewer.firstElementChild;
             if (!firstChild) break;
-            
+
             if (_activeToolEntry === firstChild) {
                 _activeToolEntry = null;
             }
-            
+
             // Auto drop timeline nodes for removed tool calls
             if (firstChild.id && firstChild.id.startsWith('tool-call-')) {
                 const tlRef = document.getElementById(`timeline-ref-${firstChild.id}`);
                 if (tlRef) tlRef.remove();
             }
-            
+
             liveLogViewer.removeChild(firstChild);
         }
         requestAnimationFrame(() => {
@@ -2418,7 +2412,7 @@ document.addEventListener('DOMContentLoaded', () => {
             phaseLabel = 'Terminating...';
             chipClass = 'is-waiting';
         }
-        
+
         const argsJson = JSON.stringify(_activeToolState.args || {});
         const note = String(_activeToolState.note || '').trim();
 
@@ -2469,7 +2463,7 @@ document.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(() => {
             liveLogViewer.scrollTop = liveLogViewer.scrollHeight;
         });
-        
+
         // Update timeline sidebar
         if (_activeToolState.callId) {
             const statusEl = document.getElementById(`timeline-status-${_activeToolState.callId}`);
@@ -2508,7 +2502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function beginActiveTool(event, entry) {
         _toolTimelineCounter++;
         const callId = `tool-call-${_toolTimelineCounter}`;
-        
+
         _activeToolState = {
             tool: String(event?.tool || 'Running tool'),
             args: event?.args || {},
@@ -2521,7 +2515,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (_activeToolEntry) {
             _activeToolEntry.id = callId;
         }
-        
+
         // Append to timeline sidebar
         const timelineContainer = document.getElementById('timeline-container');
         if (timelineContainer && event?.tool) {
@@ -2536,7 +2530,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     previewStr = joinedArgs.length > 28 ? ` ${joinedArgs.slice(0, 25)}...` : ` ${joinedArgs}`;
                 }
             }
-            
+
             const tlItem = document.createElement('div');
             tlItem.className = 'timeline-item';
             tlItem.id = `timeline-ref-${callId}`;
@@ -2730,7 +2724,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             closeToolTimeoutModal();
-            
+
             // Immediately reflect the user's decision in the live log UI so they know their click registered
             if (_activeToolState && _activeToolEntry) {
                 if (action === 'kill') {
@@ -2769,7 +2763,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             if (data.success) {
                 showAlert(data.message, 'success');
-                loadSessions(); 
+                loadSessions();
                 if (runId === _currentRunId) {
                     handleServiceStopped();
                 }
@@ -2791,7 +2785,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusData.status === 'idle') return;
             // Otherwise, we might be out of sync, proceed with stop signal
         }
-        
+
         startBtn.disabled = true;
         startBtn.innerHTML = ICON_SVG.SPINNER + '<span>Stopping service…</span>';
         updateStatus('running', 'Stopping service…');
@@ -2919,7 +2913,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ...(data.metadata || {}),
                 };
                 persistLiveLog();
-                
+
                 // Switch button to Stop state
                 startBtn.className = 'btn btn-danger';
                 startBtn.innerHTML = ICON_SVG.STOP + '<span>Stop Service</span>';
@@ -2928,7 +2922,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.tools && data.tools.length) {
                     setLiveToolsBadge(data.tools);
                 }
-                
+
                 if (nwEnableToggle && nwEnableToggle.checked) {
                     fetch('/api/network_watcher/start', {
                         method: 'POST',
@@ -2942,16 +2936,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         })
                     }).catch(e => console.error('Failed to start network watcher', e));
                 }
-                
+
                 setLivePolicyBadge(data.network_policy || networkPolicy);
                 refreshLoggingChannelStatus();
-                
+
                 updateStatus('running', 'Service Running - Chat Active');
-                
+
                 // Switch to Chat tab
                 navChatBtn.disabled = false;
                 switchTab('chat-pane');
-                
+
                 // Enable Chat Console inputs
                 updateChatControlAvailability();
                 chatPromptInput.disabled = false;
@@ -3045,7 +3039,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const inputs = configPanel.querySelectorAll('input, select, textarea, button');
         inputs.forEach(el => {
             if (el.id === 'start-service-btn' || el.id === 'stop-service-btn' || el.id === 'fetch-models-btn') return;
-            
+
             if (enabled) {
                 el.removeAttribute('data-service-disabled');
                 el.disabled = el.hasAttribute('data-originally-disabled');
@@ -3233,11 +3227,11 @@ document.addEventListener('DOMContentLoaded', () => {
             promptHistoryIndex = promptHistory.length;
             promptCurrentDraft = "";
         }
-        
+
         chatPromptInput.value = '';
         resizeChatPromptInput();
         chatPromptInput.disabled = true;
-        
+
         // Morph the send button into a stop button
         sendPromptBtn.classList.remove('btn-primary');
         sendPromptBtn.classList.add('btn-danger');
@@ -3286,7 +3280,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (_serviceRunning && processQueuedChatPrompt()) {
             return;
         }
-        
+
         // Restore the send button
         sendPromptBtn.classList.remove('btn-danger', 'btn-secondary');
         sendPromptBtn.classList.add('btn-primary');
@@ -3303,12 +3297,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function cancelChat() {
         if (!_chatBusy || !_serviceRunning) return;
-        
+
         // Disable the stop button and turn into spinner so they can't spam it
         sendPromptBtn.innerHTML = ICON_SVG.SPINNER;
 
         appendLog('<span class="log-label">⏹️</span> Cancelling prompt...', 'log-status');
-        
+
         try {
             await fetch('/api/session/cancel_prompt', { method: 'POST' });
         } catch (error) {
@@ -3344,7 +3338,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 : _activeToolState.note;
             renderActiveToolEntry();
         }
-        
+
         try {
             const resp = await fetch('/api/session/stop_tool', { method: 'POST' });
             const data = await resp.json();
@@ -3502,7 +3496,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({ text, span })
                 });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     appendLog(`<span class="log-label">📝 Annotation saved</span> <em>Scope: ${span}</em><br/>${escapeHtml(text)}`, 'log-prompt');
                     closeAndResetModal();
@@ -3540,32 +3534,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (stoppedRunId) {
             persistLiveLog(stoppedRunId);
         }
-        
+
         resetStartBtn();
         setConfigEnabled(true);
         setLiveToolsBadge([]);
         setLivePolicyBadge(null);
         hideLoggingChannelBadges();
-        
+
         // Clear isess tabs
         const isessTabs = chatTabBar.querySelectorAll('.chat-tab:not([data-tab-id="main"])');
         isessTabs.forEach(t => t.remove());
         const isessPanels = chatTabsContent.querySelectorAll('.chat-tab-panel:not(#chat-tab-main)');
         isessPanels.forEach(p => p.remove());
         switchChatTab('main');
-        
+
         // Disable active chat inputs
         updateChatControlAvailability();
         chatPromptInput.disabled = true;
         chatPromptInput.placeholder = "Start the service in the Configuration tab to begin...";
-        
+
         sendPromptBtn.classList.remove('btn-danger', 'btn-secondary');
         sendPromptBtn.classList.add('btn-primary');
         sendPromptBtn.title = 'Send prompt';
         sendPromptBtn.setAttribute('aria-label', 'Send prompt');
         sendPromptBtn.innerHTML = ICON_SVG.SEND;
         sendPromptBtn.disabled = true;
-        
+
         annotateBtn.disabled = true;
         setChatSessionToggleButton('start');
         chatDownloadBtn.style.display = 'none';
@@ -3573,7 +3567,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // We DON'T force a tab switch to config here anymore to prevent jarring jumps.
         // The user can switch back when they are ready to reconfigure.
         // Just disable the Live Chat tab if we're not on it, or let them see logs.
-        navChatBtn.disabled = true; 
+        navChatBtn.disabled = true;
 
         loadSessions(); // Refresh history
 
@@ -3627,8 +3621,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 break;
             }
-            case 'agent_alert':
-                if (event.source === 'NetworkWatcher (SSM)' && typeof nwLiveLog !== 'undefined' && nwLiveLog) {
+            case 'agent_alert': {
+                const nwLiveLog = document.getElementById('nw-live-log');
+                if (event.source === 'NetworkWatcher (SSM)' && nwLiveLog) {
                     if (nwLiveLog.innerHTML.includes('Waiting for network watcher')) {
                         nwLiveLog.innerHTML = '';
                     }
@@ -3637,6 +3632,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 appendLog(`<span class="log-label" style="background-color: var(--status-error); color: white;">🚨 Alert</span> ${escapeHtml(event.source)}: ${escapeHtml(event.message)}`, 'log-status');
                 break;
+            }
             case 'context_usage': updateContextBar(event); break;
             case 'service_started': appendLog(`<span class="log-label">🟢 Service Started</span>`, 'log-done'); break;
             case 'service_stopped':
@@ -3722,7 +3718,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const otext = (event.data && event.data.output) || event.output || '';
                 if (osid && otext) {
                     appendIsessLog(osid, otext, 'log-tool-result');
-                    
+
                     // Enable input once real output arrives
                     const inputEl = document.getElementById(`input-${osid}`);
                     if (inputEl && inputEl.disabled) {
@@ -3824,7 +3820,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             </div>`;
         }).join('');
-        
+
         sessionsList.querySelectorAll('.session-card').forEach(card => card.addEventListener('click', (e) => {
             if (e.target.closest('.btn-stop-session')) return; // Ignore card click if stop button pressed
             if (card.dataset.run === _browseRunId && sessionDetail.style.display !== 'none') { closeSession(); return; }
@@ -4013,7 +4009,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tab === 'transcript') {
             try { const res = await fetch(`/api/sessions/${_browseRunId}/transcript`); const data = await res.json(); detailContent.innerHTML = `<pre>${escapeHtml(data.content || '(empty)')}</pre>`; } catch { detailContent.innerHTML = '<div class="empty-state">Could not load transcript.</div>'; }
         } else if (tab === 'tool_calls') {
-            try { 
+            try {
                 const res = await fetch(`/api/sessions/${_browseRunId}/tool_calls`); const data = await res.json(); const tcs = data.tool_calls || [];
                 if (!tcs.length) { detailContent.innerHTML = '<div class="empty-state">No tool calls recorded.</div>'; return; }
                 detailContent.innerHTML = tcs.map(tc => `<div class="tool-call-card"><div class="tool-call-header"><span class="tool-call-name"><i class="ph ph-wrench"></i> ${escapeHtml(tc.tool)}</span><span class="tool-call-meta">${tc.duration_ms}ms</span></div><div class="tool-call-result">${escapeHtml(tc.result || '(no output)')}</div></div>`).join('');
@@ -4052,9 +4048,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (e) {
                     console.error("Failed to load scaffolding assets", e);
                 }
-                
+
                 detailContent.innerHTML = `<div class="analysis-result" style="padding: 1rem;">${assetsHtml}${renderAnalysisResponseContent(_analysisCache[_browseRunId])}</div>`;
-                
+
                 // Add event listeners for the new buttons
                 detailContent.querySelectorAll('.btn-generate-asset').forEach(btn => {
                     btn.addEventListener('click', () => {
@@ -4115,11 +4111,11 @@ document.addEventListener('DOMContentLoaded', () => {
     chatDownloadBtn.addEventListener('click', async () => {
         await downloadSessionArchive(_currentRunId);
     });
-    
+
     sessionDownloadBtn.addEventListener('click', async () => {
         await downloadSessionArchive(_browseRunId);
     });
-    
+
     sessionAnalyzeBtn.addEventListener('click', async () => {
         if (!_browseRunId) return;
 
@@ -4148,7 +4144,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify(analysisConfig)
             });
             const data = await res.json();
-            
+
             if (data.success) {
                 showAlert('Background analysis job started.', 'success');
                 switchTab('analysis-pane');
@@ -4169,7 +4165,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/session/status');
             const data = await response.json();
-            
+
             if (data.status === 'running' || data.status === 'starting') {
                 console.log("Service is already active, restoring UI state...", data);
                 _serviceRunning = true;
@@ -4195,7 +4191,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!restoreLiveLog(_currentRunId)) {
                     _logInitialCleared = liveLogViewer.children.length > 0;
                 }
-                
+
                 // Enable Chat Console inputs
                 navChatBtn.disabled = false;
                 updateChatControlAvailability();
@@ -4208,7 +4204,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Re-open log stream
                 openSseStream();
-                
+
                 // Optional: switch to chat tab if running
                 switchTab('chat-pane');
             } else {
@@ -4227,11 +4223,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function escapeHtml(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    
+
     // Initialize
     loadSessions();
     checkServiceStatus();
-    
+
     // ---------------------------------------------------------------
     // Analysis Job Management
     // ---------------------------------------------------------------
@@ -4530,7 +4526,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const responsePreview = responsePreviewSource
                 ? escapeHtml(responsePreviewSource.replace(/\s+/g, ' ').slice(0, 280))
                 : '';
-            
+
             return `
                 <div class="job-card">
                     <div class="job-header">
@@ -4690,7 +4686,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch(`/api/analysis/jobs/${jobId}`);
             const job = await res.json();
-            
+
             if (job) {
                 const responseSource = String(
                     job.response
@@ -4863,16 +4859,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openAssetConfigModal(assetName, runId, meta = {}) {
         _activeAssetConfig = { assetName, runId, kind: meta.kind || 'mcp_tool' };
-        
+
         // Auto-fill from active global context
         const providerSelect = document.getElementById('provider-select');
         const ollamaUrlInput = document.getElementById('ollama-url');
         const apiKeyInput = document.getElementById('api-key');
-        
+
         const assetProvider = document.getElementById('asset-provider-select');
         const assetUrl = document.getElementById('asset-url-input');
         const assetApiKey = document.getElementById('asset-api-key');
-        
+
         assetProvider.value = providerSelect.value || 'ollama_direct';
         assetUrl.value = ollamaUrlInput.value || 'http://localhost:11434';
         assetApiKey.value = apiKeyInput.value || '';
@@ -4904,7 +4900,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const errorLabel = document.getElementById('asset-fetch-error');
         const btn = document.getElementById('asset-fetch-models-btn');
         const modelSelect = document.getElementById('asset-model-select');
-        
+
         await fetchModelsIntoSelect({
             url: url,
             provider: provider,
@@ -5137,22 +5133,22 @@ document.addEventListener('DOMContentLoaded', () => {
     function openAssetTerminal(termId, assetName) {
         _activeAssetTerminalId = termId;
         document.getElementById('asset-terminal-title').innerHTML = `<i class="ph ph-terminal"></i> Claude Code: ${escapeHtml(assetName)}`;
-        
+
         const viewer = document.getElementById('asset-terminal-viewer');
         viewer.innerHTML = '<div class="log-entry log-status">Connecting to Claude Code...</div>';
-        
+
         const input = document.getElementById('asset-terminal-input');
         input.value = '';
         input.disabled = true;
-        
+
         assetTerminalModal.style.display = 'flex';
-        
+
         if (_assetTerminalEventSource) {
             _assetTerminalEventSource.close();
         }
-        
+
         _assetTerminalEventSource = new EventSource(`/api/terminal/${termId}/stream`);
-        
+
         _assetTerminalEventSource.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -5163,7 +5159,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     el.innerHTML = `<pre class="log-pre" style="margin:0; padding:0; background:none; border:none; white-space: pre-wrap;">${escapeHtml(data.data)}</pre>`;
                     viewer.appendChild(el);
                     viewer.scrollTop = viewer.scrollHeight;
-                    
+
                     if (input.disabled) {
                         input.disabled = false;
                         input.focus();
@@ -5181,7 +5177,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error("Error parsing terminal SSE", err);
             }
         };
-        
+
         _assetTerminalEventSource.onerror = (err) => {
             console.error("Terminal SSE Error", err);
             _assetTerminalEventSource.close();
@@ -5194,14 +5190,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const inputEl = e.target;
             const text = inputEl.value;
             inputEl.value = '';
-            
+
             const viewer = document.getElementById('asset-terminal-viewer');
             const el = document.createElement('div');
             el.className = 'log-entry log-user-input';
             el.innerHTML = `<span class="isess-prompt-indicator">></span> ${escapeHtml(text)}`;
             viewer.appendChild(el);
             viewer.scrollTop = viewer.scrollHeight;
-            
+
             if (_activeAssetTerminalId) {
                 try {
                     await fetch(`/api/terminal/${_activeAssetTerminalId}/input`, {
@@ -5244,86 +5240,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    // Network Watcher UI logic
-    if (nwStartBtn) {
-        nwStartBtn.addEventListener('click', async () => {
-            nwStartBtn.disabled = true;
-            try {
-                const response = await fetch('/api/network_watcher/start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        run_id: _currentRunId || 'standalone-watch',
-                        interface: nwInterfaceInput.value.trim() || 'eth0',
-                        api_url: nwApiUrlInput.value.trim() || 'http://localhost:8000/v1/chat/completions',
-                        model: nwModelInput.value.trim() || 'mamba-130m',
-                        api_key: nwApiKeyInput.value.trim()
-                    })
-                });
-                const data = await response.json();
-                if (data.success) {
-                    nwStartBtn.classList.add('hidden');
-                    nwStopBtn.classList.remove('hidden');
-                    if (nwLiveLog) {
-                        nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
-                    }
-                    startNwPolling();
-                } else {
-                    alert('Failed to start Network Watcher: ' + data.error);
-                }
-            } catch (err) {
-                console.error(err);
-                alert('Error starting Network Watcher.');
-            }
-            nwStartBtn.disabled = false;
-        });
-    }
 
-    if (nwStopBtn) {
-        nwStopBtn.addEventListener('click', async () => {
-            nwStopBtn.disabled = true;
-            try {
-                await fetch('/api/network_watcher/stop', { method: 'POST' });
-                nwStopBtn.classList.add('hidden');
-                nwStartBtn.classList.remove('hidden');
-                stopNwPolling();
-                if (nwLiveLog) {
-                    nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
-                }
-            } catch (err) {
-                console.error(err);
-            }
-            nwStopBtn.disabled = false;
-        });
-    }
-
-    function startNwPolling() {
-        if (nwStatusInterval) return;
-        nwStatusInterval = setInterval(async () => {
-            try {
-                const res = await fetch('/api/network_watcher/status');
-                const data = await res.json();
-                if (data.running && data.metrics) {
-                    if (nwMetricCpu) nwMetricCpu.textContent = `${data.metrics.cpu_percent.toFixed(1)}%`;
-                    if (nwMetricMem) nwMetricMem.textContent = `${data.metrics.mem_used_mb} / ${data.metrics.mem_used_mb + data.metrics.mem_free_mb} MB`;
-                    if (nwMetricPackets) nwMetricPackets.textContent = data.metrics.packets_captured;
-                    if (nwMetricInference) nwMetricInference.textContent = `${data.metrics.avg_inference_sec} s`;
-                }
-            } catch (e) {
-                console.error('NW Polling error', e);
-            }
-        }, 3000);
-    }
-
-    function stopNwPolling() {
-        if (nwStatusInterval) {
-            clearInterval(nwStatusInterval);
-            nwStatusInterval = null;
-        }
-        if (nwMetricCpu) nwMetricCpu.textContent = '--%';
-        if (nwMetricMem) nwMetricMem.textContent = '-- / -- MB';
-        if (nwMetricPackets) nwMetricPackets.textContent = '0';
-        if (nwMetricInference) nwMetricInference.textContent = '-- s';
-    }
 
 });

@@ -68,6 +68,12 @@ except Exception as _watcher_import_err:
     print(f"[app] ToolWatcher unavailable: {_watcher_import_err}", flush=True)
     _tool_watcher = None
 
+# Path to runs/ directory (co-located with app.py)
+RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
+DURABLE_EVENT_DB = os.environ.get("CAF_EVENT_DB", os.path.join(RUNS_DIR, "caf_events.sqlite3"))
+_event_store = DurableEventStore(DURABLE_EVENT_DB)
+_event_store.recover_interrupted_work()
+
 # Network Watcher — background agent that sniffs packets for SSM analysis
 try:
     from network_watcher import NetworkWatcher
@@ -75,12 +81,6 @@ try:
 except Exception as _nw_import_err:
     print(f"[app] NetworkWatcher unavailable: {_nw_import_err}", flush=True)
     _network_watcher = None
-
-# Path to runs/ directory (co-located with app.py)
-RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
-DURABLE_EVENT_DB = os.environ.get("CAF_EVENT_DB", os.path.join(RUNS_DIR, "caf_events.sqlite3"))
-_event_store = DurableEventStore(DURABLE_EVENT_DB)
-_event_store.recover_interrupted_work()
 
 # Path to plugins/ directory — AI-generated tools and playbooks, kept
 # separate from the hand-built kali_tools.json catalog
@@ -464,7 +464,7 @@ def _extract_provider_models(provider: str, payload: dict) -> list[dict]:
     for model in payload.get('models', []):
         if not isinstance(model, dict) or not model.get('name'):
             continue
-            
+
         m_name = str(model.get('name'))
         m_family = model.get('details', {}).get('family', '').lower()
 
@@ -587,7 +587,7 @@ def _event_callback(event: dict):
     """Persist an event before offering it to legacy live subscribers."""
     event = dict(event or {})
     event["timestamp"] = datetime.now().isoformat()
-    
+
     # Track isess sessions for background polling
     if event.get("type") == "isess_created":
         # _emit() spreads data into top-level, so session_id is at event level
@@ -595,7 +595,7 @@ def _event_callback(event: dict):
         if session_id:
             with _session_lock:
                 _session_state["isess_sessions"].add(session_id)
-    
+
     with _session_lock:
         run_id = _session_state.get("run_id")
         prompt_id = _session_state.get("active_prompt_id")
@@ -980,7 +980,7 @@ def _load_all_analysis_job_records() -> dict:
     records = {}
     if not os.path.isdir(RUNS_DIR):
         return records
-    
+
     for run_id in os.listdir(RUNS_DIR):
         jobs_dir = _analysis_jobs_dir(run_id)
         if not os.path.isdir(jobs_dir):
@@ -1528,6 +1528,9 @@ def _log_request_end(response):
         response.status_code,
         response.content_type,
     )
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 @app.route('/')
@@ -1838,7 +1841,7 @@ def session_start():
         if not start_result["success"]:
             loop.close()
             return
-        
+
         # Start background polling
         loop.create_task(_poll_isess_output())
 
@@ -1891,15 +1894,15 @@ def session_start():
             'ssl_verify': ssl_verify,
         })
     else:
-        # TIMEOUT or ERROR: 
+        # TIMEOUT or ERROR:
         error_msg = start_result["error"] or "Timed out starting session."
-        
+
         # Cleanup state if we timed out
         if not success:
             with _session_lock:
                 _session_state["status"] = "idle"
                 _session_state["session"] = None
-                # We don't forcefully stop the loop here to avoid RuntimeError 
+                # We don't forcefully stop the loop here to avoid RuntimeError
                 # inside the background thread. The thread should exit on its own.
 
         return jsonify({
@@ -2081,7 +2084,7 @@ def get_session_scaffolding(run_id):
     """List generated scaffolding assets for a specific session."""
     scaffolding_dir = os.path.join(RUNS_DIR, run_id, "scaffolding")
     assets = []
-    
+
     if os.path.isdir(scaffolding_dir):
         for entry in os.listdir(scaffolding_dir):
             asset_path = os.path.join(scaffolding_dir, entry)
@@ -2089,12 +2092,12 @@ def get_session_scaffolding(run_id):
             if os.path.isdir(asset_path) and os.path.isfile(prompt_path):
                 with open(prompt_path, 'r') as f:
                     prompt_content = f.read()
-                
+
                 assets.append({
                     "name": entry,
                     "prompt_content": prompt_content
                 })
-    
+
     return jsonify({"success": True, "assets": assets})
 
 @app.route('/api/plugins', methods=['GET'])
@@ -2343,10 +2346,10 @@ def terminal_stream(term_id):
         if not term:
             yield "data: {\"type\": \"close\"}\n\n"
             return
-            
+
         flags = fcntl.fcntl(term["master_fd"], fcntl.F_GETFL)
         fcntl.fcntl(term["master_fd"], fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        
+
         try:
             while not term["closed"]:
                 try:
@@ -2359,12 +2362,12 @@ def terminal_stream(term_id):
                     term["closed"] = True
                     yield "data: {\"type\": \"close\"}\n\n"
                     break
-                    
+
                 if term["proc"].poll() is not None:
                     term["closed"] = True
                     yield "data: {\"type\": \"close\"}\n\n"
                     break
-                    
+
                 time.sleep(0.05)
         finally:
             if term.get("proxy_proc"):
@@ -2372,7 +2375,7 @@ def terminal_stream(term_id):
                     term["proxy_proc"].terminate()
                 except Exception:
                     pass
-            
+
     return Response(generate(), mimetype="text/event-stream")
 
 @app.route('/api/terminal/<term_id>/input', methods=['POST'])
@@ -2381,7 +2384,7 @@ def terminal_input(term_id):
     term = _local_terminals.get(term_id)
     if not term or term["closed"]:
         return jsonify({"success": False, "error": "Terminal not active."}), 400
-        
+
     data = request.json.get("input", "")
     try:
         os.write(term["master_fd"], data.encode('utf-8'))
@@ -2414,12 +2417,12 @@ def session_cancel_prompt():
             except Exception as exc:
                 app.logger.warning('Failed to write tool cancel request for run_id=%s: %s', run_id, exc)
         loop.call_soon_threadsafe(cancel_event.set)
-        
+
         # Actively cancel the asyncio task if it is waiting on a blocking thread
         future = _session_state.get("chat_future")
         if future:
             future.cancel()
-            
+
         return jsonify({'success': True, 'message': 'Cancel signal sent.'})
     else:
         return jsonify({'success': False, 'error': 'No prompt currently running to cancel.'}), 400
@@ -2546,19 +2549,19 @@ def session_tool_timeout_action():
 def session_annotate(run_id):
     """Add a human-in-the-loop annotation to the run log."""
     _validate_run_id(run_id)
-    
+
     data = request.json or {}
     text = data.get('text', '').strip()
     span = data.get('span', 'Entire Session')
-    
+
     if not text:
         return jsonify({'success': False, 'error': 'Annotation text is required.'}), 400
-        
-    # We must ensure we log to the correct run. 
+
+    # We must ensure we log to the correct run.
     # If it's the active run, we use the active logger to emit events and stay in sync.
     with _session_lock:
-        is_active = (_session_state["status"] == "running" and 
-                     _session_state.get("run_id") == run_id and 
+        is_active = (_session_state["status"] == "running" and
+                     _session_state.get("run_id") == run_id and
                      _session_state.get("logger"))
         active_logger = _session_state.get("logger") if is_active else None
 
@@ -2577,7 +2580,7 @@ def session_annotate(run_id):
             # Create a temporary logger (don't overwrite end_time/status)
             temp_logger = SessionLogger(run_id, metadata)
             temp_logger.log_annotation(text, span)
-            
+
         return jsonify({"success": True})
     except Exception:
         app.logger.exception("Annotation write failed")
@@ -2607,7 +2610,7 @@ def delete_analyst_notes(run_id):
     path = _analyst_notes_path(run_id)
     if os.path.isfile(path):
         os.remove(path)
-    return jsonify({"success": True})  
+    return jsonify({"success": True})
 
 @app.route('/api/session/stop', methods=['POST'])
 def session_stop():
@@ -2950,15 +2953,35 @@ def network_watcher_start():
     if not _network_watcher:
         return jsonify({'success': False, 'error': 'NetworkWatcher not available.'}), 503
     data = request.get_json() or {}
-    run_id = data.get('run_id')
-    interface = data.get('interface', 'eth0')
-    api_url = data.get('api_url', 'http://localhost:8000/v1/chat/completions')
+    run_id = data.get('run_id') or _session_state.get('run_id') or f"network-watch-{uuid.uuid4().hex[:8]}"
+    interface = data.get('interface') or data.get('interfaces') or 'eth0'
+    if isinstance(interface, list):
+        interface = ','.join(interface) if interface else 'eth0'
+    api_url = data.get('api_url') or data.get('url') or 'http://localhost:8000/v1/chat/completions'
     model = data.get('model', 'mamba-130m')
     api_key = data.get('api_key', '')
-    if not run_id:
-        return jsonify({'success': False, 'error': 'run_id required'}), 400
+    ssl_verify = data.get('ssl_verify') if data.get('ssl_verify') is not None else True
+    timeout = int(data.get('timeout') or data.get('request_timeout') or 60)
+    system_prompt = data.get('system_prompt') or ''
+    analysis_interval_seconds = data.get('analysis_interval_seconds', 5)
+    max_packet_payload_bytes = data.get('max_packet_payload_bytes', 384)
+    max_packets_per_analysis = data.get('max_packets_per_analysis', 12)
+    packet_fields = data.get('packet_fields')
     try:
-        _network_watcher.start(run_id, interface, api_url, model, api_key)
+        _network_watcher.start(
+            run_id,
+            interface,
+            api_url,
+            model,
+            api_key,
+            ssl_verify,
+            timeout,
+            system_prompt,
+            analysis_interval_seconds,
+            max_packet_payload_bytes,
+            max_packets_per_analysis,
+            packet_fields,
+        )
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2975,6 +2998,328 @@ def network_watcher_status():
     if not _network_watcher:
         return jsonify({'available': False, 'running': False})
     return jsonify(_network_watcher.status())
+
+@app.route('/api/network_watcher/interactions', methods=['GET', 'POST'])
+def network_watcher_interactions():
+    """Return or clear the transient SLM/LLM diagnostic history."""
+    if not _network_watcher:
+        return jsonify({'available': False, 'interactions': [], 'revision': 0}), 503
+    if request.method == 'POST':
+        _network_watcher.clear_interactions()
+    revision, interactions = _network_watcher.get_interactions()
+    return jsonify({
+        'available': True,
+        'interactions': interactions,
+        'revision': revision,
+    })
+
+@app.route('/api/network_watcher/logs', methods=['GET'])
+def network_watcher_logs():
+    if not _network_watcher:
+        return jsonify({'success': False, 'logs': [], 'metrics': {}})
+    st = _network_watcher.status()
+    return jsonify({
+        'success': True,
+        'running': st.get('running', False),
+        'metrics': st.get('metrics', {}),
+        'interaction_revision': st.get('interaction_revision'),
+        'logs': getattr(_network_watcher, 'logs', [])
+    })
+
+@app.route('/network_watcher/live_results')
+def network_watcher_live_results():
+    html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Watcher — Live SSM Stream</title>
+    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.0.3/src/bold/style.css">
+    <style>
+        :root {
+            --bg: #090b10;
+            --surface: #121620;
+            --surface-2: #1a202c;
+            --border: #2d3748;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.25);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 1rem; height: 100vh; display: flex; flex-direction: column; gap: 1rem; }
+        header { display: flex; align-items: center; justify-content: space-between; background: var(--surface); padding: 0.75rem 1.25rem; border-radius: 8px; border: 1px solid var(--border); }
+        .status-badge { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+        .dot.active { background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        .metrics-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; }
+        .m-card { background: var(--surface); border: 1px solid var(--border); padding: 0.75rem; border-radius: 6px; text-align: center; }
+        .m-card label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .m-card val { display: block; font-size: 1.2rem; font-weight: 700; margin-top: 0.25rem; color: var(--text); }
+        .console-container { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+        .console-header { padding: 0.6rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: var(--text-muted); }
+        .console-body { flex: 1; padding: 1rem; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.85rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+        .log-line { display: flex; gap: 0.75rem; line-height: 1.4; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 0.3rem; }
+        .ts { color: var(--text-muted); flex-shrink: 0; }
+        .log-line.alert { color: #f87171; font-weight: 600; background: rgba(239, 68, 68, 0.1); padding: 0.4rem; border-radius: 4px; border-left: 3px solid var(--error); }
+        .log-line.info { color: #93c5fd; }
+        .log-line.error { color: #fca5a5; }
+        .btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+        .btn:hover { background: var(--border); }
+        .interaction-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .interaction-panel[open] { display: flex; flex-direction: column; }
+        .interaction-panel summary { cursor: pointer; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 0.9rem; font-weight: 600; }
+        .interaction-panel summary > div { display: flex; flex-direction: column; gap: 0.15rem; }
+        .interaction-panel summary small { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; }
+        .interaction-list { border-top: 1px solid var(--border); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: 320px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+        .interaction-empty { color: var(--text-muted); font-size: 0.84rem; }
+        .interaction-entry { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+        .interaction-entry-header { padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        .interaction-meta { padding: 0.55rem 0.7rem 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.74rem; color: var(--text-muted); overflow-wrap: anywhere; }
+        .interaction-label { padding: 0.55rem 0.7rem 0.25rem; font-size: 0.8rem; font-weight: 600; }
+        .interaction-entry pre { margin: 0 0.7rem 0.7rem; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.76rem/1.45 "SFMono-Regular", Consolas, monospace; color: var(--text-muted); }
+        .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; display: flex; flex-direction: column; height: 360px; }
+        .findings-header { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 600; }
+        .findings-header small { color: var(--text-muted); font-weight: 400; }
+        .findings-list { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 0.65rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+        .findings-empty { color: var(--text-muted); font-size: 0.84rem; }
+        .finding { padding: 0.7rem 0.8rem; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--surface-2); }
+        .finding.error { border-color: var(--error); color: #fca5a5; }
+        .finding-meta { margin-bottom: 0.35rem; font-size: 0.76rem; color: var(--text-muted); }
+        .finding-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.88rem; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="status-badge">
+            <div id="status-dot" class="dot"></div>
+            <span id="status-text">Connecting to Network Watcher...</span>
+        </div>
+        <div>
+            <button class="btn" onclick="clearConsole()">Clear Window</button>
+        </div>
+    </header>
+
+    <div id="bpf-alert" style="display:none; background:rgba(239, 68, 68, 0.15); border:1px solid var(--error); padding:0.75rem 1rem; border-radius:6px; font-size:0.85rem; color:#fca5a5;">
+        ⚠️ <strong>macOS BPF Permission Required:</strong> Packet capture requires access to <code>/dev/bpf*</code>.<br>
+        Run this command in terminal to grant permissions: <code style="user-select:all; background:rgba(0,0,0,0.4); padding:0.2rem 0.4rem; border-radius:3px;">sudo chmod 666 /dev/bpf*</code>
+    </div>
+
+    <div class="metrics-bar">
+        <div class="m-card"><label>Packets Sniffed</label><val id="m-captured">0</val></div>
+        <div class="m-card"><label>Packets Processed</label><val id="m-analyzed">0</val></div>
+        <div class="m-card"><label>Payload Extracted</label><val id="m-bytes">0 KB</val></div>
+        <div class="m-card"><label>Tokens Analyzed</label><val id="m-tokens">0</val></div>
+        <div class="m-card"><label>Inference Latency</label><val id="m-inference">-- s</val></div>
+    </div>
+
+    <section class="findings-panel">
+        <div class="findings-header">
+            <span>✨ SLM/LLM Findings <span id="findings-count"></span></span>
+            <small>Formatted model responses</small>
+        </div>
+        <div id="findings-empty" class="findings-empty">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
+        <div id="findings-list" class="findings-list"></div>
+    </section>
+
+    <details class="interaction-panel">
+        <summary>
+            <div>
+                <span>🧠 SLM/LLM Interaction Details <span id="interaction-count"></span></span>
+                <small>Prompts, raw responses, request metadata, and processing time</small>
+            </div>
+            <button class="btn" id="clear-interactions" type="button">Clear</button>
+        </summary>
+        <div id="interaction-list" class="interaction-list">
+            <div id="interaction-empty" class="interaction-empty">No SLM/LLM interactions recorded yet.</div>
+        </div>
+    </details>
+
+    <div class="console-container">
+        <div class="console-header">
+            <span>📡 Real-Time Packet Payload & Anomaly Log</span>
+            <span id="log-count">0 events</span>
+        </div>
+        <div id="console" class="console-body">
+            <div class="log-line info"><span class="ts">--:--:--</span><span>Waiting for packet payload events...</span></div>
+        </div>
+    </div>
+
+    <script>
+        let autoScroll = true;
+        let interactionRevision = null;
+        const consoleEl = document.getElementById('console');
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(2) + ' MB';
+        }
+
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return Number.isNaN(date.getTime()) ? (timestamp || '') : date.toLocaleString();
+        }
+
+        function formattedResponse(entry) {
+            if (entry.analysis) return entry.analysis;
+            if (entry.outcome === 'pending') return 'Awaiting the model response…';
+            try {
+                const parsed = JSON.parse(entry.response || '{}');
+                const content = parsed?.choices?.[0]?.message?.content || parsed?.message?.content;
+                if (content) return content;
+                const error = parsed?.error?.message || parsed?.message;
+                if (error) return `Model request failed: ${error}`;
+            } catch (e) {}
+            if (entry.error) return `Model request failed: ${entry.error}`;
+            return entry.response || 'No findings reported for this packet batch.';
+        }
+
+        function renderFindings(interactions) {
+            const list = document.getElementById('findings-list');
+            const empty = document.getElementById('findings-empty');
+            const count = document.getElementById('findings-count');
+            const findings = (Array.isArray(interactions) ? interactions : []).filter((entry) => entry.outcome !== 'pending');
+            count.textContent = findings.length ? `(${findings.length})` : '';
+            empty.style.display = findings.length ? 'none' : '';
+            list.replaceChildren();
+
+            findings.slice().reverse().forEach((entry) => {
+                const card = document.createElement('article');
+                const isError = entry.outcome !== 'success';
+                card.className = `finding${isError ? ' error' : ''}`;
+                const meta = document.createElement('div');
+                meta.className = 'finding-meta';
+                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+                const content = document.createElement('div');
+                content.className = 'finding-content';
+                content.textContent = formattedResponse(entry);
+                card.append(meta, content);
+                list.appendChild(card);
+            });
+        }
+
+        function renderInteractions(interactions) {
+            const list = document.getElementById('interaction-list');
+            const empty = document.getElementById('interaction-empty');
+            const count = document.getElementById('interaction-count');
+            const records = Array.isArray(interactions) ? interactions : [];
+            renderFindings(records);
+            count.textContent = records.length ? `(${records.length})` : '';
+            empty.style.display = records.length ? 'none' : '';
+            list.replaceChildren(empty);
+
+            records.slice().reverse().forEach((entry) => {
+                const item = document.createElement('article');
+                item.className = 'interaction-entry';
+                const outcome = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
+                const timing = entry.elapsed_ms == null ? 'In progress' : `${entry.elapsed_ms} ms`;
+                const { messages, ...requestMeta } = entry.request || {};
+                const fields = [
+                    ['interaction-entry-header', `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`],
+                    ['interaction-meta', `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`],
+                    ['interaction-label', 'Prompt'],
+                    ['', entry.prompt || '', 'pre'],
+                    ['interaction-label', entry.error ? 'Response / Error' : 'Raw response'],
+                    ['', entry.response || entry.error || '(empty response)', 'pre'],
+                ];
+                fields.forEach(([className, text, tag = 'div']) => {
+                    const element = document.createElement(tag);
+                    if (className) element.className = className;
+                    element.textContent = text;
+                    item.appendChild(element);
+                });
+                list.appendChild(item);
+            });
+        }
+
+        async function refreshInteractions(revision, force = false) {
+            if (!force && revision === interactionRevision) return;
+            const res = await fetch('/api/network_watcher/interactions');
+            const data = await res.json();
+            interactionRevision = data.revision;
+            renderInteractions(data.interactions);
+        }
+
+        async function poll() {
+            try {
+                const res = await fetch('/api/network_watcher/logs');
+                const data = await res.json();
+                await refreshInteractions(data.interaction_revision);
+
+                const dot = document.getElementById('status-dot');
+                const stText = document.getElementById('status-text');
+                const bpfAlert = document.getElementById('bpf-alert');
+
+                if (data.bpf_permission_ok === false || data.capture_error) {
+                    if (bpfAlert) bpfAlert.style.display = 'block';
+                } else if (bpfAlert) {
+                    bpfAlert.style.display = 'none';
+                }
+
+                if (data.running) {
+                    dot.className = 'dot active';
+                    stText.textContent = 'Network Watcher Active • Sniffing & Processing Packets';
+                } else {
+                    dot.className = 'dot';
+                    stText.textContent = 'Network Watcher Stopped';
+                }
+
+                if (data.metrics) {
+                    document.getElementById('m-captured').textContent = (data.metrics.packets_captured || 0).toLocaleString();
+                    document.getElementById('m-analyzed').textContent = (data.metrics.packets_analyzed || 0).toLocaleString();
+                    document.getElementById('m-bytes').textContent = formatBytes(data.metrics.bytes_extracted || 0);
+                    document.getElementById('m-tokens').textContent = (data.metrics.total_tokens || 0).toLocaleString();
+                    document.getElementById('m-inference').textContent = (data.metrics.avg_inference_sec || 0) + ' s';
+                }
+
+                if (data.logs && data.logs.length) {
+                    document.getElementById('log-count').textContent = data.logs.length + ' events';
+                    consoleEl.innerHTML = data.logs.map(l => `
+                        <div class="log-line ${l.kind}">
+                            <span class="ts">${l.timestamp}</span>
+                            <span>${l.message}</span>
+                        </div>
+                    `).join('');
+                    if (autoScroll) consoleEl.scrollTop = consoleEl.scrollHeight;
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function clearConsole() {
+            consoleEl.innerHTML = '';
+        }
+
+        document.getElementById('clear-interactions').addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const res = await fetch('/api/network_watcher/interactions', { method: 'POST' });
+            const data = await res.json();
+            interactionRevision = data.revision;
+            renderInteractions(data.interactions);
+        });
+
+        setInterval(poll, 2000);
+        poll();
+    </script>
+</body>
+</html>"""
+    return html_content
+
+@app.route('/api/network_watcher/interfaces', methods=['GET'])
+def network_watcher_interfaces():
+    try:
+        import psutil
+        interfaces = list(psutil.net_if_addrs().keys())
+        return jsonify({'success': True, 'interfaces': interfaces})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/session/stream')
@@ -3074,7 +3419,7 @@ def session_targeted_stop(run_id):
         try:
             with open(meta_path, 'r') as f:
                 meta = json.load(f)
-            
+
             # Case-insensitive status check
             current_status = str(meta.get("status", "")).lower()
             if current_status in ("running", "starting", "stopping"):
@@ -3082,7 +3427,7 @@ def session_targeted_stop(run_id):
                 if not meta.get("end_time"):
                     from datetime import datetime, timezone
                     meta["end_time"] = datetime.now(timezone.utc).isoformat()
-                
+
                 with open(meta_path, 'w') as f:
                     json.dump(meta, f, indent=2)
                 return jsonify({'success': True, 'message': f'Session {run_id} marked as completed.'})
@@ -3133,7 +3478,7 @@ def download_session_archive(run_id):
     session_dir = os.path.join(RUNS_DIR, run_id)
     if not os.path.isdir(session_dir):
         abort(404, description="Session not found.")
-    
+
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(session_dir):
@@ -3144,9 +3489,9 @@ def download_session_archive(run_id):
                 # Compute the relative path so the zip structure is clean (e.g., transcript.md, artifacts/...)
                 arcname = os.path.relpath(file_path, session_dir)
                 zf.write(file_path, arcname)
-                
+
     memory_file.seek(0)
-    
+
     return send_file(
         memory_file,
         as_attachment=True,
@@ -3164,27 +3509,27 @@ def _create_scaffolding_from_analysis(run_id, response_text):
         re.DOTALL | re.IGNORECASE
     )
     matches = pattern.findall(response_text)
-    
+
     if not matches:
         return
-        
+
     scaffolding_dir = os.path.join(RUNS_DIR, run_id, "scaffolding")
     os.makedirs(scaffolding_dir, exist_ok=True)
-    
+
     for type_val, name_val, problem_val, gain_val, scaffolding_details in matches:
         safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', name_val.strip())
         if not safe_name:
             continue
-            
+
         asset_dir = os.path.join(scaffolding_dir, safe_name)
         os.makedirs(asset_dir, exist_ok=True)
-        
+
         prompt_content = f"# Scaffold Prompt for {name_val.strip()}\n\n"
         prompt_content += f"**Type**: {type_val.strip()}\n"
         prompt_content += f"**Problem addressed**: {problem_val.strip()}\n"
         prompt_content += f"**Expected Gain**: {gain_val.strip()}\n\n"
         prompt_content += f"## AI Scaffolding Details\n\n{scaffolding_details.strip()}\n"
-        
+
         with open(os.path.join(asset_dir, "CLAUDE_PROMPT.md"), "w") as f:
             f.write(prompt_content)
 
@@ -3196,7 +3541,7 @@ def analyze_session(run_id):
     session_dir = os.path.join(RUNS_DIR, run_id)
     if not os.path.isdir(session_dir):
         abort(404, description="Session not found.")
-        
+
     data = request.json or {}
     span_req = data.get("span", "Entire Session")
     analysis_outputs = _normalize_analysis_outputs(data.get("analysis_outputs"))
@@ -3291,12 +3636,12 @@ def analyze_session(run_id):
             with _analysis_lock:
                 _analysis_jobs[job_id] = completed_record
             _write_analysis_job_record(run_id, job_id, completed_record)
-            
+
             try:
                 _create_scaffolding_from_analysis(run_id, details.get('response'))
             except Exception as scaffold_err:
                 app.logger.error(f"Failed to create AI scaffolding for job {job_id}: {scaffold_err}")
-                
+
             app.logger.info('Analysis job completed job_id=%s completion_path=%s', job_id, details.get('completion_path'))
         except AnalysisJobCancelled:
             _mark_analysis_job_cancelled(run_id, job_id)

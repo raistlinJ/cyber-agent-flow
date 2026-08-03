@@ -76,18 +76,13 @@
                     <span>Analysis Jobs</span>
                 </button>
                 <button class="nav-btn" data-target="recommendations-pane" id="nav-recommendations-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" 
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor"
                     viewBox="0 0 256 256">
-                    <path 
+                    <path
                         d="M176,232a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h80A8,8,0,0,1,176,232Zm40-128a87.55,87.55,0,0,1-33.64,69.21A16.24,16.24,0,0,0,176,186v6a16,16,0,0,1-16,16H96a16,16,0,0,1-16-16v-6a16,16,0,0,0-6.23-12.66A87.59,87.59,0,0,1,40,104.49C39.74,56.83,78.26,17.14,125.88,16A88,88,0,0,1,216,104Zm-16,0a72,72,0,0,0-73.74-72c-39,.92-70.47,33.39-70.26,72.39a71.65,71.65,0,0,0,27.64,56.3A32,32,0,0,1,96,186v6h64v-6a32.15,32.15,0,0,1,12.47-25.35A71.65,71.65,0,0,0,200,104Zm-16.11-9.34a57.6,57.6,0,0,0-46.56-46.55,8,8,0,0,0-2.66,15.78c16.57,2.79,30.63,16.85,33.44,33.45A8,8,0,0,0,176,104a9,9,0,0,0,1.35-.11A8,8,0,0,0,183.89,94.66Z">
                     </path>
                     </svg>
-                    </svg>
                     <span>Recommendations</span>
-                </button>
-                <button class="nav-btn" data-target="network-watch-pane" id="nav-network-watch-btn">
-                    <i class="ph ph-wifi-high"></i>
-                    <span>Network Watch</span>
                 </button>
                 <button class="nav-btn" data-target="watcher-pane" id="nav-watcher-btn">
                     <span style="font-size:1.1rem;line-height:1">🔭</span>
@@ -583,6 +578,7 @@
                                     </label>
                                 </div>
 
+
                                 <div class="input-group config-card-lite">
                                     <label><i class="ph ph-terminal-window"></i>&nbsp; System Calls</label>
                                     <label class="checkbox-container" for="log-syscalls-toggle">
@@ -673,72 +669,7 @@
                 </div> <!-- End Configuration Tab -->
 
                 <!-- Network Watch Tab -->
-                <div class="tab-pane" id="network-watch-pane">
-                    <div class="form-section" style="max-width: 900px; margin: 0 auto; padding-top: 2rem;">
-                        <h2 class="section-title">
-                            <i class="ph ph-wifi-high"></i>
-                            Network Watcher (SSM)
-                        </h2>
-                        <p class="input-hint" style="margin-bottom: 1rem;">Live network packet analysis using remote State Space Models (SSM).</p>
-                        
-                        <div class="input-group">
-                            <label for="nw-interface">Network Interface(s)</label>
-                            <input type="text" id="nw-interface" value="eth0" placeholder="e.g. eth0, en0, wlan0 (comma separated)">
-                            <span class="input-hint">The interface(s) to sniff continuously on.</span>
-                        </div>
-                        <div style="display: flex; gap: 1rem;">
-                            <div class="input-group" style="flex: 1;">
-                                <label for="nw-api-url">Remote API URL</label>
-                                <input type="url" id="nw-api-url" value="http://localhost:8000/v1/chat/completions" placeholder="http://remote-server:8000/v1/chat/completions">
-                            </div>
-                            <div class="input-group" style="flex: 1;">
-                                <label for="nw-model">Model Name</label>
-                                <input type="text" id="nw-model" value="mamba-130m" placeholder="e.g. mamba-130m">
-                            </div>
-                        </div>
-                        <div class="input-group">
-                            <label for="nw-api-key">API Key (Optional)</label>
-                            <input type="password" id="nw-api-key" placeholder="Bearer token if required">
-                        </div>
-                        
-                        <div class="action-footer" style="margin-top: 1rem;">
-                            <button type="button" id="nw-start-btn" class="btn btn-primary">
-                                <i class="ph ph-play"></i>
-                                <span>Start Watcher</span>
-                            </button>
-                            <button type="button" id="nw-stop-btn" class="btn btn-danger hidden">
-                                <i class="ph ph-stop"></i>
-                                <span>Stop Watcher</span>
-                            </button>
-                        </div>
 
-                        <div class="metrics-dashboard" style="margin-top: 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
-                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
-                                <h4>CPU Usage</h4>
-                                <div id="nw-metric-cpu" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">--%</div>
-                            </div>
-                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
-                                <h4>Memory Used</h4>
-                                <div id="nw-metric-mem" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">-- / -- MB</div>
-                            </div>
-                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
-                                <h4>Packets Captured</h4>
-                                <div id="nw-metric-packets" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">0</div>
-                            </div>
-                            <div class="metric-card config-card-lite" style="text-align: center; padding: 1rem;">
-                                <h4>Avg Inference</h4>
-                                <div id="nw-metric-inference" style="font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem; color: var(--text-primary);">-- s</div>
-                            </div>
-                        </div>
-                        
-                        <div class="log-container" style="margin-top: 2rem; background: var(--bg-surface-2); border-radius: 8px; border: 1px solid var(--border-subtle); padding: 1rem;">
-                            <h3 style="margin-bottom: 1rem;"><i class="ph ph-terminal-window"></i> Live SSM Findings</h3>
-                            <div id="nw-live-log" style="font-family: var(--font-mono); font-size: 0.85rem; height: 300px; overflow-y: auto; white-space: pre-wrap;">
-                                <div style="color: var(--text-muted);">Waiting for network watcher to start...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                 <!-- Past Sessions Tab -->
                 <div class="tab-pane" id="sessions-pane">
@@ -847,7 +778,7 @@
                                 style="padding: 0.3rem 0.6rem; font-size: 0.82rem;" title="Toggle Fullscreen">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 256 256" style="margin-right: 2px;">
                                     <path d="M152,48a8,8,0,0,1,8-8h56a8,8,0,0,1,8,8v56a8,8,0,0,1-16,0V56H160A8,8,0,0,1,152,48ZM48,104a8,8,0,0,0,16,0V56H104a8,8,0,0,0,0-16H48a8,8,0,0,0-8,8V96A8,8,0,0,0,48,104ZM208,152a8,8,0,0,0-8,8v40H160a8,8,0,0,0,0,16h56a8,8,0,0,0,8-8V160A8,8,0,0,0,208,152ZM104,208H64V160a8,8,0,0,0-16,0v56a8,8,0,0,0,8,8h56a8,8,0,0,0,0-16Z"></path>
-                                </svg> 
+                                </svg>
                                 <span>Fullscreen</span>
                             </button>
                             <button type="button" id="chat-download-btn" class="btn btn-secondary"
@@ -868,7 +799,7 @@
                                 <div class="context-usage-fill" id="context-usage-fill" style="width:0%"></div>
                             </div>
                         </div>
-                        
+
                         <!-- Chat Tab Bar -->
                         <div class="chat-tab-bar" id="chat-tab-bar">
                             <button type="button" class="chat-tab active" data-tab-id="main">
@@ -894,7 +825,7 @@
                                             <!-- timeline items will be populated here -->
                                         </div>
                                     </div>
-                                    
+
                                     <!-- Floating Edge Toggle -->
                                     <button type="button" id="btn-toggle-timeline" class="timeline-edge-toggle" title="Toggle Timelines">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 256 256">
@@ -1021,7 +952,7 @@
                 <div class="tab-pane" id="recommendations-pane">
                     <div class="sessions-header">
                         <h2><i class="ph ph-lightbulb"></i> Recommendations</h2>
-                        <button type="button" id="recommendations-refresh-btn" class="btn btn-secondary" 
+                        <button type="button" id="recommendations-refresh-btn" class="btn btn-secondary"
                             style="width:auto;padding:0.4rem 0.85rem;font-size:0.82rem;">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
                                 viewBox="0 0 256 256" style="margin-right: 4px;">
@@ -1038,18 +969,27 @@
                     </div>
                 </div>
 
-                
+
 
                 <!-- ============================================================
                      Watcher Tab
                      ============================================================ -->
                 <div class="tab-pane" id="watcher-pane">
 
-                    <div class="watcher-tab-layout">
+                    <div class="config-tabs" style="margin-bottom: 1rem; flex-shrink: 0; padding: 0 1rem; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 1rem;">
+                        <button type="button" class="config-subtab-btn active" id="watcher-setup-tab-btn" data-watcher-target="watcher-setup-panel">
+                            <i class="ph ph-gear"></i> Setup
+                        </button>
+                        <button type="button" class="config-subtab-btn" id="watcher-metrics-tab-btn" data-watcher-target="watcher-metrics-panel">
+                            <i class="ph ph-chart-line-up"></i> Live Metrics
+                        </button>
+                    </div>
 
-                        <!-- LLM Config sidebar -->
-                        <div class="watcher-config-col">
-                            <div class="watcher-config-card">
+
+
+                    <!-- Setup Panel -->
+                    <div class="watcher-subtab-panel active" id="watcher-setup-panel" style="padding:0 1rem;">
+                        <div class="watcher-config-card" style="max-width: 800px; margin: 0 auto;">
                                 <h3 class="section-title" style="margin-bottom:1rem; font-size:0.95rem">
                                     <span>🔭</span> Watcher LLM
                                 </h3>
@@ -1127,20 +1067,30 @@
                                     </div>
                                 </div>
 
-                                <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.5rem">
-                                    <button type="button" id="watcher-start-btn" class="btn btn-primary" style="font-size:0.9rem;padding:0.7rem 1rem" disabled>
-                                        <span id="watcher-start-btn-icon">▶</span>
-                                        <span id="watcher-start-btn-label">Start Watcher</span>
-                                    </button>
+                                <div class="input-group">
+                                    <label for="watcher-timeout-select">LLM Request Timeout (seconds)</label>
+                                    <div class="select-wrapper">
+                                        <i class="ph ph-timer icon-left"></i>
+                                        <select id="watcher-timeout-select">
+                                            <option value="15">15 seconds</option>
+                                            <option value="30">30 seconds</option>
+                                            <option value="60" selected>60 seconds</option>
+                                            <option value="120">120 seconds (2 mins)</option>
+                                            <option value="300">300 seconds (5 mins)</option>
+                                        </select>
+                                        <i class="ph ph-caret-down icon-right"></i>
+                                    </div>
                                 </div>
-
-                                <div id="watcher-status-badge" class="watcher-status-badge watcher-status-idle" style="margin-top:0.75rem">
-                                    <span class="watcher-status-dot"></span>
-                                    <span id="watcher-status-text">Idle — not watching</span>
+                                <div class="input-group">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
+                                        <label for="watcher-system-prompt" style="margin:0;">System Prompt</label>
+                                        <button type="button" id="watcher-reset-prompt-btn" class="btn btn-secondary" style="font-size:0.75rem; padding:0.2rem 0.5rem; display:inline-flex; align-items:center; gap:0.3rem;" title="Reset to default prompt for current mode">
+                                            <i class="ph ph-arrows-counter-clockwise"></i> Default
+                                        </button>
+                                    </div>
+                                    <textarea id="watcher-system-prompt" rows="6" style="width:100%; font-family:'SFMono-Regular',Consolas,Monaco,monospace; font-size:0.8rem; background:var(--bg-surface-2); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; padding:0.65rem; resize:vertical; line-height:1.4;" placeholder="System prompt instructions..."></textarea>
+                                    <span class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Customize LLM instructions for the active mode. Click 'Default' to restore.</span>
                                 </div>
-
-
-                                <!-- ── Mode Selector ─────────────────────── -->
                                 <div class="input-group">
                                     <label>Analysis Mode</label>
                                     <div class="watcher-mode-toggle" id="watcher-mode-toggle">
@@ -1149,6 +1099,9 @@
                                         </button>
                                         <button type="button" class="watcher-mode-btn" data-mode="timer" id="watcher-mode-timer">
                                             <span>⏱</span> Timer
+                                        </button>
+                                        <button type="button" class="watcher-mode-btn" data-mode="network" id="watcher-mode-network">
+                                            <i class="ph ph-wifi-high"></i> Network
                                         </button>
                                     </div>
                                 </div>
@@ -1205,7 +1158,130 @@
                                     </div>
                                 </div>
 
-                                <p class="watcher-config-hint">
+                                <!-- ── Network mode settings ─────────────── -->
+                                <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
+                                    <div class="input-group" style="margin:0">
+                                        <label>Network Interface(s)</label>
+                                        <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
+                                            <div style="color: var(--text-muted); font-size: 0.85rem;">Loading interfaces...</div>
+                                        </div>
+                                        <span class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
+                                    </div>
+
+                                    <div class="nw-config-grid">
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-analysis-interval">Send packet data every</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-clock icon-left"></i>
+                                                <select id="nw-analysis-interval">
+                                                    <option value="1">1 second</option>
+                                                    <option value="2">2 seconds</option>
+                                                    <option value="5" selected>5 seconds</option>
+                                                    <option value="10">10 seconds</option>
+                                                    <option value="30">30 seconds</option>
+                                                    <option value="60">1 minute</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">Queued packets are sent together at this cadence.</span>
+                                        </div>
+
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-max-payload-bytes">Max packet data sent</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-file-code icon-left"></i>
+                                                <select id="nw-max-payload-bytes">
+                                                    <option value="128">128 bytes / packet</option>
+                                                    <option value="384" selected>384 bytes / packet</option>
+                                                    <option value="1024">1 KB / packet</option>
+                                                    <option value="4096">4 KB / packet</option>
+                                                    <option value="8192">8 KB / packet</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">Applies to TCP/UDP payload samples and decoded application data; larger values use more context.</span>
+                                        </div>
+
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-max-packets-per-analysis">Max packets per send</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-stack icon-left"></i>
+                                                <select id="nw-max-packets-per-analysis">
+                                                    <option value="1">1 packet</option>
+                                                    <option value="6">6 packets</option>
+                                                    <option value="12" selected>12 packets</option>
+                                                    <option value="24">24 packets</option>
+                                                    <option value="50">50 packets</option>
+                                                    <option value="100">100 packets</option>
+                                                    <option value="300">300 packets</option>
+                                                    <option value="500">500 packets</option>
+                                                    <option value="0">Unlimited</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">A request may contain fewer packets when the queue is smaller or the context cap is reached.</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="nw-packet-fields">
+                                        <div>
+                                            <label class="nw-packet-fields-title">Packet data sent to the SSM/LLM</label>
+                                            <p class="input-hint">Choose the decoded fields to parse. All current fields are selected by default.</p>
+                                        </div>
+                                        <div class="nw-packet-fields-table-wrap">
+                                            <details class="nw-packet-layer">
+                                                <summary><span>Packet metadata</span><small>4 fields</small></summary>
+                                                <table class="nw-packet-fields-table"><tbody>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="metadata.timestamp" checked aria-label="Send capture timestamp"></td><th scope="row">Capture metadata</th><td>Timestamp</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="metadata.length" checked aria-label="Send packet length"></td><th scope="row">Capture metadata</th><td>Packet length</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="metadata.highest_protocol" checked aria-label="Send highest protocol"></td><th scope="row">Capture metadata</th><td>Highest protocol</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="metadata.protocol_stack" checked aria-label="Send protocol stack"></td><th scope="row">Capture metadata</th><td>Protocol stack</td></tr>
+                                                </tbody></table>
+                                            </details>
+
+                                            <details class="nw-packet-layer">
+                                                <summary><span>Layer 2 — Data link</span><small>2 fields</small></summary>
+                                                <table class="nw-packet-fields-table"><tbody>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="link.ethernet" checked aria-label="Send Ethernet headers"></td><th scope="row">Ethernet / cooked capture</th><td>Decoded link-layer headers</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="link.arp" checked aria-label="Send ARP headers"></td><th scope="row">ARP</th><td>Decoded ARP fields</td></tr>
+                                                </tbody></table>
+                                            </details>
+
+                                            <details class="nw-packet-layer">
+                                                <summary><span>Layer 3 — Network</span><small>4 fields</small></summary>
+                                                <table class="nw-packet-fields-table"><tbody>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="network.ipv4" checked aria-label="Send IPv4 headers"></td><th scope="row">IPv4</th><td>Decoded IP headers</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="network.ipv6" checked aria-label="Send IPv6 headers"></td><th scope="row">IPv6</th><td>Decoded IP headers</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="network.icmp" checked aria-label="Send ICMP headers"></td><th scope="row">ICMP</th><td>Decoded control-message fields</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="network.icmpv6" checked aria-label="Send ICMPv6 headers"></td><th scope="row">ICMPv6</th><td>Decoded control-message fields</td></tr>
+                                                </tbody></table>
+                                            </details>
+
+                                            <details class="nw-packet-layer">
+                                                <summary><span>Layer 4 — Transport</span><small>4 fields</small></summary>
+                                                <table class="nw-packet-fields-table"><tbody>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="transport.tcp_headers" checked aria-label="Send TCP headers"></td><th scope="row">TCP</th><td>Decoded transport headers</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="transport.tcp_payload" checked aria-label="Send TCP payload"></td><th scope="row">TCP</th><td>Bounded payload sample</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="transport.udp_headers" checked aria-label="Send UDP headers"></td><th scope="row">UDP</th><td>Decoded transport headers</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="transport.udp_payload" checked aria-label="Send UDP payload"></td><th scope="row">UDP</th><td>Bounded payload sample</td></tr>
+                                                </tbody></table>
+                                            </details>
+
+                                            <details class="nw-packet-layer">
+                                                <summary><span>Layer 7 — Application</span><small>5 fields</small></summary>
+                                                <table class="nw-packet-fields-table"><tbody>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="application.http" checked aria-label="Send HTTP data"></td><th scope="row">HTTP</th><td>Decoded headers and available body data</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="application.http2" checked aria-label="Send HTTP2 data"></td><th scope="row">HTTP/2</th><td>Decoded headers and available body data</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="application.dns" checked aria-label="Send DNS data"></td><th scope="row">DNS</th><td>Decoded query, response, and available data</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="application.tls" checked aria-label="Send TLS metadata"></td><th scope="row">TLS / SSL</th><td>Decoded TLS metadata; encrypted bytes remain encrypted</td></tr>
+                                                    <tr><td><input class="nw-packet-field-cb" type="checkbox" value="headers.other" checked aria-label="Send other protocol headers"></td><th scope="row">Other decoded protocols</th><td>Existing fields for protocols not listed above (for example frame or QUIC)</td></tr>
+                                                </tbody></table>
+                                            </details>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <p class="watcher-config-hint" id="watcher-config-hint-text">
                                     <strong>📡 Continuous</strong> — watches new log lines as they arrive and surfaces suggestions on the fly.<br>
                                     <strong>⏱ Timer</strong> — periodically reads the full (or windowed) session log for richer, summarizing analysis.
                                 </p>
@@ -1214,35 +1290,140 @@
                                 </p>
 
                             </div>
-                        </div>
 
-                        <!-- Suggestions area -->
-                        <div class="watcher-suggestions-col">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
-                                <h3 class="section-title" style="font-size:0.95rem;margin:0">
-                                    <span>💡</span> Suggestions
-                                    <span class="watcher-nav-badge" id="watcher-count-badge" style="margin-left:0.4rem;display:none">0</span>
-                                </h3>
-                                <button type="button" id="watcher-clear-all-btn" class="watcher-btn-ghost" title="Dismiss all">Clear all</button>
-                            </div>
-
-                            <!-- Analysis notes (timer/continuous summaries) -->
-                            <div id="watcher-notes-container" class="watcher-notes-container" style="display:none"></div>
-
-                            <div id="watcher-cards-container" class="watcher-cards-container"></div>
-
-                            <div id="watcher-empty-state" class="watcher-empty-state">
-                                <div style="font-size:2.5rem;opacity:0.25">🔭</div>
-                                <p>No suggestions yet.</p>
-                                <p style="font-size:0.8rem;opacity:0.6">Start the watcher while a session is active and send a few prompts — suggestions appear here automatically.</p>
-                            </div>
-
-                            <div id="watcher-no-session-notice" class="watcher-no-session" style="display:none">
-                                <span>⚠️</span> No active session — start a session in the Configuration tab first.
+                            <div class="watcher-setup-footer">
+                                <div class="watcher-setup-footer-content">
+                                    <button type="button" id="watcher-start-btn" class="btn btn-primary" style="font-size:1rem;padding:0.75rem 1rem" disabled>
+                                        <span id="watcher-start-btn-icon">▶</span>
+                                        <span id="watcher-start-btn-label">Start Watcher</span>
+                                    </button>
+                                    <div id="watcher-status-badge" class="watcher-status-badge watcher-status-idle">
+                                        <span class="watcher-status-dot"></span>
+                                        <span id="watcher-status-text">Idle — not watching</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                    </div>
+                    <!-- Metrics Panel -->
+                    <div class="watcher-subtab-panel" id="watcher-metrics-panel" style="padding:0 1rem;">
+                        <div style="max-width: 1000px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; flex: 1; min-height: 0;">
+                            <!-- View: Suggestions (Continuous/Timer) -->
+                            <div id="watcher-view-suggestions">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
+                                    <h3 class="section-title" style="font-size:0.95rem;margin:0">
+                                        <span>💡</span> Suggestions
+                                        <span class="watcher-nav-badge" id="watcher-count-badge" style="margin-left:0.4rem;display:none">0</span>
+                                    </h3>
+                                    <button type="button" id="watcher-clear-all-btn" class="watcher-btn-ghost" title="Dismiss all">Clear all</button>
+                                </div>
+
+
+                                <!-- Analysis notes (timer/continuous summaries) -->
+                                <div id="watcher-notes-container" class="watcher-notes-container" style="display:none"></div>
+
+                                <div id="watcher-cards-container" class="watcher-cards-container scrollable-panel"></div>
+
+                                <div id="watcher-empty-state" class="watcher-empty-state">
+                                    <div style="font-size:2.5rem;opacity:0.25">🔭</div>
+                                    <p>No suggestions yet.</p>
+                                    <p style="font-size:0.8rem;opacity:0.6">Start the watcher while a session is active and send a few prompts — suggestions appear here automatically.</p>
+                                </div>
+
+                                <div id="watcher-no-session-notice" class="watcher-no-session" style="display:none">
+                                    <span>⚠️</span> No active session — start a session in the Configuration tab first.
+                                </div>
+                            </div>
+
+                            <!-- View: Network (Metrics & Logs) -->
+                            <div id="watcher-view-network" style="display:none; flex-direction:column; gap:1.25rem; width:100%; flex: 1; overflow-y: auto;">
+                                <div id="nw-status-banner" class="config-card-lite" style="display:flex; align-items:center; justify-between; gap:1rem; padding:0.75rem 1.25rem; border-left: 4px solid var(--accent-primary);">
+                                    <div style="display:flex; align-items:center; gap:0.6rem;">
+                                        <div id="nw-pulse-dot" style="width:10px; height:10px; border-radius:50%; background:var(--text-muted);"></div>
+                                        <span id="nw-status-banner-text" style="font-weight:600; font-size:0.9rem;">Network Watcher Idle</span>
+                                    </div>
+                                    <div style="font-size:0.8rem; color:var(--text-secondary);" id="nw-status-interface-label">Interface: None</div>
+                                </div>
+
+                                <section id="nw-findings-panel" class="config-card-lite" style="padding:0.9rem 1rem;">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.7rem;">
+                                        <h3 class="section-title" style="font-size:0.95rem; margin:0;"><i class="ph ph-sparkle"></i> SLM/LLM Findings <span id="nw-findings-count" style="font-weight:400; color:var(--text-secondary);"></span></h3>
+                                        <span style="font-size:0.76rem; color:var(--text-secondary);">Formatted model responses</span>
+                                    </div>
+                                    <div class="nw-findings-body">
+                                        <div id="nw-findings-empty" style="color:var(--text-secondary); font-size:0.84rem;">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
+                                        <div id="nw-findings-list" class="nw-findings-list scrollable-panel"></div>
+                                    </div>
+                                </section>
+
+                                <details id="nw-interactions-panel" class="config-card-lite" style="padding:0; overflow:hidden;">
+                                    <summary style="display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0.8rem 1rem; cursor:pointer; user-select:none;">
+                                        <span style="display:flex; flex-direction:column; gap:0.15rem;">
+                                            <span style="font-weight:600; font-size:0.9rem;"><i class="ph ph-brain"></i> SLM/LLM Interaction Details <span id="nw-interactions-count" style="font-weight:400; color:var(--text-secondary);"></span></span>
+                                            <span style="font-size:0.76rem; color:var(--text-secondary);">Prompts, raw responses, request metadata, and processing time</span>
+                                        </span>
+                                        <button type="button" id="nw-clear-interactions-btn" class="watcher-btn-ghost" style="flex-shrink:0;" title="Clear SLM/LLM interaction history">Clear</button>
+                                    </summary>
+                                    <div class="nw-interactions-body scrollable-panel">
+                                        <div id="nw-interactions-empty" style="color:var(--text-secondary); font-size:0.84rem;">No SLM/LLM interactions recorded yet.</div>
+                                        <div id="nw-interactions-list" class="nw-interactions-list"></div>
+                                    </div>
+                                </details>
+
+                                <div id="nw-bpf-alert" style="display:none; background:rgba(239, 68, 68, 0.15); border:1px solid var(--error); padding:0.75rem 1rem; border-radius:6px; font-size:0.85rem; color:#fca5a5;">
+                                    ⚠️ <strong>macOS BPF Permission Warning:</strong> Packet capture requires access to <code>/dev/bpf*</code>.<br>
+                                    Run this command in your terminal to grant capture access: <code style="user-select:all; background:rgba(0,0,0,0.4); padding:0.2rem 0.4rem; border-radius:3px;">sudo chmod 666 /dev/bpf*</code>
+                                </div>
+
+                                <div>
+                                    <h3 class="section-title" style="font-size:0.95rem;margin:0 0 1rem 0">
+                                        <i class="ph ph-chart-line-up"></i> Live Packet & SSM Metrics
+                                    </h3>
+                                    <div class="metrics-dashboard" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.85rem;">
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">CPU Usage</h4>
+                                            <div id="nw-metric-cpu" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">--%</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">RAM Usage</h4>
+                                            <div id="nw-metric-mem" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">-- / -- MB</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Sniffed</h4>
+                                            <div id="nw-metric-packets" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Analyzed</h4>
+                                            <div id="nw-metric-analyzed" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Payload Extracted</h4>
+                                            <div id="nw-metric-bytes" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0 KB</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Tokens Analyzed</h4>
+                                            <div id="nw-metric-tokens" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Avg Inference</h4>
+                                            <div id="nw-metric-inference" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">-- s</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Alerts Emitted</h4>
+                                            <div id="nw-metric-alerts" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--error);">0</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="nw-ssm-trigger-container" style="margin-top: 1rem; text-align: center;">
+                                    <button type="button" id="nw-view-ssm-btn" class="btn btn-secondary" style="display: inline-flex; gap:0.5rem; align-items:center; padding:0.6rem 1.25rem;">
+                                        <i class="ph ph-arrow-square-out" style="font-size:1.1rem"></i> View Live SSM Stream (New Window)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div> <!-- End watcher-pane -->
 
                 </div>
             </div> <!-- End content-area -->
@@ -1512,8 +1693,19 @@
                 </div>
             </div>
 
-            <!-- Global Alerts Container 
-            <div id="alerts-container" class="alerts-container"></div>---------------------------------------------------------------------------------------TO BE REMOVED -->
+            <div id="nw-ssm-modal-overlay" class="modal-overlay" style="display: none;">
+                <div id="nw-ssm-modal" class="annotation-modal" style="width: 800px; max-width: 90vw; max-height: 85vh; display: flex; flex-direction: column;">
+                    <div class="modal-header" style="flex-shrink: 0;">
+                        <h3><i class="ph ph-terminal-window"></i> Live SSM Findings</h3>
+                        <button type="button" id="close-nw-ssm-btn" class="icon-btn"><i class="ph ph-x"></i></button>
+                    </div>
+                    <div class="modal-body" style="flex: 1; min-height: 300px; display: flex; flex-direction: column; overflow: hidden; padding: 1rem;">
+                        <div id="nw-live-log" style="flex:1; background: var(--bg-surface-2); border-radius: 8px; border: 1px solid var(--border-subtle); padding: 1rem; font-family: var(--font-mono); font-size: 0.85rem; overflow-y: auto; white-space: pre-wrap;">
+                            <div style="color: var(--text-muted);">Waiting for network watcher to start...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
         </div>
     </main>

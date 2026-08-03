@@ -405,9 +405,9 @@ class ToolWatcher:
         self.stop()
         self._stop_event.clear()
         mode = session_meta.get("watch_mode", "continuous")
-        
+
         target = self._run_continuous_stream if mode == "continuous" else self._run_timer
-        
+
         self._thread = threading.Thread(
             target=target,
             args=(run_id, session_meta, event_queue),
@@ -445,13 +445,13 @@ class ToolWatcher:
         provider = session_meta.get("llm_provider", "ollama_direct")
         api_key = session_meta.get("api_key") or None
         ssl_verify = session_meta.get("ssl_verify", True)
-        
+
         poll_interval = int(session_meta.get("poll_interval", _DEFAULT_POLL_INTERVAL))
         min_new_lines = int(session_meta.get("min_new_lines", _DEFAULT_MIN_NEW_LINES))
         max_context_chars = int(session_meta.get("max_context_chars", _MAX_DIGEST_CHARS))
 
         seen_slugs: set[str] = set()
-        
+
         # State for reading lines and rolling memory
         state = {'last_file_pos': 0, 'last_tool_count': 0, 'analyzing': False, 'last_note': ''}
 
@@ -459,28 +459,28 @@ class ToolWatcher:
         def _analyze_delta():
             if state['analyzing'] or self._stop_event.is_set() or not model: return
             state['analyzing'] = True
-            
+
             try:
                 if not os.path.isfile(transcript_path):
                     state['analyzing'] = False
                     return
-                    
+
                 with open(transcript_path, "rb") as f:
                     f.seek(state['last_file_pos'])
                     new_bytes = f.read()
                     new_pos = f.tell()
-                    
+
                 if not new_bytes:
                     state['analyzing'] = False
                     return
-                    
+
                 new_text = new_bytes.decode("utf-8", errors="replace")
                 new_lines = new_text.splitlines(keepends=True)
-                
+
                 if len(new_lines) < min_new_lines:
                     state['analyzing'] = False
                     return
-                    
+
                 state['last_file_pos'] = new_pos
 
                 tool_snippets, tool_total = _read_tool_call_snippets(tool_calls_dir, start_idx=state['last_tool_count'])
@@ -493,7 +493,7 @@ class ToolWatcher:
                 user_content = ""
                 if state['last_note']:
                     user_content += f"Previous analysis summary: {state['last_note']}\n\n"
-                
+
                 user_content += f"Recent transcript excerpt (new lines since last check):\n{digest}\n"
                 if tool_snippets:
                     user_content += "\nRecent tool calls:\n" + "\n".join(tool_snippets) + "\n"
@@ -514,11 +514,12 @@ class ToolWatcher:
                 full_text = ""
                 in_note = False
                 in_json = False
-                
+
+                sys_prompt_cont = (session_meta.get("system_prompt") or "").strip() or _SYSTEM_PROMPT_CONTINUOUS
                 # Stream process
-                for chunk in _stream_llm(ollama_url, model, provider, api_key, ssl_verify, _SYSTEM_PROMPT_CONTINUOUS, user_content):
+                for chunk in _stream_llm(ollama_url, model, provider, api_key, ssl_verify, sys_prompt_cont, user_content):
                     full_text += chunk
-                    
+
                     # State machine for tags to know when to stream to UI
                     if "<note>" in full_text and "</note>" not in full_text:
                         if not in_note:
@@ -528,13 +529,13 @@ class ToolWatcher:
                             to_send = full_text[idx:]
                         else:
                             to_send = chunk
-                            
+
                         # Avoid sending the closing tag if it arrives mid-chunk
                         if "</" in to_send: to_send = to_send.split("</")[0]
                         if to_send:
                             try: event_queue.put_nowait({"type": "watcher_note_token", "note_id": note_id, "token": to_send})
                             except queue.Full: pass
-                
+
                 # End of stream
                 try: event_queue.put_nowait({"type": "watcher_note_complete", "note_id": note_id})
                 except queue.Full: pass
@@ -562,7 +563,7 @@ class ToolWatcher:
                                 )
                     except json.JSONDecodeError:
                         pass
-                
+
             except Exception as exc:
                 print(f"[watcher/continuous] Stream error: {exc}", flush=True)
             finally:
@@ -573,25 +574,25 @@ class ToolWatcher:
         observer = None
         if self.watchdog_available:
             self.watching_mode = "continuous-live"
-            
+
             class Handler(FileSystemEventHandler):
                 def on_modified(self_handler, event):
                     if not event.is_directory and os.path.basename(event.src_path) == "transcript.md":
                         # Fire analyzer. It has an 'analyzing' lock so it won't concurrently stack.
                         threading.Thread(target=_analyze_delta, daemon=True).start()
-            
+
             observer = Observer()
             observer.schedule(Handler(), path=run_dir, recursive=False)
             observer.start()
-            
+
             # Still occasionally poll slowly to sweep anything missed
             while not self._stop_event.is_set():
                 self._stop_event.wait(timeout=15)
-                
+
             if observer:
                 observer.stop()
                 observer.join()
-                
+
         else:
             self.watching_mode = "continuous-poll"
             while not self._stop_event.is_set():
@@ -609,7 +610,7 @@ class ToolWatcher:
         provider = session_meta.get("llm_provider", "ollama_direct")
         api_key = session_meta.get("api_key") or None
         ssl_verify = session_meta.get("ssl_verify", True)
-        
+
         timer_interval = int(session_meta.get("timer_interval", _DEFAULT_TIMER_INTERVAL))
         timer_span = session_meta.get("timer_span", "all")
         max_context_chars = int(session_meta.get("max_context_chars", _MAX_TIMER_CHARS))
@@ -661,7 +662,8 @@ class ToolWatcher:
                 if tool_snippets:
                     user_content += "\nAll tool calls in window:\n" + "\n".join(tool_snippets) + "\n"
 
-                result = _call_llm(ollama_url, model, provider, api_key, ssl_verify, _SYSTEM_PROMPT_TIMER, user_content)
+                sys_prompt_timer = (session_meta.get("system_prompt") or "").strip() or _SYSTEM_PROMPT_TIMER
+                result = _call_llm(ollama_url, model, provider, api_key, ssl_verify, sys_prompt_timer, user_content)
                 if not result: continue
 
                 note = result.get("note", "")

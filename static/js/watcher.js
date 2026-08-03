@@ -25,12 +25,17 @@
   let suggestions = [];
   let analysisNotes = [];
   let _isRunning = false;
+  let _isNwRunning = false;
   let _sessionMeta = null;
   let _unseenCount = 0;
   let _statusPollInterval = null;
-  let _currentMode = 'continuous'; // 'continuous' | 'timer'
+  let _nwStatusPollInterval = null;
+  let _nwInteractionRevision = null;
+  let _currentMode = 'continuous'; // 'continuous' | 'timer' | 'network'
 
   // ─── Storage ─────────────────────────────────────────────────────────────
+  const SETTINGS_KEY = 'watcher_form_settings_v1';
+
   function _load() {
     try {
       const d = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '{}');
@@ -44,6 +49,171 @@
   function _clearStorage() {
     suggestions = []; analysisNotes = [];
     sessionStorage.removeItem(STORAGE_KEY);
+  }
+
+  const DEFAULT_PROMPTS = {
+    continuous: `You are a concise MCP tool designer watching a live penetration-testing agent session.
+Identify ONE small, focused MCP tool that would reduce repeated manual effort or repetitive tool calls visible in the recent log excerpt.
+
+Rules:
+- Suggest at most ONE tool. Keep it scoped to a single command or tight 2-3 step sequence.
+- Do NOT suggest tools that already exist in the available tool list.
+- If there is no strong evidence of friction, emit an empty JSON tools list.
+
+CRITICAL: You must output your response in TWO SECTIONS sequentially:
+1. A <note>...</note> section containing a 1-2 sentence observation about what the agent is doing right now.
+2. A <json>...</json> section containing valid JSON.
+
+Format exactly like this:
+<note>
+The agent is repeatedly running nmap on port 80.
+</note>
+<json>
+{
+  "tools": [
+    {
+      "name": "<snake_case_tool_name>",
+      "one_line": "<one sentence description>",
+      "rationale": "<2-3 sentences>",
+      "commands": "<shell command(s)>"
+    }
+  ]
+}
+</json>`,
+
+    timer: `You are an expert MCP tooling analyst reviewing a penetration-testing agent session log.
+Your job has two parts:
+
+1. ANALYSIS NOTE — Write a concise 2-4 sentence summary of what the agent has been doing in the log window, highlighting any patterns or inefficiencies.
+
+2. TOOL SUGGESTIONS — Identify up to 2 small MCP tools that would meaningfully reduce friction based on what you observed. Do NOT suggest existing tools.
+
+Respond ONLY with valid JSON (no markdown fences, no extra text):
+{
+  "note": "<2-4 sentence analysis>",
+  "tools": [
+    {
+      "name": "<snake_case_name>",
+      "one_line": "<one sentence>",
+      "rationale": "<2-3 sentences>",
+      "commands": "<shell command(s)>"
+    }
+  ]
+}`,
+
+    network: `You are an anomaly detection SSM watching a live packet stream.
+Review the structured packet records: protocol stack, decoded headers, and bounded payloads.
+Treat HTTPS payload bytes as encrypted unless the record explicitly contains decoded HTTP data.
+If you see plaintext credentials, API keys, sensitive server banners, or anything notable,
+state the finding in 2-3 concise sentences. Return only the final observation, with no internal reasoning.
+If nothing interesting is found, say that clearly.`
+  };
+
+  let _customPrompts = { ...DEFAULT_PROMPTS };
+
+  function _updatePromptField() {
+    const promptEl = $('watcher-system-prompt');
+    if (!promptEl) return;
+    promptEl.value = _customPrompts[_currentMode] || DEFAULT_PROMPTS[_currentMode] || '';
+  }
+
+  function _saveFormSettings() {
+    try {
+      const selectedIfaces = Array.from(document.querySelectorAll('.nw-iface-cb:checked')).map(cb => cb.value);
+      const packetFields = Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map(cb => cb.value);
+      const promptEl = $('watcher-system-prompt');
+      if (promptEl) {
+        _customPrompts[_currentMode] = promptEl.value;
+      }
+      const settings = {
+        provider: $('watcher-provider-select')?.value,
+        url: $('watcher-url-input')?.value,
+        apiKey: $('watcher-api-key-input')?.value,
+        sslVerify: $('watcher-ssl-toggle')?.checked,
+        model: $('watcher-model-select')?.value,
+        contextSize: $('watcher-context-size')?.value,
+        timeout: $('watcher-timeout-select')?.value,
+        mode: _currentMode,
+        pollInterval: $('watcher-poll-interval')?.value,
+        minLines: $('watcher-min-lines')?.value,
+        timerInterval: $('watcher-timer-interval')?.value,
+        timerSpan: $('watcher-timer-span')?.value,
+        selectedInterfaces: selectedIfaces,
+        analysisInterval: $('nw-analysis-interval')?.value,
+        maxPacketPayloadBytes: $('nw-max-payload-bytes')?.value,
+        maxPacketsPerAnalysis: $('nw-max-packets-per-analysis')?.value,
+        packetFields,
+        customPrompts: _customPrompts
+      };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch (e) {
+      console.warn('Failed to save watcher settings:', e);
+    }
+  }
+
+  function _loadFormSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return;
+      const settings = JSON.parse(raw);
+
+      if (settings.customPrompts) {
+        _customPrompts = { ...DEFAULT_PROMPTS, ...settings.customPrompts };
+      }
+
+      if (settings.provider && $('watcher-provider-select')) $('watcher-provider-select').value = settings.provider;
+      if (settings.url !== undefined && $('watcher-url-input')) $('watcher-url-input').value = settings.url;
+      if (settings.apiKey !== undefined && $('watcher-api-key-input')) $('watcher-api-key-input').value = settings.apiKey;
+      if (settings.sslVerify !== undefined && $('watcher-ssl-toggle')) $('watcher-ssl-toggle').checked = Boolean(settings.sslVerify);
+      if (settings.contextSize && $('watcher-context-size')) $('watcher-context-size').value = settings.contextSize;
+      if (settings.timeout && $('watcher-timeout-select')) $('watcher-timeout-select').value = settings.timeout;
+      if (settings.pollInterval && $('watcher-poll-interval')) {
+        $('watcher-poll-interval').value = settings.pollInterval;
+        if ($('watcher-poll-interval-val')) $('watcher-poll-interval-val').textContent = `${settings.pollInterval} s`;
+      }
+      if (settings.minLines && $('watcher-min-lines')) {
+        $('watcher-min-lines').value = settings.minLines;
+        if ($('watcher-min-lines-val')) $('watcher-min-lines-val').textContent = settings.minLines;
+      }
+      if (settings.timerInterval && $('watcher-timer-interval')) $('watcher-timer-interval').value = settings.timerInterval;
+      if (settings.timerSpan && $('watcher-timer-span')) $('watcher-timer-span').value = settings.timerSpan;
+      if (settings.analysisInterval && $('nw-analysis-interval')) $('nw-analysis-interval').value = settings.analysisInterval;
+      if (settings.maxPacketPayloadBytes && $('nw-max-payload-bytes')) $('nw-max-payload-bytes').value = settings.maxPacketPayloadBytes;
+      if (settings.maxPacketsPerAnalysis && $('nw-max-packets-per-analysis')) $('nw-max-packets-per-analysis').value = settings.maxPacketsPerAnalysis;
+      if (Array.isArray(settings.packetFields)) {
+        document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
+          checkbox.checked = settings.packetFields.includes(checkbox.value);
+        });
+      }
+
+      if (settings.mode) {
+        _currentMode = settings.mode;
+        document.querySelectorAll('.watcher-mode-btn').forEach((b) => {
+          b.classList.toggle('active', b.dataset.mode === _currentMode);
+        });
+        if ($('watcher-continuous-settings')) $('watcher-continuous-settings').style.display = _currentMode === 'continuous' ? '' : 'none';
+        if ($('watcher-timer-settings')) $('watcher-timer-settings').style.display = _currentMode === 'timer' ? '' : 'none';
+        const nwSettings = $('watcher-network-settings');
+        if (nwSettings) {
+          nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
+          if (_currentMode === 'network') _fetchNetworkInterfaces();
+        }
+        _updateMetricsView();
+      }
+      _updatePromptField();
+
+      if (settings.url) {
+        _fetchModels().then(() => {
+          if (settings.model && $('watcher-model-select')) {
+            $('watcher-model-select').value = settings.model;
+            const btn = $('watcher-start-btn');
+            if (btn) btn.disabled = false;
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Failed to load watcher settings:', e);
+    }
   }
 
   // ─── DOM ─────────────────────────────────────────────────────────────────
@@ -63,15 +233,50 @@
   // ─── Pre-fill from session ────────────────────────────────────────────────
   function _prefillFromSession() {
     if (!_sessionMeta) return;
+    const hasSavedSettings = localStorage.getItem(SETTINGS_KEY) !== null;
     const urlEl = $('watcher-url-input');
-    if (urlEl && !urlEl.value) urlEl.value = _sessionMeta.url || '';
+    if (urlEl && (!urlEl.value || !hasSavedSettings)) urlEl.value = urlEl.value || _sessionMeta.url || '';
     const sslEl = $('watcher-ssl-toggle');
-    if (sslEl) sslEl.checked = _sessionMeta.ssl_verify !== false;
+    if (sslEl && !hasSavedSettings) sslEl.checked = _sessionMeta.ssl_verify !== false;
     const provEl = $('watcher-provider-select');
-    if (provEl && _sessionMeta.provider) provEl.value = _sessionMeta.provider;
+    if (provEl && !hasSavedSettings && _sessionMeta.provider) provEl.value = _sessionMeta.provider;
   }
 
   // ─── Mode toggle ─────────────────────────────────────────────────────────
+  let _interfacesFetched = false;
+  async function _fetchNetworkInterfaces() {
+    if (_interfacesFetched) return;
+    const container = $('nw-interface-container');
+    if (!container) return;
+    try {
+      const res = await fetch('/api/network_watcher/interfaces');
+      const data = await res.json();
+      if (data.success && data.interfaces) {
+        let savedIfaces = null;
+        try {
+          const raw = localStorage.getItem(SETTINGS_KEY);
+          if (raw) savedIfaces = JSON.parse(raw).selectedInterfaces;
+        } catch {}
+
+        container.innerHTML = data.interfaces.map(iface => {
+          const isChecked = savedIfaces ? savedIfaces.includes(iface) : (iface === 'eth0' || iface === 'en0');
+          return `
+            <label style="display:flex;align-items:center;gap:0.3rem;background:var(--bg-surface-1);padding:0.3rem 0.6rem;border-radius:4px;border:1px solid var(--border-subtle);cursor:pointer;font-size:0.85rem">
+              <input type="checkbox" class="nw-iface-cb" value="${_esc(iface)}" ${isChecked ? 'checked' : ''}>
+              ${_esc(iface)}
+            </label>
+          `;
+        }).join('');
+        _interfacesFetched = true;
+        container.querySelectorAll('.nw-iface-cb').forEach(cb => {
+          cb.addEventListener('change', _saveFormSettings);
+        });
+      }
+    } catch (e) {
+      container.innerHTML = `<div style="color:var(--error);font-size:0.85rem">Failed to load interfaces.</div>`;
+    }
+  }
+
   function _initModeToggle() {
     document.querySelectorAll('.watcher-mode-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -80,6 +285,14 @@
         btn.classList.add('active');
         $('watcher-continuous-settings').style.display = _currentMode === 'continuous' ? '' : 'none';
         $('watcher-timer-settings').style.display = _currentMode === 'timer' ? '' : 'none';
+        const nwSettings = $('watcher-network-settings');
+        if (nwSettings) {
+            nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
+            if (_currentMode === 'network') _fetchNetworkInterfaces();
+        }
+        _updateMetricsView();
+        _updatePromptField();
+        _saveFormSettings();
       });
     });
   }
@@ -89,18 +302,33 @@
     const poll = $('watcher-poll-interval');
     const pollVal = $('watcher-poll-interval-val');
     if (poll && pollVal) {
-      poll.addEventListener('input', () => { pollVal.textContent = `${poll.value} s`; });
+      poll.addEventListener('input', () => {
+        pollVal.textContent = `${poll.value} s`;
+        _saveFormSettings();
+      });
     }
     const lines = $('watcher-min-lines');
     const linesVal = $('watcher-min-lines-val');
     if (lines && linesVal) {
-      lines.addEventListener('input', () => { linesVal.textContent = lines.value; });
+      lines.addEventListener('input', () => {
+        linesVal.textContent = lines.value;
+        _saveFormSettings();
+      });
     }
   }
 
   // ─── Mode config collector ────────────────────────────────────────────────
   function _getModeConfig() {
     const maxContext = parseInt($('watcher-context-size')?.value || '64000');
+    if (_currentMode === 'network') {
+      return {
+        watch_mode: 'network',
+        analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
+        max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
+        max_packets_per_analysis: parseInt($('nw-max-packets-per-analysis')?.value || '12'),
+        packet_fields: Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map((checkbox) => checkbox.value),
+      };
+    }
     if (_currentMode === 'continuous') {
       return {
         watch_mode: 'continuous',
@@ -148,9 +376,18 @@
         return `<option value="${_esc(val)}">${_esc(lbl)}</option>`;
       }).join('');
       sel.disabled = false;
-      if (_sessionMeta?.model && [...sel.options].some((o) => o.value === _sessionMeta.model)) {
+      let savedModel = null;
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (raw) savedModel = JSON.parse(raw).model;
+      } catch {}
+
+      if (savedModel && [...sel.options].some((o) => o.value === savedModel)) {
+        sel.value = savedModel;
+      } else if (_sessionMeta?.model && [...sel.options].some((o) => o.value === _sessionMeta.model)) {
         sel.value = _sessionMeta.model;
       }
+      _saveFormSettings();
       $('watcher-start-btn').disabled = false;
       _updateSameLlmIndicator();
     } catch (err) {
@@ -161,36 +398,40 @@
     }
   }
 
-  // ─── Status badge ─────────────────────────────────────────────────────────
-  function _setStatus(running, label, modeData = null) {
-    _isRunning = running;
-    const badge = $('watcher-status-badge');
-    const text = $('watcher-status-text');
-    const btn = $('watcher-start-btn');
-    const icon = $('watcher-start-btn-icon');
-    const lbl = $('watcher-start-btn-label');
-    if (badge) badge.className = 'watcher-status-badge ' + (running ? 'watcher-status-running' : 'watcher-status-idle');
-    
-    if (label) {
-      if (text) text.textContent = label;
-    } else if (running && modeData) {
-      let mLabel = 'Watching…';
-      if (modeData.watching_mode === 'continuous-live') mLabel = '📡 Live (watchdog)';
-      else if (modeData.watching_mode === 'continuous-poll') mLabel = '📡 Polling';
-      else if (modeData.watching_mode === 'timer') mLabel = '⏱ Timer';
-      const sameStr = modeData.using_session_llm ? ' ⚠️ same LLM' : '';
-      if (text) text.textContent = `${mLabel} · ${modeData.model || ''}${sameStr}`;
+  // ─── Status UI updater ──────────────────────────────────────────────────
+  function _setStatus(running, overrideMsg = null, meta = null, isNw = false) {
+    if (isNw) {
+      _isNwRunning = running;
     } else {
-      if (text) text.textContent = running ? 'Watching…' : 'Idle — not watching';
+      _isRunning = running;
     }
 
-    if (btn) {
-      if (icon) icon.textContent = running ? '⏹' : '▶';
-      if (lbl) lbl.textContent = running ? 'Stop Watcher' : 'Start Watcher';
-      btn.className = 'btn ' + (running ? 'btn-danger' : 'btn-primary');
-      btn.disabled = false;
+    const btn = $('watcher-start-btn');
+    const badge = $('watcher-status-badge');
+    const txt = $('watcher-status-text');
+    const lbl = $('watcher-start-btn-label');
+    const icn = $('watcher-start-btn-icon');
+
+    if (btn) btn.disabled = false;
+
+    // We only show running state if the active mode matches the running watcher type
+    const activeIsNw = _currentMode === 'network';
+    const showRunning = activeIsNw ? _isNwRunning : _isRunning;
+
+    if (showRunning) {
+      if (lbl) lbl.textContent = 'Stop Watcher';
+      if (icn) icn.innerHTML = '⏹';
+      if (btn) { btn.classList.remove('btn-primary'); btn.classList.add('btn-danger'); }
+      if (badge) { badge.classList.remove('watcher-status-idle'); badge.classList.add('watcher-status-active'); }
+      if (txt) txt.textContent = overrideMsg || `Watching (${meta?.watching_mode || _currentMode} mode)`;
+    } else {
+      if (lbl) lbl.textContent = 'Start Watcher';
+      if (icn) icn.innerHTML = '▶';
+      if (btn) { btn.classList.remove('btn-danger'); btn.classList.add('btn-primary'); }
+      if (badge) { badge.classList.remove('watcher-status-active'); badge.classList.add('watcher-status-idle'); }
+      if (txt) txt.textContent = overrideMsg || 'Idle — not watching';
     }
-  }
+  };
 
   // ─── Nav badge ────────────────────────────────────────────────────────────
   function _updateNavBadge() {
@@ -292,10 +533,23 @@
     if (!btn) return;
     btn.disabled = true;
 
-    if (_isRunning) {
-      try { await fetch('/api/watcher/stop', { method: 'POST' }); } catch {}
-      _setStatus(false);
-      _stopStatusPoll();
+    const isNwMode = _currentMode === 'network';
+    const running = isNwMode ? _isNwRunning : _isRunning;
+
+    if (running) {
+      if (isNwMode) {
+        try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
+        _setStatus(false, 'Idle — not watching', null, true);
+        _stopNwStatusPoll();
+        const nwLiveLog = $('nw-live-log');
+        if (nwLiveLog) nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
+        const nwViewSsmBtn = $('nw-view-ssm-btn');
+        if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'none';
+      } else {
+        try { await fetch('/api/watcher/stop', { method: 'POST' }); } catch {}
+        _setStatus(false, 'Idle — not watching', null, false);
+        _stopStatusPoll();
+      }
     } else {
       const url = ($('watcher-url-input')?.value || '').trim();
       const model = $('watcher-model-select')?.value || '';
@@ -309,22 +563,44 @@
       if (errEl) errEl.style.display = 'none';
 
       try {
-        const res = await fetch('/api/watcher/start', {
+        const isNwMode = _currentMode === 'network';
+        const timeout = parseInt($('watcher-timeout-select')?.value || '60');
+        const systemPrompt = $('watcher-system-prompt')?.value || '';
+        let requestBody = { url, model, provider, api_key: apiKey, ssl_verify: ssl, timeout, system_prompt: systemPrompt, ...modeConfig };
+        if (isNwMode) {
+          const cbs = document.querySelectorAll('.nw-iface-cb:checked');
+          requestBody.interfaces = Array.from(cbs).map(cb => cb.value);
+        }
+
+        const res = await fetch(isNwMode ? '/api/network_watcher/start' : '/api/watcher/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, model, provider, api_key: apiKey, ssl_verify: ssl, ...modeConfig }),
+          body: JSON.stringify(requestBody),
         });
         const data = await res.json();
         if (!data.success) {
           if (errEl) { errEl.textContent = data.error || 'Failed to start.'; errEl.style.display = ''; }
           btn.disabled = false; return;
         }
-        _setStatus(true, null, {
-          watching_mode: data.watching_mode,
-          model: model,
-          using_session_llm: data.using_session_llm
-        });
-        _startStatusPoll();
+
+        if (isNwMode) {
+          _setStatus(true, null, { watching_mode: 'network', model: model }, true);
+          _startNwStatusPoll();
+          const nwLiveLog = $('nw-live-log');
+          if (nwLiveLog) nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
+          const nwViewSsmBtn = $('nw-view-ssm-btn');
+          if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'inline-flex';
+        } else {
+          _setStatus(true, null, {
+            watching_mode: data.watching_mode,
+            model: model,
+            using_session_llm: data.using_session_llm
+          }, false);
+          _startStatusPoll();
+        }
+
+        // A successful start always opens the live metrics view.
+        switchWatcherTab('metrics');
       } catch (err) {
         if (errEl) { errEl.textContent = err.message; errEl.style.display = ''; }
         btn.disabled = false;
@@ -333,6 +609,12 @@
   }
 
   // ─── Status polling ───────────────────────────────────────────────────────
+  function _updateBtnUI() {
+    const activeIsNw = _currentMode === 'network';
+    const running = activeIsNw ? _isNwRunning : _isRunning;
+    _setStatus(running, null, null, activeIsNw);
+  }
+
   function _startStatusPoll() {
     _stopStatusPoll();
     _statusPollInterval = setInterval(async () => {
@@ -349,7 +631,240 @@
     if (_statusPollInterval) { clearInterval(_statusPollInterval); _statusPollInterval = null; }
   }
 
+  function _formatInteractionTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? (timestamp || '') : date.toLocaleString();
+  }
+
+  function _formattedNwResponse(entry) {
+    if (entry.analysis) return entry.analysis;
+    if (entry.outcome === 'pending') return 'Awaiting the model response…';
+    try {
+      const parsed = JSON.parse(entry.response || '{}');
+      const content = parsed?.choices?.[0]?.message?.content || parsed?.message?.content;
+      if (content) return content;
+      const error = parsed?.error?.message || parsed?.message;
+      if (error) return `Model request failed: ${error}`;
+    } catch {}
+    if (entry.error) return `Model request failed: ${entry.error}`;
+    return entry.response || 'No findings reported for this packet batch.';
+  }
+
+  function _renderNwFindings(interactions) {
+    const list = $('nw-findings-list');
+    const empty = $('nw-findings-empty');
+    const count = $('nw-findings-count');
+    if (!list || !empty || !count) return;
+
+    const findings = (Array.isArray(interactions) ? interactions : [])
+      .filter((entry) => entry.outcome !== 'pending');
+    count.textContent = findings.length ? `(${findings.length})` : '';
+    empty.style.display = findings.length ? 'none' : '';
+    list.replaceChildren();
+
+    findings.slice().reverse().forEach((entry) => {
+      const card = document.createElement('article');
+      const isError = entry.outcome !== 'success';
+      card.style.cssText = `padding:0.75rem 0.85rem; border:1px solid ${isError ? 'var(--error)' : 'var(--border-subtle)'}; border-left-width:3px; border-radius:6px; background:var(--bg-surface-2);`;
+
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.4rem; font-size:0.78rem; color:var(--text-secondary);';
+      header.textContent = `${_formatInteractionTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+
+      const response = document.createElement('div');
+      response.style.cssText = `white-space:pre-wrap; overflow-wrap:anywhere; font-size:0.88rem; line-height:1.5; color:${isError ? 'var(--error)' : 'var(--text-primary)'};`;
+      response.textContent = _formattedNwResponse(entry);
+      card.append(header, response);
+      list.appendChild(card);
+    });
+  }
+
+  function _renderNwInteractions(interactions) {
+    const list = $('nw-interactions-list');
+    const empty = $('nw-interactions-empty');
+    const count = $('nw-interactions-count');
+    if (!list || !empty || !count) return;
+
+    const records = Array.isArray(interactions) ? interactions : [];
+    _renderNwFindings(records);
+    count.textContent = records.length ? `(${records.length})` : '';
+    empty.style.display = records.length ? 'none' : '';
+    list.replaceChildren();
+
+    records.slice().reverse().forEach((entry) => {
+      const record = document.createElement('article');
+      record.style.cssText = 'border:1px solid var(--border-subtle); border-radius:6px; overflow:hidden; background:var(--bg-surface-2);';
+
+      const header = document.createElement('div');
+      header.style.cssText = 'padding:0.55rem 0.7rem; font-size:0.78rem; border-bottom:1px solid var(--border-subtle); color:var(--text-secondary);';
+      const status = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
+      const timing = entry.elapsed_ms == null ? 'In progress' : `${entry.elapsed_ms} ms`;
+      header.textContent = `${_formatInteractionTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${status}${entry.http_status ? ` (${entry.http_status})` : ''}`;
+
+      const { messages, ...requestMeta } = entry.request || {};
+      const meta = document.createElement('div');
+      meta.style.cssText = 'padding:0.55rem 0.7rem 0; font-family:var(--font-mono); font-size:0.75rem; color:var(--text-secondary); overflow-wrap:anywhere;';
+      meta.textContent = `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`;
+
+      const promptLabel = document.createElement('div');
+      promptLabel.style.cssText = 'padding:0.55rem 0.7rem 0.25rem; font-weight:600; font-size:0.8rem;';
+      promptLabel.textContent = 'Prompt';
+      const prompt = document.createElement('pre');
+      prompt.style.cssText = 'margin:0 0.7rem 0.6rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:0.76rem/1.45 var(--font-mono); color:var(--text-secondary);';
+      prompt.textContent = entry.prompt || '';
+
+      const responseLabel = document.createElement('div');
+      responseLabel.style.cssText = 'padding:0 0.7rem 0.25rem; font-weight:600; font-size:0.8rem;';
+      responseLabel.textContent = entry.error ? 'Response / Error' : 'Raw response';
+      const response = document.createElement('pre');
+      response.style.cssText = 'margin:0 0.7rem 0.7rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:0.76rem/1.45 var(--font-mono); color:var(--text-secondary);';
+      response.textContent = entry.response || entry.error || '(empty response)';
+
+      record.append(header, meta, promptLabel, prompt, responseLabel, response);
+      list.appendChild(record);
+    });
+  }
+
+  async function _refreshNwInteractions(revision, force = false) {
+    if (!force && revision === _nwInteractionRevision) return;
+    try {
+      const data = await fetch('/api/network_watcher/interactions').then((r) => r.json());
+      _nwInteractionRevision = data.revision;
+      _renderNwInteractions(data.interactions);
+    } catch (e) { console.error('NW interaction history error', e); }
+  }
+
+  async function _fetchNwStatus() {
+    try {
+      const res = await fetch('/api/network_watcher/status');
+      const data = await res.json();
+      if (data.metrics) {
+        _refreshNwInteractions(data.interaction_revision);
+        const cpu = $('nw-metric-cpu'); if (cpu) cpu.textContent = `${(data.metrics.cpu_percent || 0).toFixed(1)}%`;
+        const mem = $('nw-metric-mem'); if (mem) mem.textContent = `${data.metrics.mem_used_mb || 0} / ${(data.metrics.mem_used_mb || 0) + (data.metrics.mem_free_mb || 0)} MB`;
+        const pkts = $('nw-metric-packets'); if (pkts) pkts.textContent = (data.metrics.packets_captured || 0).toLocaleString();
+        const analyzed = $('nw-metric-analyzed'); if (analyzed) analyzed.textContent = (data.metrics.packets_analyzed || 0).toLocaleString();
+
+        const bytesEl = $('nw-metric-bytes');
+        if (bytesEl) {
+          const b = data.metrics.bytes_extracted || 0;
+          bytesEl.textContent = b < 1024 ? `${b} B` : (b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(2)} MB`);
+        }
+
+        const tokensEl = $('nw-metric-tokens'); if (tokensEl) tokensEl.textContent = (data.metrics.total_tokens || 0).toLocaleString();
+        const inf = $('nw-metric-inference'); if (inf) inf.textContent = `${data.metrics.avg_inference_sec || 0} s`;
+        const alertsEl = $('nw-metric-alerts'); if (alertsEl) alertsEl.textContent = data.metrics.alerts_emitted || 0;
+
+        const pulseDot = $('nw-pulse-dot');
+        const statusText = $('nw-status-banner-text');
+        const ifaceLabel = $('nw-status-interface-label');
+        if (ifaceLabel) ifaceLabel.textContent = `Interface: ${data.interface || 'en0'}`;
+
+        const bpfAlert = $('nw-bpf-alert');
+        if (data.bpf_permission_ok === false || data.capture_error) {
+          if (bpfAlert) bpfAlert.style.display = 'block';
+        } else if (bpfAlert) {
+          bpfAlert.style.display = 'none';
+        }
+
+        const isRunning = Boolean(data.running);
+        _setStatus(isRunning, isRunning ? 'Watching network packets...' : 'Idle — not watching', null, true);
+        if (isRunning) {
+          if (pulseDot) { pulseDot.style.background = 'var(--success)'; pulseDot.style.boxShadow = '0 0 8px var(--success)'; }
+          if (statusText) statusText.textContent = 'Watching Network Packets';
+          const nwViewSsmBtn = $('nw-view-ssm-btn');
+          if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'inline-flex';
+        } else {
+          if (pulseDot) { pulseDot.style.background = 'var(--text-muted)'; pulseDot.style.boxShadow = 'none'; }
+          if (statusText) statusText.textContent = 'Network Watcher Idle';
+        }
+      }
+    } catch (e) { console.error('NW Polling error', e); }
+  }
+
+  function _startNwStatusPoll() {
+    if (_nwStatusPollInterval) return;
+    _fetchNwStatus();
+    _nwStatusPollInterval = setInterval(_fetchNwStatus, 1500);
+  }
+  function _stopNwStatusPoll() {
+    if (_nwStatusPollInterval) { clearInterval(_nwStatusPollInterval); _nwStatusPollInterval = null; }
+    const cpu = $('nw-metric-cpu'); if (cpu) cpu.textContent = '--%';
+    const mem = $('nw-metric-mem'); if (mem) mem.textContent = '-- / -- MB';
+    const pkts = $('nw-metric-packets'); if (pkts) pkts.textContent = '0';
+    const analyzed = $('nw-metric-analyzed'); if (analyzed) analyzed.textContent = '0';
+    const bytesEl = $('nw-metric-bytes'); if (bytesEl) bytesEl.textContent = '0 KB';
+    const tokensEl = $('nw-metric-tokens'); if (tokensEl) tokensEl.textContent = '0';
+    const inf = $('nw-metric-inference'); if (inf) inf.textContent = '-- s';
+    const alertsEl = $('nw-metric-alerts'); if (alertsEl) alertsEl.textContent = '0';
+    const pulseDot = $('nw-pulse-dot'); if (pulseDot) { pulseDot.style.background = 'var(--text-muted)'; pulseDot.style.boxShadow = 'none'; }
+    const statusText = $('nw-status-banner-text'); if (statusText) statusText.textContent = 'Network Watcher Idle';
+    _nwInteractionRevision = null;
+  }
+
+  function _updateSessionNotice() {
+    const notice = $('watcher-no-session-notice');
+    if (!notice) return;
+    if (_currentMode === 'network') {
+      notice.style.display = 'none';
+    } else {
+      notice.style.display = _sessionMeta ? 'none' : '';
+    }
+  }
+
+  function _updateStartBtnState() {
+    const btn = $('watcher-start-btn');
+    const model = $('watcher-model-select')?.value;
+    if (!btn) return;
+    if (_currentMode === 'network') {
+      btn.disabled = !model;
+    } else {
+      btn.disabled = !model || !_sessionMeta;
+    }
+  }
+
+  function _updateMetricsView() {
+    const isNw = _currentMode === 'network';
+    const suggestionsView = $('watcher-view-suggestions');
+    const networkView = $('watcher-view-network');
+
+    if (suggestionsView) suggestionsView.style.display = isNw ? 'none' : 'block';
+    if (networkView) {
+        networkView.style.display = isNw ? 'flex' : 'none';
+    }
+    _updateSessionNotice();
+    _updateStartBtnState();
+  }
+
   // ─── Tab active tracking ──────────────────────────────────────────────────
+  function switchWatcherTab(target) {
+    const setupTabBtn = $('watcher-setup-tab-btn');
+    const metricsTabBtn = $('watcher-metrics-tab-btn');
+    const setupPanel = $('watcher-setup-panel');
+    const metricsPanel = $('watcher-metrics-panel');
+
+    if (!setupTabBtn || !metricsTabBtn || !setupPanel || !metricsPanel) {
+      console.warn('Watcher tab elements missing:', {setupTabBtn, metricsTabBtn, setupPanel, metricsPanel});
+      return;
+    }
+
+    // Toggle tab button active state
+    setupTabBtn.classList.toggle('active', target === 'setup');
+    metricsTabBtn.classList.toggle('active', target !== 'setup');
+
+    // Toggle panel active class — CSS rules control display via .watcher-subtab-panel / .watcher-subtab-panel.active
+    setupPanel.classList.toggle('active', target === 'setup');
+    metricsPanel.classList.toggle('active', target !== 'setup');
+
+    // Remove any leftover inline display styles that could conflict with CSS class rules
+    setupPanel.style.removeProperty('display');
+    metricsPanel.style.removeProperty('display');
+
+    if (target !== 'setup') {
+        _updateMetricsView();
+    }
+  }
+
   function _onTabSwitch(targetPaneId) {
     if (targetPaneId === 'watcher-pane') _resetUnseen();
   }
@@ -375,7 +890,7 @@
     const container = $('watcher-notes-container');
     if (!container) return;
     container.style.display = '';
-    
+
     // Create header if missing
     if (!container.querySelector('.watcher-notes-header')) {
       container.innerHTML = '<div class="watcher-notes-header">🔍 Analysis Notes</div>';
@@ -389,7 +904,7 @@
       <div class="watcher-note-meta">📡<span class="watcher-card-ts">${ts}</span></div>
       <p class="watcher-note-text"><span class="live-text"></span><span class="watcher-note-cursor"></span></p>
     `;
-    
+
     // Insert right after header (top of list)
     const header = container.querySelector('.watcher-notes-header');
     if (header && header.nextSibling) {
@@ -412,7 +927,7 @@
   function noteComplete(event) {
     const live = _liveNotes[event.note_id];
     if (!live) return;
-    
+
     // Remove the cursor and the live pulse
     const entry = $(`watcher-live-note-${event.note_id}`);
     if (entry) {
@@ -420,7 +935,7 @@
       const cursor = entry.querySelector('.watcher-note-cursor');
       if (cursor) cursor.remove();
     }
-    
+
     // Save to persistent array
     analysisNotes.push({
       note: live.text,
@@ -430,7 +945,7 @@
     });
     if (analysisNotes.length > 20) analysisNotes = analysisNotes.slice(-20);
     _save();
-    
+
     delete _liveNotes[event.note_id];
   }
 
@@ -453,19 +968,15 @@
     _sessionMeta = meta;
     _prefillFromSession();
     _updateSameLlmIndicator();
-    const notice = $('watcher-no-session-notice');
-    if (notice) notice.style.display = meta ? 'none' : '';
-    if ($('watcher-model-select')?.value && meta) {
-      const btn = $('watcher-start-btn');
-      if (btn) btn.disabled = false;
-    }
+    _updateSessionNotice();
+    _updateStartBtnState();
   }
 
   function handleSessionStopped() {
     if (_isRunning) { _setStatus(false, 'Idle — session ended'); _stopStatusPoll(); }
     _sessionMeta = null;
-    const notice = $('watcher-no-session-notice');
-    if (notice) notice.style.display = '';
+    _updateSessionNotice();
+    _updateStartBtnState();
   }
 
   // ─── Init ────────────────────────────────────────────────────────────────
@@ -474,16 +985,72 @@
     _initModeToggle();
     _initRangeSliders();
 
+    $('watcher-setup-tab-btn')?.addEventListener('click', () => switchWatcherTab('setup'));
+    $('watcher-metrics-tab-btn')?.addEventListener('click', () => switchWatcherTab('metrics'));
+
+    const ssmModalOverlay = $('nw-ssm-modal-overlay');
+    const ssmTriggerBtn = $('nw-view-ssm-btn');
+    const ssmCloseBtn = $('close-nw-ssm-btn');
+
+    if (ssmTriggerBtn) {
+        ssmTriggerBtn.addEventListener('click', () => {
+            window.open('/network_watcher/live_results', 'LiveSSMResults', 'width=960,height=650,resizable=yes,scrollbars=yes');
+        });
+    }
+    if (ssmCloseBtn && ssmModalOverlay) {
+        ssmCloseBtn.addEventListener('click', () => ssmModalOverlay.style.display = 'none');
+    }
+
+    $('nw-clear-interactions-btn')?.addEventListener('click', async (event) => {
+      // The button lives in a <summary>; keep clearing it from toggling the
+      // collapsed diagnostics panel.
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const data = await fetch('/api/network_watcher/interactions', { method: 'POST' }).then((r) => r.json());
+        _nwInteractionRevision = data.revision;
+        _renderNwInteractions(data.interactions);
+      } catch (e) { console.error('Could not clear NW interaction history', e); }
+    });
+
     $('watcher-fetch-models-btn')?.addEventListener('click', _fetchModels);
-    $('watcher-url-input')?.addEventListener('input', _updateSameLlmIndicator);
+    $('watcher-url-input')?.addEventListener('input', () => {
+      _updateSameLlmIndicator();
+      _saveFormSettings();
+    });
+    $('watcher-system-prompt')?.addEventListener('input', _saveFormSettings);
+    $('watcher-reset-prompt-btn')?.addEventListener('click', () => {
+      _customPrompts[_currentMode] = DEFAULT_PROMPTS[_currentMode];
+      _updatePromptField();
+      _saveFormSettings();
+    });
+    $('watcher-api-key-input')?.addEventListener('input', _saveFormSettings);
+    $('watcher-ssl-toggle')?.addEventListener('change', _saveFormSettings);
+    $('watcher-context-size')?.addEventListener('change', _saveFormSettings);
+    $('watcher-timeout-select')?.addEventListener('change', _saveFormSettings);
+    $('watcher-timer-interval')?.addEventListener('change', _saveFormSettings);
+    $('watcher-timer-span')?.addEventListener('change', _saveFormSettings);
+    $('nw-analysis-interval')?.addEventListener('change', _saveFormSettings);
+    $('nw-max-payload-bytes')?.addEventListener('change', _saveFormSettings);
+    $('nw-max-packets-per-analysis')?.addEventListener('change', _saveFormSettings);
+    document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
+      checkbox.addEventListener('change', _saveFormSettings);
+    });
     $('watcher-model-select')?.addEventListener('change', () => {
       _updateSameLlmIndicator();
       const btn = $('watcher-start-btn');
       if (btn) btn.disabled = !$('watcher-model-select').value;
+      _saveFormSettings();
     });
-    $('watcher-provider-select')?.addEventListener('change', _updateSameLlmIndicator);
+    $('watcher-provider-select')?.addEventListener('change', () => {
+      _updateSameLlmIndicator();
+      _saveFormSettings();
+    });
     $('watcher-start-btn')?.addEventListener('click', _toggleWatcher);
     $('watcher-clear-all-btn')?.addEventListener('click', _clearAll);
+
+    // Restore saved form settings
+    _loadFormSettings();
 
     // Scaffold modal
     $('watcher-modal-close')?.addEventListener('click', () => { $('watcher-modal-overlay').style.display = 'none'; });
@@ -501,9 +1068,8 @@
       btn.addEventListener('click', () => _onTabSwitch(btn.dataset.target));
     });
 
-    // No-session notice
-    const notice = $('watcher-no-session-notice');
-    if (notice) notice.style.display = _sessionMeta ? 'none' : '';
+    _updateSessionNotice();
+    _updateStartBtnState();
 
     _renderCards();
     _renderNotes();
