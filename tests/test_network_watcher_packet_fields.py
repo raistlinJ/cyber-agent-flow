@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import network_watcher
 from network_watcher import DEFAULT_PACKET_FIELDS, NetworkWatcher
 
 
@@ -137,6 +138,20 @@ def test_remote_ssm_endpoint_uses_the_explicit_stream_contract():
     watcher.api_url = "https://gpu.example.test/v1/models"
 
     assert watcher._remote_ssm_endpoint() == "https://gpu.example.test/v1/ssm/events"
+
+
+def test_cyber_agent_flow_context_is_bounded_and_only_sent_on_updates(tmp_path, monkeypatch):
+    transcript = tmp_path / "runs" / "run-1" / "transcript.md"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("first session update", encoding="utf-8")
+    monkeypatch.setattr(network_watcher.os.path, "abspath", lambda _path: str(tmp_path / "network_watcher.py"))
+
+    watcher = NetworkWatcher(event_store=None)
+    watcher.run_id = "run-1"
+    watcher.use_cyber_agent_flow_data = True
+
+    assert watcher._cyber_agent_flow_update() == "first session update"
+    assert watcher._cyber_agent_flow_update() == ""
 
 
 def test_suricata_readiness_gate_blocks_eve_mode_when_binary_is_missing(monkeypatch):

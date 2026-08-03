@@ -2,8 +2,8 @@
  * watcher.js — Tool Suggestion + Analysis tab for cyber-agentflow
  *
  * Two analysis modes:
- *   📡 Continuous — delta-polls every N seconds, surfaces suggestions as they come
- *   ⏱  Timer      — fires a full analysis at a set interval over a configurable span
+ *   ⏱  Periodic       — analyzes a selected CyberAgentFlow data window on a cadence
+ *   📡 Network Stream — processes normalized network telemetry continuously
  *
  * Both modes push two SSE event types:
  *   tool_suggestion      → rendered as a suggestion card
@@ -33,7 +33,8 @@
   let _nwInteractionRevision = null;
   let _modelSsmCompatibility = new Map();
   let _suricataStatus = null;
-  let _currentMode = 'continuous'; // 'continuous' | 'timer' | 'network'
+  let _currentMode = 'periodic'; // 'periodic' | 'network'
+  let _cyberAgentFlowDataAvailable = false;
 
   // ─── Storage ─────────────────────────────────────────────────────────────
   const SETTINGS_KEY = 'watcher_form_settings_v1';
@@ -54,36 +55,7 @@
   }
 
   const DEFAULT_PROMPTS = {
-    continuous: `You are a concise MCP tool designer watching a live penetration-testing agent session.
-Identify ONE small, focused MCP tool that would reduce repeated manual effort or repetitive tool calls visible in the recent log excerpt.
-
-Rules:
-- Suggest at most ONE tool. Keep it scoped to a single command or tight 2-3 step sequence.
-- Do NOT suggest tools that already exist in the available tool list.
-- If there is no strong evidence of friction, emit an empty JSON tools list.
-
-CRITICAL: You must output your response in TWO SECTIONS sequentially:
-1. A <note>...</note> section containing a 1-2 sentence observation about what the agent is doing right now.
-2. A <json>...</json> section containing valid JSON.
-
-Format exactly like this:
-<note>
-The agent is repeatedly running nmap on port 80.
-</note>
-<json>
-{
-  "tools": [
-    {
-      "name": "<snake_case_tool_name>",
-      "one_line": "<one sentence description>",
-      "rationale": "<2-3 sentences>",
-      "commands": "<shell command(s)>"
-    }
-  ]
-}
-</json>`,
-
-    timer: `You are an expert MCP tooling analyst reviewing a penetration-testing agent session log.
+    periodic: `You are an expert MCP tooling analyst reviewing a penetration-testing agent session log.
 Your job has two parts:
 
 1. ANALYSIS NOTE — Write a concise 2-4 sentence summary of what the agent has been doing in the log window, highlighting any patterns or inefficiencies.
@@ -137,10 +109,10 @@ If nothing interesting is found, say that clearly.`
         contextSize: $('watcher-context-size')?.value,
         timeout: $('watcher-timeout-select')?.value,
         mode: _currentMode,
-        pollInterval: $('watcher-poll-interval')?.value,
-        minLines: $('watcher-min-lines')?.value,
         timerInterval: $('watcher-timer-interval')?.value,
         timerSpan: $('watcher-timer-span')?.value,
+        periodicUseCyberAgentFlowData: $('watcher-periodic-use-caf-data')?.checked,
+        networkUseCyberAgentFlowData: $('nw-use-caf-data')?.checked,
         selectedInterfaces: selectedIfaces,
         captureSource: $('nw-capture-source')?.value,
         suricataEvePath: $('nw-suricata-eve-path')?.value,
@@ -172,6 +144,9 @@ If nothing interesting is found, say that clearly.`
 
       if (settings.customPrompts) {
         _customPrompts = { ...DEFAULT_PROMPTS, ...settings.customPrompts };
+        if (settings.customPrompts.timer && !settings.customPrompts.periodic) {
+          _customPrompts.periodic = settings.customPrompts.timer;
+        }
       }
 
       if (settings.provider && $('watcher-provider-select')) $('watcher-provider-select').value = settings.provider;
@@ -180,16 +155,10 @@ If nothing interesting is found, say that clearly.`
       if (settings.sslVerify !== undefined && $('watcher-ssl-toggle')) $('watcher-ssl-toggle').checked = Boolean(settings.sslVerify);
       if (settings.contextSize && $('watcher-context-size')) $('watcher-context-size').value = settings.contextSize;
       if (settings.timeout && $('watcher-timeout-select')) $('watcher-timeout-select').value = settings.timeout;
-      if (settings.pollInterval && $('watcher-poll-interval')) {
-        $('watcher-poll-interval').value = settings.pollInterval;
-        if ($('watcher-poll-interval-val')) $('watcher-poll-interval-val').textContent = `${settings.pollInterval} s`;
-      }
-      if (settings.minLines && $('watcher-min-lines')) {
-        $('watcher-min-lines').value = settings.minLines;
-        if ($('watcher-min-lines-val')) $('watcher-min-lines-val').textContent = settings.minLines;
-      }
       if (settings.timerInterval && $('watcher-timer-interval')) $('watcher-timer-interval').value = settings.timerInterval;
       if (settings.timerSpan && $('watcher-timer-span')) $('watcher-timer-span').value = settings.timerSpan;
+      if (settings.periodicUseCyberAgentFlowData !== undefined && $('watcher-periodic-use-caf-data')) $('watcher-periodic-use-caf-data').checked = Boolean(settings.periodicUseCyberAgentFlowData);
+      if (settings.networkUseCyberAgentFlowData !== undefined && $('nw-use-caf-data')) $('nw-use-caf-data').checked = Boolean(settings.networkUseCyberAgentFlowData);
       if (settings.analysisInterval && $('nw-analysis-interval')) $('nw-analysis-interval').value = settings.analysisInterval;
       if (settings.maxPacketPayloadBytes && $('nw-max-payload-bytes')) $('nw-max-payload-bytes').value = settings.maxPacketPayloadBytes;
       if (settings.maxPacketsPerAnalysis && $('nw-max-packets-per-analysis')) $('nw-max-packets-per-analysis').value = settings.maxPacketsPerAnalysis;
@@ -214,12 +183,11 @@ If nothing interesting is found, say that clearly.`
       }
 
       if (settings.mode) {
-        _currentMode = settings.mode;
+        _currentMode = settings.mode === 'continuous' ? 'network' : (settings.mode === 'timer' ? 'periodic' : settings.mode);
         document.querySelectorAll('.watcher-mode-btn').forEach((b) => {
           b.classList.toggle('active', b.dataset.mode === _currentMode);
         });
-        if ($('watcher-continuous-settings')) $('watcher-continuous-settings').style.display = _currentMode === 'continuous' ? '' : 'none';
-        if ($('watcher-timer-settings')) $('watcher-timer-settings').style.display = _currentMode === 'timer' ? '' : 'none';
+        if ($('watcher-periodic-settings')) $('watcher-periodic-settings').style.display = _currentMode === 'periodic' ? '' : 'none';
         const nwSettings = $('watcher-network-settings');
         if (nwSettings) {
           nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
@@ -265,6 +233,40 @@ If nothing interesting is found, say that clearly.`
     if (suricataSettings) suricataSettings.style.display = _currentMode === 'network' && suricata ? '' : 'none';
     if (evePathGroup) evePathGroup.style.display = _currentMode === 'network' && suricata ? '' : 'none';
     if (_currentMode === 'network' && !suricata) _fetchNetworkInterfaces();
+  }
+
+  function _updateCyberAgentFlowDataControls() {
+    const available = _cyberAgentFlowDataAvailable;
+    [
+      ['watcher-periodic-use-caf-data', 'watcher-periodic-caf-data-hint'],
+      ['nw-use-caf-data', 'nw-caf-data-hint'],
+    ].forEach(([toggleId, hintId]) => {
+      const toggle = $(toggleId);
+      const hint = $(hintId);
+      if (toggle) {
+        toggle.disabled = !available;
+        if (!available) toggle.checked = false;
+      }
+      if (hint) {
+        hint.textContent = available
+          ? 'Uses the active CyberAgentFlow session data.'
+          : 'Start Service to enable CyberAgentFlow session data.';
+        hint.style.color = available ? 'var(--text-secondary)' : 'var(--text-muted)';
+      }
+    });
+    _updateSessionNotice();
+    _updateStartBtnState();
+  }
+
+  async function _refreshCyberAgentFlowDataAvailability() {
+    try {
+      const response = await fetch('/api/session/status');
+      const status = await response.json();
+      _cyberAgentFlowDataAvailable = status.status === 'running';
+    } catch {
+      _cyberAgentFlowDataAvailable = Boolean(_sessionMeta);
+    }
+    _updateCyberAgentFlowDataControls();
   }
 
   async function _fetchSuricataStatus() {
@@ -436,8 +438,7 @@ If nothing interesting is found, say that clearly.`
         _currentMode = btn.dataset.mode;
         document.querySelectorAll('.watcher-mode-btn').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
-        $('watcher-continuous-settings').style.display = _currentMode === 'continuous' ? '' : 'none';
-        $('watcher-timer-settings').style.display = _currentMode === 'timer' ? '' : 'none';
+        $('watcher-periodic-settings').style.display = _currentMode === 'periodic' ? '' : 'none';
         const nwSettings = $('watcher-network-settings');
         if (nwSettings) {
           nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
@@ -449,26 +450,6 @@ If nothing interesting is found, say that clearly.`
         _saveFormSettings();
       });
     });
-  }
-
-  // ─── Range slider live labels ─────────────────────────────────────────────
-  function _initRangeSliders() {
-    const poll = $('watcher-poll-interval');
-    const pollVal = $('watcher-poll-interval-val');
-    if (poll && pollVal) {
-      poll.addEventListener('input', () => {
-        pollVal.textContent = `${poll.value} s`;
-        _saveFormSettings();
-      });
-    }
-    const lines = $('watcher-min-lines');
-    const linesVal = $('watcher-min-lines-val');
-    if (lines && linesVal) {
-      lines.addEventListener('input', () => {
-        linesVal.textContent = lines.value;
-        _saveFormSettings();
-      });
-    }
   }
 
   // ─── Mode config collector ────────────────────────────────────────────────
@@ -491,14 +472,7 @@ If nothing interesting is found, say that clearly.`
         ssm_max_flows: parseInt($('nw-ssm-max-flows')?.value || '256'),
         ssm_alert_threshold: parseFloat($('nw-ssm-alert-threshold')?.value || '0.72'),
         ssm_alert_cooldown_seconds: parseInt($('nw-ssm-alert-cooldown')?.value || '60'),
-      };
-    }
-    if (_currentMode === 'continuous') {
-      return {
-        watch_mode: 'continuous',
-        poll_interval: parseInt($('watcher-poll-interval')?.value || '10'),
-        min_new_lines: parseInt($('watcher-min-lines')?.value || '3'),
-        max_context_chars: maxContext,
+        use_cyber_agent_flow_data: Boolean($('nw-use-caf-data')?.checked),
       };
     }
     return {
@@ -506,6 +480,7 @@ If nothing interesting is found, say that clearly.`
       timer_interval: parseInt($('watcher-timer-interval')?.value || '60'),
       timer_span: $('watcher-timer-span')?.value || 'all',
       max_context_chars: maxContext,
+      use_cyber_agent_flow_data: Boolean($('watcher-periodic-use-caf-data')?.checked),
     };
   }
 
@@ -737,6 +712,7 @@ If nothing interesting is found, say that clearly.`
       const localSsm = isNwMode && modeConfig.analysis_engine === 'llamacpp_ssm';
       if (localSsm && !modeConfig.ssm_model_path) { _showWatcherStartError('Enter the local recurrent GGUF model path first.', true); btn.disabled = false; return; }
       if (!localSsm && !model) { _showWatcherStartError('Select a model first.'); btn.disabled = false; return; }
+      if (!isNwMode && !modeConfig.use_cyber_agent_flow_data) { _showWatcherStartError('Enable Use CyberAgentFlow data before starting periodic analysis.'); btn.disabled = false; return; }
       const errEl = $('watcher-fetch-error');
       if (errEl) errEl.style.display = 'none';
       const ssmErrEl = $('nw-ssm-start-error');
@@ -1026,7 +1002,7 @@ If nothing interesting is found, say that clearly.`
     if (_currentMode === 'network') {
       notice.style.display = 'none';
     } else {
-      notice.style.display = _sessionMeta ? 'none' : '';
+      notice.style.display = _cyberAgentFlowDataAvailable ? 'none' : '';
     }
   }
 
@@ -1037,7 +1013,7 @@ If nothing interesting is found, say that clearly.`
     if (_currentMode === 'network') {
       btn.disabled = _isLocalSsmEngine() ? !($('nw-ssm-model-path')?.value || '').trim() : !model;
     } else {
-      btn.disabled = !model || !_sessionMeta;
+      btn.disabled = !model || !_cyberAgentFlowDataAvailable || !$('watcher-periodic-use-caf-data')?.checked;
     }
   }
 
@@ -1189,24 +1165,27 @@ If nothing interesting is found, say that clearly.`
 
   function setSessionMeta(meta) {
     _sessionMeta = meta;
+    _cyberAgentFlowDataAvailable = true;
     _prefillFromSession();
     _updateSameLlmIndicator();
     _updateSessionNotice();
     _updateStartBtnState();
+    _updateCyberAgentFlowDataControls();
   }
 
   function handleSessionStopped() {
     if (_isRunning) { _setStatus(false, 'Idle — session ended'); _stopStatusPoll(); }
     _sessionMeta = null;
+    _cyberAgentFlowDataAvailable = false;
     _updateSessionNotice();
     _updateStartBtnState();
+    _updateCyberAgentFlowDataControls();
   }
 
   // ─── Init ────────────────────────────────────────────────────────────────
   function init() {
     _load();
     _initModeToggle();
-    _initRangeSliders();
 
     $('watcher-setup-tab-btn')?.addEventListener('click', () => switchWatcherTab('setup'));
     $('watcher-network-engine-tab-btn')?.addEventListener('click', () => switchWatcherTab('engine'));
@@ -1254,6 +1233,8 @@ If nothing interesting is found, say that clearly.`
     $('watcher-timeout-select')?.addEventListener('change', _saveFormSettings);
     $('watcher-timer-interval')?.addEventListener('change', _saveFormSettings);
     $('watcher-timer-span')?.addEventListener('change', _saveFormSettings);
+    $('watcher-periodic-use-caf-data')?.addEventListener('change', () => { _updateStartBtnState(); _saveFormSettings(); });
+    $('nw-use-caf-data')?.addEventListener('change', _saveFormSettings);
     $('nw-analysis-interval')?.addEventListener('change', _saveFormSettings);
     $('nw-max-payload-bytes')?.addEventListener('change', _saveFormSettings);
     $('nw-max-packets-per-analysis')?.addEventListener('change', _saveFormSettings);
@@ -1293,6 +1274,7 @@ If nothing interesting is found, say that clearly.`
     _loadFormSettings();
     _updateNetworkEngineUi();
     _fetchSuricataStatus();
+    _refreshCyberAgentFlowDataAvailability();
 
     // Scaffold modal
     $('watcher-modal-close')?.addEventListener('click', () => { $('watcher-modal-overlay').style.display = 'none'; });

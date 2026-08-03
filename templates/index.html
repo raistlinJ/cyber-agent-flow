@@ -1105,41 +1105,26 @@
                                 <div class="input-group watcher-analysis-mode-group">
                                     <label>Analysis Mode</label>
                                     <div class="watcher-mode-toggle" id="watcher-mode-toggle">
-                                        <button type="button" class="watcher-mode-btn active" data-mode="continuous" id="watcher-mode-continuous">
-                                            <span>📡</span> Continuous
-                                        </button>
-                                        <button type="button" class="watcher-mode-btn" data-mode="timer" id="watcher-mode-timer">
-                                            <span>⏱</span> Timer
+                                        <button type="button" class="watcher-mode-btn active" data-mode="periodic" id="watcher-mode-periodic">
+                                            <i class="ph ph-clock-counter-clockwise"></i> Periodic
                                         </button>
                                         <button type="button" class="watcher-mode-btn" data-mode="network" id="watcher-mode-network">
-                                            <i class="ph ph-wifi-high"></i> Network
+                                            <i class="ph ph-wifi-high"></i> Network Stream
                                         </button>
                                     </div>
                                 </div>
 
-                                <!-- ── Continuous mode settings ──────────── -->
-                                <div id="watcher-continuous-settings" class="watcher-mode-settings">
+                                <!-- ── Periodic CyberAgentFlow analysis ──── -->
+                                <div id="watcher-periodic-settings" class="watcher-mode-settings">
                                     <div class="input-group" style="margin:0">
-                                        <label for="watcher-poll-interval">Poll interval (seconds)</label>
-                                        <div class="watcher-poll-row">
-                                            <input type="range" id="watcher-poll-interval" min="5" max="120" value="10" step="5" class="watcher-range">
-                                            <span id="watcher-poll-interval-val" class="watcher-range-val">10 s</span>
-                                        </div>
+                                        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
+                                            <input type="checkbox" id="watcher-periodic-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
+                                            Use CyberAgentFlow data
+                                        </label>
+                                        <span id="watcher-periodic-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
                                     </div>
                                     <div class="input-group" style="margin:0">
-                                        <label for="watcher-min-lines">Trigger sensitivity (min new lines)</label>
-                                        <div class="watcher-poll-row">
-                                            <input type="range" id="watcher-min-lines" min="1" max="20" value="3" step="1" class="watcher-range">
-                                            <span id="watcher-min-lines-val" class="watcher-range-val">3</span>
-                                        </div>
-                                        <span class="input-hint" style="font-size:0.75rem">Lower = more frequent analysis; higher = less noise</span>
-                                    </div>
-                                </div>
-
-                                <!-- ── Timer mode settings ───────────────── -->
-                                <div id="watcher-timer-settings" class="watcher-mode-settings" style="display:none">
-                                    <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-interval">Run analysis every</label>
+                                        <label for="watcher-timer-interval">Analysis cadence</label>
                                         <div class="select-wrapper">
                                             <i class="ph ph-clock icon-left"></i>
                                             <select id="watcher-timer-interval">
@@ -1153,7 +1138,7 @@
                                         </div>
                                     </div>
                                     <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-span">Log span to analyze</label>
+                                        <label for="watcher-timer-span">CyberAgentFlow data window</label>
                                         <div class="select-wrapper">
                                             <i class="ph ph-list-magnifying-glass icon-left"></i>
                                             <select id="watcher-timer-span">
@@ -1171,6 +1156,13 @@
 
                                 <!-- ── Network mode settings ─────────────── -->
                                 <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
+                                    <div class="input-group" style="margin:0">
+                                        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
+                                            <input type="checkbox" id="nw-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
+                                            Use CyberAgentFlow data
+                                        </label>
+                                        <span id="nw-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
+                                    </div>
                                     <div class="input-group" style="margin:0">
                                         <label for="nw-capture-source">Telemetry source</label>
                                         <div class="select-wrapper">
@@ -1402,11 +1394,11 @@
                                 </div>
 
                                 <p class="watcher-config-hint" id="watcher-config-hint-text">
-                                    <strong>📡 Continuous</strong> — watches new log lines as they arrive and surfaces suggestions on the fly.<br>
-                                    <strong>⏱ Timer</strong> — periodically reads the full (or windowed) session log for richer, summarizing analysis.
+                                    <strong>⏱ Periodic</strong> — analyzes the selected CyberAgentFlow data window on a fixed cadence.<br>
+                                    <strong>📡 Network Stream</strong> — continuously normalizes packet telemetry into the SSM pipeline.
                                 </p>
                                 <p class="watcher-config-hint" style="margin-top:0.4rem;opacity:0.75">
-                                    <em><strong>Pro Tip:</strong> For continuous mode, try a State Space Model (SSM) like <code>mamba</code> or <code>falcon3</code>. They are perfect for infinite streaming logs because they run in $O(1)$ constant time without context window degradation.</em>
+                                    <em><strong>Pro Tip:</strong> Network Stream works well with recurrent State Space Models (SSMs) such as <code>mamba</code> or <code>falcon3</code>, which maintain bounded flow state while processing an ongoing stream.</em>
                                 </p>
 
                             </div>

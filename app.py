@@ -2895,12 +2895,16 @@ def watcher_start():
     watcher_ssl = bool(data.get('ssl_verify', session_ssl))
 
     # Watch mode config
-    watch_mode = str(data.get('watch_mode', 'continuous'))  # 'continuous' | 'timer'
+    watch_mode = str(data.get('watch_mode', 'timer'))  # 'continuous' (legacy) | 'timer' (periodic)
     poll_interval = max(5, int(data.get('poll_interval', 10)))
     min_new_lines = max(1, int(data.get('min_new_lines', 3)))
     timer_interval = max(10, int(data.get('timer_interval', 60)))
     timer_span = str(data.get('timer_span', 'all'))  # 'all'|'last_N_lines:N'|'last_N_min:M'
     max_context_chars = int(data.get('max_context_chars', 4000))
+    use_cyber_agent_flow_data = bool(data.get('use_cyber_agent_flow_data', True))
+
+    if watch_mode == 'timer' and not use_cyber_agent_flow_data:
+        return jsonify({'success': False, 'error': 'Periodic analysis requires CyberAgentFlow session data.'}), 400
 
     if not watcher_model:
         return jsonify({'success': False, 'error': 'No model specified.'}), 400
@@ -2945,6 +2949,7 @@ def watcher_start():
                 'timer_interval': timer_interval,
                 'timer_span': timer_span,
                 'max_context_chars': max_context_chars,
+                'use_cyber_agent_flow_data': use_cyber_agent_flow_data,
             },
             event_queue=event_queue,
         )
@@ -3017,6 +3022,7 @@ def network_watcher_start():
     capture_source = data.get('capture_source', 'python')
     suricata_eve_path = data.get('suricata_eve_path', '/var/log/suricata/eve.json')
     suricata_event_types = data.get('suricata_event_types')
+    use_cyber_agent_flow_data = bool(data.get('use_cyber_agent_flow_data', False))
     try:
         _network_watcher.start(
             run_id,
@@ -3041,6 +3047,7 @@ def network_watcher_start():
             capture_source,
             suricata_eve_path,
             suricata_event_types,
+            use_cyber_agent_flow_data,
         )
         return jsonify({'success': True})
     except Exception as e:

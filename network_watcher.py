@@ -26,6 +26,7 @@ MAX_HEADER_VALUE_CHARS = 256
 DEFAULT_MAX_PACKETS_PER_ANALYSIS = 12
 MAX_CONFIGURED_PACKETS_PER_ANALYSIS = 500
 MAX_ANALYSIS_CHARS = 8_000
+MAX_CYBER_AGENT_FLOW_CONTEXT_CHARS = 2_000
 DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5
 MAX_ANALYSIS_INTERVAL_SECONDS = 300
 DEFAULT_SSM_ALERT_THRESHOLD = 0.72
@@ -101,6 +102,9 @@ class NetworkWatcher:
         self.analysis_engine = "llamacpp_ssm"
         self.ssm_alert_threshold = DEFAULT_SSM_ALERT_THRESHOLD
         self.ssm_alert_cooldown_seconds = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS
+        self.use_cyber_agent_flow_data = False
+        self._caf_context_mtime = None
+        self._caf_context_last_check = 0.0
         self._ssm_runtime = None
         self._last_alert_by_flow = {}
 
@@ -313,7 +317,8 @@ class NetworkWatcher:
               ssm_alert_threshold: float = DEFAULT_SSM_ALERT_THRESHOLD,
               ssm_alert_cooldown_seconds: int = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS,
               capture_source: str = "python", suricata_eve_path: str = DEFAULT_SURICATA_EVE_PATH,
-              suricata_event_types: list[str] | None = None):
+              suricata_event_types: list[str] | None = None,
+              use_cyber_agent_flow_data: bool = False):
         self.capture_source = "suricata_eve" if capture_source == "suricata_eve" else "python"
         if self.capture_source == "python" and not self.watcher_available:
             raise RuntimeError("pyshark is not installed. Select Suricata EVE JSON or install pyshark.")
@@ -349,6 +354,9 @@ class NetworkWatcher:
         self.packet_fields = self._normalize_packet_fields(packet_fields)
         self.suricata_eve_path = str(suricata_eve_path or DEFAULT_SURICATA_EVE_PATH).strip()
         self.suricata_event_types = self._normalize_suricata_event_types(suricata_event_types)
+        self.use_cyber_agent_flow_data = bool(use_cyber_agent_flow_data)
+        self._caf_context_mtime = None
+        self._caf_context_last_check = 0.0
         self.analysis_engine = analysis_engine if analysis_engine in {"llamacpp_ssm", "remote_ssm"} else "llamacpp_ssm"
         self.ssm_alert_threshold = self._bounded_float(
             ssm_alert_threshold, DEFAULT_SSM_ALERT_THRESHOLD, 0.05, 1.0
@@ -540,6 +548,7 @@ class NetworkWatcher:
                 "max_packet_payload_bytes": self.max_packet_payload_bytes,
                 "max_packets_per_analysis": self.max_packets_per_analysis,
                 "packet_fields": sorted(self.packet_fields),
+                "use_cyber_agent_flow_data": self.use_cyber_agent_flow_data,
                 "ssm_alert_threshold": self.ssm_alert_threshold,
                 "ssm_alert_cooldown_seconds": self.ssm_alert_cooldown_seconds,
             },
@@ -766,6 +775,9 @@ class NetworkWatcher:
         started = time.time()
         flow_key = packet_flow_key(record)
         event = packet_stream_event(record)
+        cyber_agent_flow_update = self._cyber_agent_flow_update()
+        if cyber_agent_flow_update:
+            event["cyber_agent_flow"] = {"transcript_update": cyber_agent_flow_update}
         interaction_id = self._record_interaction({
             "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
             "engine": "llamacpp_ssm",
@@ -817,6 +829,29 @@ class NetworkWatcher:
                 analysis="",
             )
             self._add_log("error", f"SSM event evaluation failed: {exc}")
+
+    def _cyber_agent_flow_update(self) -> str:
+        """Return a bounded transcript update only when the active run changes."""
+        if not self.use_cyber_agent_flow_data or not self.run_id:
+            return ""
+        now = time.monotonic()
+        if now - self._caf_context_last_check < 1.0:
+            return ""
+        self._caf_context_last_check = now
+        transcript_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "runs", str(self.run_id), "transcript.md"
+        )
+        try:
+            stat = os.stat(transcript_path)
+            if self._caf_context_mtime == stat.st_mtime_ns:
+                return ""
+            with open(transcript_path, "rb") as transcript:
+                transcript.seek(max(0, stat.st_size - MAX_CYBER_AGENT_FLOW_CONTEXT_CHARS))
+                update = transcript.read(MAX_CYBER_AGENT_FLOW_CONTEXT_CHARS).decode("utf-8", errors="replace").strip()
+            self._caf_context_mtime = stat.st_mtime_ns
+            return update
+        except OSError:
+            return ""
 
     def _remote_ssm_endpoint(self) -> str:
         """Map an existing provider base URL to the explicit stream-service contract."""
