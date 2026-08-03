@@ -711,14 +711,12 @@ If nothing interesting is found, say that clearly.`;
     const txt = $('watcher-status-text');
     const lbl = $('watcher-start-btn-label');
     const icn = $('watcher-start-btn-icon');
-    const stopBtn = $('watcher-stop-btn');
 
     if (btn) btn.disabled = false;
 
     // Both Periodic and Continuous are network watcher modes. They share one
     // capture service, but differ in batch versus per-flow SSM analysis.
     const showRunning = _isNwRunning;
-    if (stopBtn) stopBtn.disabled = !showRunning;
 
     if (showRunning) {
       if (lbl) lbl.textContent = 'Stop Watcher';
@@ -839,9 +837,7 @@ If nothing interesting is found, say that clearly.`;
 
   async function _stopNetworkWatcher() {
     const startBtn = $('watcher-start-btn');
-    const stopBtn = $('watcher-stop-btn');
     if (startBtn) startBtn.disabled = true;
-    if (stopBtn) stopBtn.disabled = true;
     try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
     _setStatus(false, 'Idle — not watching', null, true);
     _stopNwStatusPoll();
@@ -1412,7 +1408,6 @@ If nothing interesting is found, say that clearly.`;
       _saveFormSettings();
     });
     $('watcher-start-btn')?.addEventListener('click', _toggleWatcher);
-    $('watcher-stop-btn')?.addEventListener('click', _stopNetworkWatcher);
     $('watcher-clear-all-btn')?.addEventListener('click', _clearAll);
 
     // Restore saved form settings
