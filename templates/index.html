@@ -1093,7 +1093,8 @@
                                     </div>
                                 </details>
                                 </div>
-                                <div class="input-group">
+                                <div id="watcher-system-prompt-periodic-slot">
+                                <div id="watcher-system-prompt-section" class="input-group">
                                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
                                         <label for="watcher-system-prompt" style="margin:0;">System Prompt</label>
                                         <button type="button" id="watcher-reset-prompt-btn" class="btn btn-secondary" style="font-size:0.75rem; padding:0.2rem 0.5rem; display:inline-flex; align-items:center; gap:0.3rem;" title="Reset to default prompt for current mode">
@@ -1102,6 +1103,7 @@
                                     </div>
                                     <textarea id="watcher-system-prompt" rows="6" style="width:100%; font-family:'SFMono-Regular',Consolas,Monaco,monospace; font-size:0.8rem; background:var(--bg-surface-2); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; padding:0.65rem; resize:vertical; line-height:1.4;" placeholder="System prompt instructions..."></textarea>
                                     <span id="watcher-system-prompt-hint" class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Sent with each periodic packet batch. Click Default to restore the batch-triage policy.</span>
+                                </div>
                                 </div>
                             </div>
                             </div>
@@ -1138,6 +1140,7 @@
                                 <!-- ── Shared packet telemetry settings ───── -->
                                 <div id="watcher-packet-settings" class="watcher-mode-settings">
                                     <div id="nw-continuous-engine-top"></div>
+                                    <div id="watcher-system-prompt-continuous-slot"></div>
                                     <div id="nw-caf-data-section" class="input-group" style="margin:0">
                                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
                                             <input type="checkbox" id="nw-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
