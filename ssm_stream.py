@@ -177,7 +177,11 @@ class LlamaCppSsmRuntime:
         try:
             model = getattr(self._llm, "_model", None)
             capability = getattr(llama_cpp, "llama_model_is_recurrent", None)
-            return bool(model is not None and capability and capability(model))
+            # llama-cpp-python 0.3.x keeps the native ``llama_model_p`` value
+            # on its private LlamaModel wrapper as ``.model``.  Older releases
+            # exposed that pointer directly, so support both shapes.
+            native_model = getattr(model, "model", model)
+            return bool(native_model is not None and capability and capability(native_model))
         except Exception:
             return False
 
