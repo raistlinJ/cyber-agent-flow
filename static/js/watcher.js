@@ -308,17 +308,19 @@ If nothing interesting is found, say that clearly.`
   function _updateNetworkEngineUi() {
     const localSsm = _isLocalSsmEngine();
     const networkMode = _currentMode === 'network';
+    const engineTab = $('watcher-network-engine-tab-btn');
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
     const localSettings = $('nw-local-ssm-settings');
     const remoteNote = $('nw-remote-batch-note');
+    const engineRemoteNote = $('nw-engine-remote-note');
     const sameModel = $('watcher-same-llm-chip');
     const providerLabel = $('watcher-provider-label');
     const urlLabel = $('watcher-url-label');
     const modelLabel = $('watcher-model-label');
     const providerHint = $('watcher-ssm-provider-hint');
     if (remoteSettings) remoteSettings.style.display = '';
-    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Watcher LLM';
+    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Provider & Model Discovery' : '<span>🔭</span> Watcher LLM';
     if (providerLabel) providerLabel.textContent = networkMode ? 'SSM provider / discovery endpoint' : 'Provider';
     if (urlLabel) urlLabel.textContent = networkMode ? 'Provider endpoint URL' : 'LLM URL';
     if (modelLabel) modelLabel.textContent = networkMode ? 'Discovered SSM model' : 'Model';
@@ -330,6 +332,12 @@ If nothing interesting is found, say that clearly.`
     }
     if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
     if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
+    if (engineRemoteNote) engineRemoteNote.style.display = networkMode && !localSsm ? '' : 'none';
+    if (engineTab) {
+      engineTab.disabled = !networkMode;
+      engineTab.classList.toggle('config-subtab-btn-muted', !networkMode);
+      engineTab.title = networkMode ? 'Configure the network analysis engine' : 'Select Network analysis mode in Setup first';
+    }
     if (sameModel && localSsm) sameModel.style.display = 'none';
     _updateStartBtnState();
     _renderSsmCompatibility();
@@ -1038,28 +1046,33 @@ If nothing interesting is found, say that clearly.`
   // ─── Tab active tracking ──────────────────────────────────────────────────
   function switchWatcherTab(target) {
     const setupTabBtn = $('watcher-setup-tab-btn');
+    const engineTabBtn = $('watcher-network-engine-tab-btn');
     const metricsTabBtn = $('watcher-metrics-tab-btn');
     const setupPanel = $('watcher-setup-panel');
+    const enginePanel = $('watcher-network-engine-panel');
     const metricsPanel = $('watcher-metrics-panel');
 
-    if (!setupTabBtn || !metricsTabBtn || !setupPanel || !metricsPanel) {
-      console.warn('Watcher tab elements missing:', {setupTabBtn, metricsTabBtn, setupPanel, metricsPanel});
+    if (!setupTabBtn || !engineTabBtn || !metricsTabBtn || !setupPanel || !enginePanel || !metricsPanel) {
+      console.warn('Watcher tab elements missing:', {setupTabBtn, engineTabBtn, metricsTabBtn, setupPanel, enginePanel, metricsPanel});
       return;
     }
 
     // Toggle tab button active state
     setupTabBtn.classList.toggle('active', target === 'setup');
-    metricsTabBtn.classList.toggle('active', target !== 'setup');
+    engineTabBtn.classList.toggle('active', target === 'engine');
+    metricsTabBtn.classList.toggle('active', target === 'metrics');
 
     // Toggle panel active class — CSS rules control display via .watcher-subtab-panel / .watcher-subtab-panel.active
     setupPanel.classList.toggle('active', target === 'setup');
-    metricsPanel.classList.toggle('active', target !== 'setup');
+    enginePanel.classList.toggle('active', target === 'engine');
+    metricsPanel.classList.toggle('active', target === 'metrics');
 
     // Remove any leftover inline display styles that could conflict with CSS class rules
     setupPanel.style.removeProperty('display');
+    enginePanel.style.removeProperty('display');
     metricsPanel.style.removeProperty('display');
 
-    if (target !== 'setup') {
+    if (target === 'metrics') {
         _updateMetricsView();
     }
   }
@@ -1185,6 +1198,7 @@ If nothing interesting is found, say that clearly.`
     _initRangeSliders();
 
     $('watcher-setup-tab-btn')?.addEventListener('click', () => switchWatcherTab('setup'));
+    $('watcher-network-engine-tab-btn')?.addEventListener('click', () => switchWatcherTab('engine'));
     $('watcher-metrics-tab-btn')?.addEventListener('click', () => switchWatcherTab('metrics'));
 
     const ssmModalOverlay = $('nw-ssm-modal-overlay');
