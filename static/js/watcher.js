@@ -110,7 +110,6 @@ If nothing interesting is found, say that clearly.`
         packetFields,
         analysisEngine: $('nw-analysis-engine')?.value,
         ssmModelPath: $('nw-ssm-model-path')?.value,
-        ssmModelRoot: $('nw-ssm-model-root')?.value,
         ssmGpuLayers: $('nw-ssm-gpu-layers')?.value,
         ssmContextTokens: $('nw-ssm-context-tokens')?.value,
         ssmMaxFlows: $('nw-ssm-max-flows')?.value,
@@ -162,7 +161,6 @@ If nothing interesting is found, say that clearly.`
       }
       if (settings.analysisEngine && $('nw-analysis-engine')) $('nw-analysis-engine').value = settings.analysisEngine;
       if (settings.ssmModelPath !== undefined && $('nw-ssm-model-path')) $('nw-ssm-model-path').value = settings.ssmModelPath;
-      if (settings.ssmModelRoot !== undefined && $('nw-ssm-model-root')) $('nw-ssm-model-root').value = settings.ssmModelRoot;
       if (settings.ssmGpuLayers && $('nw-ssm-gpu-layers')) $('nw-ssm-gpu-layers').value = settings.ssmGpuLayers;
       if (settings.ssmContextTokens && $('nw-ssm-context-tokens')) $('nw-ssm-context-tokens').value = settings.ssmContextTokens;
       if (settings.ssmMaxFlows && $('nw-ssm-max-flows')) $('nw-ssm-max-flows').value = settings.ssmMaxFlows;
@@ -560,8 +558,7 @@ If nothing interesting is found, say that clearly.`
   async function _fetchLocalSsmModels() {
     const button = $('nw-fetch-local-models-btn');
     const selector = $('nw-local-model-select');
-    const configuredRoot = ($('nw-ssm-model-root')?.value || '').trim();
-    const root = configuredRoot || ($('nw-ssm-model-path')?.value || '').trim();
+    const root = ($('nw-ssm-model-path')?.value || '').trim();
     const status = $('nw-local-model-fetch-status');
     if (!button || !selector) return;
 
@@ -584,7 +581,7 @@ If nothing interesting is found, say that clearly.`
           const roots = (data.search_roots || []).join(', ');
           status.textContent = roots
             ? `No .gguf files found below: ${roots}`
-            : 'No readable model folders were found. Enter a local model folder and fetch again.';
+            : 'No local GGUF models were found.';
           status.style.display = '';
           status.style.color = 'var(--text-secondary)';
         }
@@ -1304,7 +1301,6 @@ If nothing interesting is found, say that clearly.`
       $(id)?.addEventListener(id === 'nw-ssm-model-path' ? 'input' : 'change', () => { _updateStartBtnState(); _saveFormSettings(); });
     });
     $('nw-fetch-local-models-btn')?.addEventListener('click', _fetchLocalSsmModels);
-    $('nw-ssm-model-root')?.addEventListener('input', _saveFormSettings);
     $('nw-local-model-select')?.addEventListener('change', () => {
       const path = $('nw-local-model-select')?.value || '';
       if ($('nw-ssm-model-path') && path) $('nw-ssm-model-path').value = path;
