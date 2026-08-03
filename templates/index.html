@@ -992,9 +992,9 @@
                         <div class="watcher-config-card" style="max-width: 800px; margin: 0 auto;">
                             <div id="watcher-model-discovery-setup-slot">
                             <div id="watcher-model-discovery-section">
-                                <h3 class="section-title" id="watcher-model-heading" style="margin-bottom:1rem; font-size:0.95rem">
-                                    <span>🔭</span> Watcher LLM
-                                </h3>
+                            <details id="watcher-model-discovery-box" class="watcher-config-section" open>
+                                <summary><span id="watcher-model-heading"><span>🔭</span> Packet Batch Model</span><small id="watcher-model-summary">Provider, model, request context, and timeout</small></summary>
+                                <div class="watcher-config-section-body">
 
                             <div id="watcher-remote-model-settings">
                                 <!-- Same-LLM warning -->
@@ -1059,10 +1059,7 @@
                                     <span id="watcher-ssm-provider-hint" class="input-hint" style="display:none;margin-top:0.45rem">Discovery is advisory: a remote service must explicitly support persistent per-flow SSM state. Local mode uses the GGUF path below.</span>
                                 </div>
 
-                                <div id="watcher-request-limits-setup-slot">
-                                <details id="watcher-request-limits" class="watcher-config-section" open>
-                                    <summary><span>LLM request limits</span><small>Context and timeout</small></summary>
-                                    <div class="nw-config-grid watcher-config-section-body">
+                                <div id="watcher-request-limits" class="nw-config-grid">
                                     <div class="input-group" style="margin:0">
                                         <label for="watcher-context-size">Max Context Size (Chars)</label>
                                         <div class="select-wrapper">
@@ -1090,8 +1087,6 @@
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
                                     </div>
-                                    </div>
-                                </details>
                                 </div>
                                 <div id="watcher-system-prompt-periodic-slot">
                                 <div id="watcher-system-prompt-section" class="input-group">
@@ -1106,6 +1101,8 @@
                                 </div>
                                 </div>
                             </div>
+                            </div>
+                            </details>
                             </div>
                             </div>
                                 <div class="input-group watcher-analysis-mode-group">

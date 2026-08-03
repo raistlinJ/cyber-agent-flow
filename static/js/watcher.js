@@ -354,7 +354,6 @@ If nothing interesting is found, say that clearly.`;
     const discoverySection = $('watcher-model-discovery-section');
     const discoveryTarget = continuousMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const requestLimits = $('watcher-request-limits');
-    const requestLimitsTarget = $('watcher-request-limits-setup-slot');
     const streamLimits = $('nw-stream-limits');
     const streamLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-periodic-stream-limits-slot');
     const promptSection = $('watcher-system-prompt-section');
@@ -362,6 +361,7 @@ If nothing interesting is found, say that clearly.`;
     const cafDataSection = $('nw-caf-data-section');
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
+    const modelSummary = $('watcher-model-summary');
     const localSettings = $('nw-local-ssm-settings');
     const remoteNote = $('nw-remote-batch-note');
     const sameModel = $('watcher-same-llm-chip');
@@ -374,9 +374,6 @@ If nothing interesting is found, say that clearly.`;
     }
     if (discoverySection && discoveryTarget && discoverySection.parentElement !== discoveryTarget) {
       discoveryTarget.append(discoverySection);
-    }
-    if (requestLimits && requestLimitsTarget && requestLimits.parentElement !== requestLimitsTarget) {
-      requestLimitsTarget.append(requestLimits);
     }
     if (streamLimits && streamLimitsTarget && streamLimits.parentElement !== streamLimitsTarget) {
       streamLimitsTarget.append(streamLimits);
@@ -400,6 +397,9 @@ If nothing interesting is found, say that clearly.`;
     if (discoverySection) discoverySection.style.display = continuousMode && localSsm ? 'none' : '';
     if (remoteSettings) remoteSettings.style.display = !continuousMode || !localSsm ? '' : 'none';
     if (heading) heading.innerHTML = continuousMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Packet Batch Model';
+    if (modelSummary) modelSummary.textContent = continuousMode
+      ? 'Provider endpoint, model discovery, and stream compatibility'
+      : 'Provider, model, request context, and timeout';
     if (providerLabel) providerLabel.textContent = continuousMode ? 'SSM provider / discovery endpoint' : 'Provider';
     if (urlLabel) urlLabel.textContent = continuousMode ? 'Provider endpoint URL' : 'LLM URL';
     if (modelLabel) modelLabel.textContent = continuousMode ? 'Discovered SSM model' : 'Model';
