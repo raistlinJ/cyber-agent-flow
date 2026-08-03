@@ -394,7 +394,7 @@ If nothing interesting is found, say that clearly.`;
     const streamLimitsHeading = $('nw-stream-limits-heading');
     const streamLimitsSummary = $('nw-stream-limits-summary');
     if (streamLimitsHeading) streamLimitsHeading.textContent = continuousMode ? 'Packet intake and safety limits' : 'Packet batching and payload limits';
-    if (streamLimitsSummary) streamLimitsSummary.textContent = continuousMode ? 'Queue, flow, payload, and alert bounds' : 'Batch size and sample bounds';
+    if (streamLimitsSummary) streamLimitsSummary.textContent = continuousMode ? 'Queue, flow, payload, and alert bounds' : 'Batch size, payload, and intake bounds';
     if (engineSettings) engineSettings.style.display = continuousMode ? '' : 'none';
     if (cafDataSection) cafDataSection.style.display = continuousMode ? '' : 'none';
     if (discoverySection) discoverySection.style.display = continuousMode && localSsm ? 'none' : '';
@@ -539,6 +539,12 @@ If nothing interesting is found, say that clearly.`;
       analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
       max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
       max_packets_per_analysis: parseInt($('nw-max-packets-per-analysis')?.value || '12'),
+      max_queued_events: parseInt($('nw-max-queued-events')?.value || '500'),
+      queue_overflow_policy: $('nw-queue-overflow-policy')?.value || 'drop_newest',
+      max_normalized_event_bytes: parseInt($('nw-max-normalized-event-bytes')?.value || '8192'),
+      per_flow_events_per_second: parseInt($('nw-per-flow-events-per-second')?.value || '0'),
+      flow_idle_timeout_seconds: parseInt($('nw-flow-idle-timeout')?.value || '300'),
+      payload_sample_every: parseInt($('nw-payload-sample-every')?.value || '1'),
       packet_fields: Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map((checkbox) => checkbox.value),
     };
     if (_currentMode === 'continuous') {
@@ -552,12 +558,6 @@ If nothing interesting is found, say that clearly.`;
         ssm_max_flows: parseInt($('nw-ssm-max-flows')?.value || '256'),
         ssm_alert_threshold: parseFloat($('nw-ssm-alert-threshold')?.value || '0.72'),
         ssm_alert_cooldown_seconds: parseInt($('nw-ssm-alert-cooldown')?.value || '60'),
-        max_queued_events: parseInt($('nw-max-queued-events')?.value || '500'),
-        queue_overflow_policy: $('nw-queue-overflow-policy')?.value || 'drop_newest',
-        max_normalized_event_bytes: parseInt($('nw-max-normalized-event-bytes')?.value || '8192'),
-        per_flow_events_per_second: parseInt($('nw-per-flow-events-per-second')?.value || '0'),
-        flow_idle_timeout_seconds: parseInt($('nw-flow-idle-timeout')?.value || '300'),
-        payload_sample_every: parseInt($('nw-payload-sample-every')?.value || '1'),
         burst_alert_window_seconds: parseInt($('nw-burst-alert-window')?.value || '0'),
         use_cyber_agent_flow_data: Boolean($('nw-use-caf-data')?.checked),
       };

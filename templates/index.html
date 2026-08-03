@@ -1294,37 +1294,37 @@
                                             <span class="input-hint">Caps each batch when batch analysis is in use.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-max-queued-events">Max queued events</label>
                                             <div class="select-wrapper"><i class="ph ph-queue icon-left"></i><select id="nw-max-queued-events"><option value="250">250 events</option><option value="500" selected>500 events</option><option value="1000">1,000 events</option><option value="2500">2,500 events</option><option value="5000">5,000 events</option></select><i class="ph ph-caret-down icon-right"></i></div>
                                             <span class="input-hint">Bounds watcher memory when capture bursts exceed inference speed.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-queue-overflow-policy">Queue overflow policy</label>
                                             <div class="select-wrapper"><i class="ph ph-arrows-clockwise icon-left"></i><select id="nw-queue-overflow-policy"><option value="drop_newest" selected>Drop newest event</option><option value="drop_oldest">Drop oldest event</option></select><i class="ph ph-caret-down icon-right"></i></div>
                                             <span class="input-hint">Keep continuity, or prefer the freshest traffic during overload.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-max-normalized-event-bytes">Max normalized event size</label>
                                             <div class="select-wrapper"><i class="ph ph-file-code icon-left"></i><select id="nw-max-normalized-event-bytes"><option value="2048">2 KB</option><option value="4096">4 KB</option><option value="8192" selected>8 KB</option><option value="16384">16 KB</option><option value="32768">32 KB</option></select><i class="ph ph-caret-down icon-right"></i></div>
-                                            <span class="input-hint">Hard cap after decoding, before an event reaches the flow model.</span>
+                                            <span class="input-hint">Hard cap after decoding, before an event reaches batch or flow analysis.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-per-flow-events-per-second">Per-flow events per second</label>
                                             <div class="select-wrapper"><i class="ph ph-gauge icon-left"></i><select id="nw-per-flow-events-per-second"><option value="0" selected>Unlimited</option><option value="25">25 events / second</option><option value="50">50 events / second</option><option value="100">100 events / second</option><option value="250">250 events / second</option></select><i class="ph ph-caret-down icon-right"></i></div>
-                                            <span class="input-hint">Stops a single noisy flow from consuming the stream analyzer.</span>
+                                            <span class="input-hint">Stops one noisy flow from crowding out other telemetry.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-flow-idle-timeout">Flow idle timeout</label>
                                             <div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-flow-idle-timeout"><option value="60">1 minute</option><option value="300" selected>5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select><i class="ph ph-caret-down icon-right"></i></div>
-                                            <span class="input-hint">Releases local SSM state and intake tracking after a flow goes quiet.</span>
+                                            <span class="input-hint">Releases intake tracking, plus local SSM state when Continuous is active.</span>
                                         </div>
 
-                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                        <div class="input-group nw-intake-limit" style="margin:0">
                                             <label for="nw-payload-sample-every">Payload sampling rate</label>
                                             <div class="select-wrapper"><i class="ph ph-funnel icon-left"></i><select id="nw-payload-sample-every"><option value="1" selected>Every event</option><option value="2">Every 2nd event</option><option value="5">Every 5th event</option><option value="10">Every 10th event</option></select><i class="ph ph-caret-down icon-right"></i></div>
                                             <span class="input-hint">Headers continue for every event; this samples decoded payloads only.</span>
