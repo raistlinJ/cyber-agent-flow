@@ -357,7 +357,7 @@ class NetworkWatcher:
         self.use_cyber_agent_flow_data = bool(use_cyber_agent_flow_data)
         self._caf_context_mtime = None
         self._caf_context_last_check = 0.0
-        self.analysis_engine = analysis_engine if analysis_engine in {"llamacpp_ssm", "remote_ssm"} else "llamacpp_ssm"
+        self.analysis_engine = analysis_engine if analysis_engine in {"batch_llm", "llamacpp_ssm", "remote_ssm"} else "llamacpp_ssm"
         self.ssm_alert_threshold = self._bounded_float(
             ssm_alert_threshold, DEFAULT_SSM_ALERT_THRESHOLD, 0.05, 1.0
         )
@@ -375,7 +375,9 @@ class NetworkWatcher:
             )
             self._ssm_runtime.start()
         elif not self.model:
-            raise RuntimeError("Select an SSM model exposed by the remote SSM service.")
+            raise RuntimeError(
+                "Select a model for periodic batch analysis or an SSM model for the remote stream service."
+            )
 
         # Reset metrics & logs
         self.packets_captured = 0
@@ -464,6 +466,8 @@ class NetworkWatcher:
         return "unlimited" if self.max_packets_per_analysis is None else str(self.max_packets_per_analysis)
 
     def _engine_label(self) -> str:
+        if self.analysis_engine == "batch_llm":
+            return f"periodic packet-batch LLM; sends every {self.analysis_interval_seconds}s"
         if self.analysis_engine == "llamacpp_ssm":
             return "local llama.cpp recurrent SSM; every packet processed immediately"
         return "remote SSM stream service; every normalized event is sent immediately"
@@ -914,7 +918,12 @@ class NetworkWatcher:
             "If nothing interesting is found, say that clearly."
         )
 
-        prompt = f"{base_instructions}\n\nPACKETS_JSON:\n{serialized_batch}"
+        cyber_agent_flow_update = self._cyber_agent_flow_update()
+        cyber_agent_flow_section = (
+            f"\n\nCYBER_AGENT_FLOW_UPDATE:\n{cyber_agent_flow_update}"
+            if cyber_agent_flow_update else ""
+        )
+        prompt = f"{base_instructions}\n\nPACKETS_JSON:\n{serialized_batch}{cyber_agent_flow_section}"
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:

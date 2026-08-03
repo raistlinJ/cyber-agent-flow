@@ -1109,55 +1109,27 @@
                                         <button type="button" class="watcher-mode-btn active" data-mode="periodic" id="watcher-mode-periodic">
                                             <i class="ph ph-clock-counter-clockwise"></i> Periodic
                                         </button>
-                                        <button type="button" class="watcher-mode-btn" data-mode="network" id="watcher-mode-network">
-                                            <i class="ph ph-wifi-high"></i> Network Stream
+                                        <button type="button" class="watcher-mode-btn" data-mode="continuous" id="watcher-mode-continuous">
+                                            <i class="ph ph-waveform"></i> Continuous
                                         </button>
                                     </div>
                                 </div>
 
-                                <!-- ── Periodic CyberAgentFlow analysis ──── -->
+                                <!-- ── Optional CyberAgentFlow context for periodic packet batches ──── -->
                                 <div id="watcher-periodic-settings" class="watcher-mode-settings">
                                     <div class="input-group" style="margin:0">
                                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
                                             <input type="checkbox" id="watcher-periodic-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
                                             Use CyberAgentFlow data
                                         </label>
-                                        <span id="watcher-periodic-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
+                                        <span id="watcher-periodic-caf-data-hint" class="input-hint">Optionally append active CyberAgentFlow session data to packet batches. Start Service to enable it.</span>
                                     </div>
-                                    <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-interval">Analysis cadence</label>
-                                        <div class="select-wrapper">
-                                            <i class="ph ph-clock icon-left"></i>
-                                            <select id="watcher-timer-interval">
-                                                <option value="30">30 seconds</option>
-                                                <option value="60" selected>1 minute</option>
-                                                <option value="150">2.5 minutes</option>
-                                                <option value="300">5 minutes</option>
-                                                <option value="600">10 minutes</option>
-                                            </select>
-                                            <i class="ph ph-caret-down icon-right"></i>
-                                        </div>
-                                    </div>
-                                    <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-span">CyberAgentFlow data window</label>
-                                        <div class="select-wrapper">
-                                            <i class="ph ph-list-magnifying-glass icon-left"></i>
-                                            <select id="watcher-timer-span">
-                                                <option value="all">All — full session log</option>
-                                                <option value="last_N_lines:50">Last 50 lines</option>
-                                                <option value="last_N_lines:100">Last 100 lines</option>
-                                                <option value="last_N_min:5">Last 5 minutes</option>
-                                                <option value="last_N_min:10">Last 10 minutes</option>
-                                                <option value="last_N_min:30">Last 30 minutes</option>
-                                            </select>
-                                            <i class="ph ph-caret-down icon-right"></i>
-                                        </div>
-                                    </div>
+                                    <div id="watcher-periodic-stream-limits-slot"></div>
                                 </div>
 
-                                <!-- ── Network mode settings ─────────────── -->
-                                <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
-                                    <div class="input-group" style="margin:0">
+                                <!-- ── Shared packet telemetry settings ───── -->
+                                <div id="watcher-packet-settings" class="watcher-mode-settings">
+                                    <div id="nw-caf-data-section" class="input-group" style="margin:0">
                                         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
                                             <input type="checkbox" id="nw-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
                                             Use CyberAgentFlow data
@@ -1192,7 +1164,7 @@
                                     <div id="nw-engine-settings-setup-slot">
                                     <div id="nw-engine-settings-section">
                                     <div class="input-group" style="margin:0">
-                                        <label for="nw-analysis-engine">Network analysis engine</label>
+                                        <label for="nw-analysis-engine">Continuous analysis engine</label>
                                         <div class="select-wrapper">
                                             <i class="ph ph-cpu icon-left"></i>
                                             <select id="nw-analysis-engine">
@@ -1328,7 +1300,7 @@
                                     </div>
 
                                     <div id="nw-python-source-settings">
-                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service. The Python packet cadence controls below only apply if you later select a non-stream batch implementation.</p>
+                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service, which retains its own per-flow state.</p>
                                     <div class="input-group" style="margin:0">
                                         <label>Network Interface(s)</label>
                                         <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
@@ -1397,11 +1369,11 @@
                                 </div>
 
                                 <p class="watcher-config-hint" id="watcher-config-hint-text">
-                                    <strong>⏱ Periodic</strong> — analyzes the selected CyberAgentFlow data window on a fixed cadence.<br>
-                                    <strong>📡 Network Stream</strong> — continuously normalizes packet telemetry into the SSM pipeline.
+                                    <strong>⏱ Periodic</strong> — sends bounded, decoded packet batches to the configured model on the selected cadence.<br>
+                                    <strong>〰️ Continuous</strong> — continuously normalizes telemetry into the flow-specific SSM pipeline and alerts on notable scores.
                                 </p>
                                 <p class="watcher-config-hint" style="margin-top:0.4rem;opacity:0.75">
-                                    <em><strong>Pro Tip:</strong> Network Stream works well with recurrent State Space Models (SSMs) such as <code>mamba</code> or <code>falcon3</code>, which maintain bounded flow state while processing an ongoing stream.</em>
+                                    <em><strong>Pro Tip:</strong> Continuous works well with recurrent State Space Models (SSMs) such as <code>mamba</code> or <code>falcon3</code>, which maintain bounded flow state while processing an ongoing stream.</em>
                                 </p>
 
                             </div>

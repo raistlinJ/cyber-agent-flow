@@ -89,6 +89,14 @@ def test_unlimited_packet_cap_serializes_all_available_records():
     assert json.loads(watcher._serialize_packet_batch(records))["packet_count"] == 3
 
 
+def test_periodic_batch_engine_remains_distinct_from_the_flow_ssm_engines():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.analysis_engine = "batch_llm"
+    watcher.analysis_interval_seconds = 10
+
+    assert "periodic packet-batch LLM" in watcher._engine_label()
+
+
 def test_ssm_alert_threshold_respects_per_flow_cooldown():
     watcher = NetworkWatcher(event_store=None)
     watcher.ssm_alert_threshold = 0.72

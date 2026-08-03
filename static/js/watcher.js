@@ -2,8 +2,8 @@
  * watcher.js — Tool Suggestion + Analysis tab for cyber-agentflow
  *
  * Two analysis modes:
- *   ⏱  Periodic       — analyzes a selected CyberAgentFlow data window on a cadence
- *   📡 Network Stream — processes normalized network telemetry continuously
+ *   ⏱  Periodic       — sends bounded decoded packet batches to a model on a cadence
+ *   〰️ Continuous — processes normalized network telemetry with per-flow SSM state
  *
  * Both modes push two SSE event types:
  *   tool_suggestion      → rendered as a suggestion card
@@ -33,7 +33,7 @@
   let _nwInteractionRevision = null;
   let _modelSsmCompatibility = new Map();
   let _suricataStatus = null;
-  let _currentMode = 'periodic'; // 'periodic' | 'network'
+  let _currentMode = 'periodic'; // 'periodic' | 'continuous'
   let _cyberAgentFlowDataAvailable = false;
 
   // ─── Storage ─────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ If you see plaintext credentials, API keys, sensitive server banners, or anythin
 state the finding in 2-3 concise sentences. Return only the final observation, with no internal reasoning.
 If nothing interesting is found, say that clearly.`,
 
-    network: `You are an anomaly detection SSM watching a live packet stream.
+    continuous: `You are an anomaly detection SSM watching a live packet stream.
 Review the structured packet records: protocol stack, decoded headers, and bounded payloads.
 Treat HTTPS payload bytes as encrypted unless the record explicitly contains decoded HTTP data.
 If you see plaintext credentials, API keys, sensitive server banners, or anything notable,
@@ -134,6 +134,9 @@ If nothing interesting is found, say that clearly.`
         if (settings.customPrompts.timer && !settings.customPrompts.periodic) {
           _customPrompts.periodic = settings.customPrompts.timer;
         }
+        if (settings.customPrompts.network && !settings.customPrompts.continuous) {
+          _customPrompts.continuous = settings.customPrompts.network;
+        }
       }
 
       if (settings.provider && $('watcher-provider-select')) $('watcher-provider-select').value = settings.provider;
@@ -170,15 +173,17 @@ If nothing interesting is found, say that clearly.`
       }
 
       if (settings.mode) {
-        _currentMode = settings.mode === 'continuous' ? 'network' : (settings.mode === 'timer' ? 'periodic' : settings.mode);
+        _currentMode = settings.mode === 'network' || settings.mode === 'continuous'
+          ? 'continuous'
+          : 'periodic';
         document.querySelectorAll('.watcher-mode-btn').forEach((b) => {
           b.classList.toggle('active', b.dataset.mode === _currentMode);
         });
         if ($('watcher-periodic-settings')) $('watcher-periodic-settings').style.display = _currentMode === 'periodic' ? '' : 'none';
-        const nwSettings = $('watcher-network-settings');
-        if (nwSettings) {
-          nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
-          if (_currentMode === 'network') _fetchNetworkInterfaces();
+        const packetSettings = $('watcher-packet-settings');
+        if (packetSettings) {
+          packetSettings.style.display = '';
+          _fetchNetworkInterfaces();
         }
         _updateMetricsView();
       }
@@ -204,11 +209,11 @@ If nothing interesting is found, say that clearly.`
   const $ = (id) => document.getElementById(id);
 
   function _isLocalSsmEngine() {
-    return _currentMode === 'network' && $('nw-analysis-engine')?.value === 'llamacpp_ssm';
+    return _currentMode === 'continuous' && $('nw-analysis-engine')?.value === 'llamacpp_ssm';
   }
 
   function _isSuricataSource() {
-    return _currentMode === 'network' && $('nw-capture-source')?.value === 'suricata_eve';
+    return $('nw-capture-source')?.value === 'suricata_eve';
   }
 
   function _updateCaptureSourceUi() {
@@ -216,10 +221,10 @@ If nothing interesting is found, say that clearly.`
     const pythonSettings = $('nw-python-source-settings');
     const suricataSettings = $('nw-suricata-source-settings');
     const evePathGroup = $('nw-suricata-eve-path-group');
-    if (pythonSettings) pythonSettings.style.display = _currentMode === 'network' && !suricata ? '' : 'none';
-    if (suricataSettings) suricataSettings.style.display = _currentMode === 'network' && suricata ? '' : 'none';
-    if (evePathGroup) evePathGroup.style.display = _currentMode === 'network' && suricata ? '' : 'none';
-    if (_currentMode === 'network' && !suricata) _fetchNetworkInterfaces();
+    if (pythonSettings) pythonSettings.style.display = !suricata ? '' : 'none';
+    if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
+    if (evePathGroup) evePathGroup.style.display = suricata ? '' : 'none';
+    if (!suricata) _fetchNetworkInterfaces();
   }
 
   function _updateCyberAgentFlowDataControls() {
@@ -298,14 +303,16 @@ If nothing interesting is found, say that clearly.`
 
   function _updateNetworkEngineUi() {
     const localSsm = _isLocalSsmEngine();
-    const networkMode = _currentMode === 'network';
+    const continuousMode = _currentMode === 'continuous';
     const engineSettings = $('nw-engine-settings-section');
     const engineSettingsTarget = $('nw-engine-settings-setup-slot');
     const discoverySection = $('watcher-model-discovery-section');
-    const discoveryTarget = networkMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
+    const discoveryTarget = continuousMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const requestLimits = $('watcher-request-limits');
-    const requestLimitsTarget = networkMode ? $('nw-stream-runtime-config') : $('watcher-request-limits-setup-slot');
+    const requestLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-request-limits-setup-slot');
     const streamLimits = $('nw-stream-limits');
+    const streamLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-periodic-stream-limits-slot');
+    const cafDataSection = $('nw-caf-data-section');
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
     const localSettings = $('nw-local-ssm-settings');
@@ -324,23 +331,25 @@ If nothing interesting is found, say that clearly.`
     if (requestLimits && requestLimitsTarget && requestLimits.parentElement !== requestLimitsTarget) {
       requestLimitsTarget.append(requestLimits);
     }
-    if (networkMode && streamLimits && streamLimits.parentElement !== $('nw-stream-runtime-config')) {
-      $('nw-stream-runtime-config')?.append(streamLimits);
+    if (streamLimits && streamLimitsTarget && streamLimits.parentElement !== streamLimitsTarget) {
+      streamLimitsTarget.append(streamLimits);
     }
-    if (discoverySection) discoverySection.style.display = networkMode && localSsm ? 'none' : '';
-    if (remoteSettings) remoteSettings.style.display = !networkMode || !localSsm ? '' : 'none';
-    if (heading) heading.innerHTML = networkMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Watcher LLM';
-    if (providerLabel) providerLabel.textContent = networkMode ? 'SSM provider / discovery endpoint' : 'Provider';
-    if (urlLabel) urlLabel.textContent = networkMode ? 'Provider endpoint URL' : 'LLM URL';
-    if (modelLabel) modelLabel.textContent = networkMode ? 'Discovered SSM model' : 'Model';
+    if (engineSettings) engineSettings.style.display = continuousMode ? '' : 'none';
+    if (cafDataSection) cafDataSection.style.display = continuousMode ? '' : 'none';
+    if (discoverySection) discoverySection.style.display = continuousMode && localSsm ? 'none' : '';
+    if (remoteSettings) remoteSettings.style.display = !continuousMode || !localSsm ? '' : 'none';
+    if (heading) heading.innerHTML = continuousMode ? '<span>🧠</span> SSM Runtime & Model Discovery' : '<span>🔭</span> Packet Batch Model';
+    if (providerLabel) providerLabel.textContent = continuousMode ? 'SSM provider / discovery endpoint' : 'Provider';
+    if (urlLabel) urlLabel.textContent = continuousMode ? 'Provider endpoint URL' : 'LLM URL';
+    if (modelLabel) modelLabel.textContent = continuousMode ? 'Discovered SSM model' : 'Model';
     if (providerHint) {
-      providerHint.style.display = networkMode ? '' : 'none';
+      providerHint.style.display = continuousMode ? '' : 'none';
       providerHint.textContent = localSsm
         ? 'Provider discovery is optional in local mode; the GGUF path below selects the actual local SSM. Compatibility is inferred from returned model metadata.'
         : 'Remote mode requires a persistent SSM service at POST /v1/ssm/events. Fetching a provider model confirms only a likely model family, not stream-state support.';
     }
-    if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
-    if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
+    if (localSettings) localSettings.style.display = continuousMode && localSsm ? '' : 'none';
+    if (remoteNote) remoteNote.style.display = continuousMode && !localSsm ? '' : 'none';
     if (sameModel && localSsm) sameModel.style.display = 'none';
     _updateStartBtnState();
     _renderSsmCompatibility();
@@ -349,7 +358,7 @@ If nothing interesting is found, say that clearly.`
   function _renderSsmCompatibility() {
     const target = $('watcher-ssm-compatibility');
     if (!target) return;
-    if (_currentMode !== 'network') { target.style.display = 'none'; return; }
+    if (_currentMode !== 'continuous') { target.style.display = 'none'; return; }
     const modelId = $('watcher-model-select')?.value || '';
     const compatibility = _modelSsmCompatibility.get(modelId);
     if (!modelId || !compatibility) {
@@ -429,10 +438,10 @@ If nothing interesting is found, say that clearly.`
         document.querySelectorAll('.watcher-mode-btn').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         $('watcher-periodic-settings').style.display = _currentMode === 'periodic' ? '' : 'none';
-        const nwSettings = $('watcher-network-settings');
-        if (nwSettings) {
-          nwSettings.style.display = _currentMode === 'network' ? '' : 'none';
-          if (_currentMode === 'network') _updateCaptureSourceUi();
+        const packetSettings = $('watcher-packet-settings');
+        if (packetSettings) {
+          packetSettings.style.display = '';
+          _updateCaptureSourceUi();
         }
         _updateNetworkEngineUi();
         _updateMetricsView();
@@ -445,17 +454,20 @@ If nothing interesting is found, say that clearly.`
   // ─── Mode config collector ────────────────────────────────────────────────
   function _getModeConfig() {
     const maxContext = parseInt($('watcher-context-size')?.value || '64000');
-    if (_currentMode === 'network') {
+    const packetConfig = {
+      capture_source: $('nw-capture-source')?.value || 'python',
+      suricata_eve_path: $('nw-suricata-eve-path')?.value?.trim() || '/var/log/suricata/eve.json',
+      suricata_event_types: Array.from(document.querySelectorAll('.nw-suricata-event-cb:checked')).map((checkbox) => checkbox.value),
+      analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
+      max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
+      max_packets_per_analysis: parseInt($('nw-max-packets-per-analysis')?.value || '12'),
+      packet_fields: Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map((checkbox) => checkbox.value),
+    };
+    if (_currentMode === 'continuous') {
       return {
-        watch_mode: 'network',
-        capture_source: $('nw-capture-source')?.value || 'python',
-        suricata_eve_path: $('nw-suricata-eve-path')?.value?.trim() || '/var/log/suricata/eve.json',
-        suricata_event_types: Array.from(document.querySelectorAll('.nw-suricata-event-cb:checked')).map((checkbox) => checkbox.value),
+        watch_mode: 'continuous',
+        ...packetConfig,
         analysis_engine: $('nw-analysis-engine')?.value || 'llamacpp_ssm',
-        analysis_interval_seconds: parseInt($('nw-analysis-interval')?.value || '5'),
-        max_packet_payload_bytes: parseInt($('nw-max-payload-bytes')?.value || '384'),
-        max_packets_per_analysis: parseInt($('nw-max-packets-per-analysis')?.value || '12'),
-        packet_fields: Array.from(document.querySelectorAll('.nw-packet-field-cb:checked')).map((checkbox) => checkbox.value),
         ssm_model_path: $('nw-ssm-model-path')?.value?.trim() || '',
         ssm_gpu_layers: parseInt($('nw-ssm-gpu-layers')?.value || '0'),
         ssm_context_tokens: parseInt($('nw-ssm-context-tokens')?.value || '1024'),
@@ -466,9 +478,9 @@ If nothing interesting is found, say that clearly.`
       };
     }
     return {
-      watch_mode: 'timer',
-      timer_interval: parseInt($('watcher-timer-interval')?.value || '60'),
-      timer_span: $('watcher-timer-span')?.value || 'all',
+      watch_mode: 'periodic',
+      ...packetConfig,
+      analysis_engine: 'batch_llm',
       max_context_chars: maxContext,
       use_cyber_agent_flow_data: Boolean($('watcher-periodic-use-caf-data')?.checked),
     };
@@ -548,9 +560,9 @@ If nothing interesting is found, say that clearly.`
 
     if (btn) btn.disabled = false;
 
-    // We only show running state if the active mode matches the running watcher type
-    const activeIsNw = _currentMode === 'network';
-    const showRunning = activeIsNw ? _isNwRunning : _isRunning;
+    // Both Periodic and Continuous are network watcher modes. They share one
+    // capture service, but differ in batch versus per-flow SSM analysis.
+    const showRunning = _isNwRunning;
 
     if (showRunning) {
       if (lbl) lbl.textContent = 'Stop Watcher';
@@ -674,23 +686,16 @@ If nothing interesting is found, say that clearly.`
     if (!btn) return;
     btn.disabled = true;
 
-    const isNwMode = _currentMode === 'network';
-    const running = isNwMode ? _isNwRunning : _isRunning;
+    const running = _isNwRunning;
 
     if (running) {
-      if (isNwMode) {
-        try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
-        _setStatus(false, 'Idle — not watching', null, true);
-        _stopNwStatusPoll();
-        const nwLiveLog = $('nw-live-log');
-        if (nwLiveLog) nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
-        const nwViewSsmBtn = $('nw-view-ssm-btn');
-        if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'none';
-      } else {
-        try { await fetch('/api/watcher/stop', { method: 'POST' }); } catch {}
-        _setStatus(false, 'Idle — not watching', null, false);
-        _stopStatusPoll();
-      }
+      try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
+      _setStatus(false, 'Idle — not watching', null, true);
+      _stopNwStatusPoll();
+      const nwLiveLog = $('nw-live-log');
+      if (nwLiveLog) nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
+      const nwViewSsmBtn = $('nw-view-ssm-btn');
+      if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'none';
     } else {
       const url = ($('watcher-url-input')?.value || '').trim();
       const model = $('watcher-model-select')?.value || '';
@@ -699,26 +704,22 @@ If nothing interesting is found, say that clearly.`
       const ssl = $('watcher-ssl-toggle')?.checked !== false;
       const modeConfig = _getModeConfig();
 
-      const localSsm = isNwMode && modeConfig.analysis_engine === 'llamacpp_ssm';
+      const localSsm = _currentMode === 'continuous' && modeConfig.analysis_engine === 'llamacpp_ssm';
       if (localSsm && !modeConfig.ssm_model_path) { _showWatcherStartError('Enter the local recurrent GGUF model path first.', true); btn.disabled = false; return; }
       if (!localSsm && !model) { _showWatcherStartError('Select a model first.'); btn.disabled = false; return; }
-      if (!isNwMode && !modeConfig.use_cyber_agent_flow_data) { _showWatcherStartError('Enable Use CyberAgentFlow data before starting periodic analysis.'); btn.disabled = false; return; }
       const errEl = $('watcher-fetch-error');
       if (errEl) errEl.style.display = 'none';
       const ssmErrEl = $('nw-ssm-start-error');
       if (ssmErrEl) ssmErrEl.style.display = 'none';
 
       try {
-        const isNwMode = _currentMode === 'network';
         const timeout = parseInt($('watcher-timeout-select')?.value || '60');
         const systemPrompt = $('watcher-system-prompt')?.value || '';
         let requestBody = { url, model, provider, api_key: apiKey, ssl_verify: ssl, timeout, system_prompt: systemPrompt, ...modeConfig };
-        if (isNwMode) {
-          const cbs = document.querySelectorAll('.nw-iface-cb:checked');
-          requestBody.interfaces = modeConfig.capture_source === 'python' ? Array.from(cbs).map(cb => cb.value) : [];
-        }
+        const cbs = document.querySelectorAll('.nw-iface-cb:checked');
+        requestBody.interfaces = modeConfig.capture_source === 'python' ? Array.from(cbs).map(cb => cb.value) : [];
 
-        const res = await fetch(isNwMode ? '/api/network_watcher/start' : '/api/watcher/start', {
+        const res = await fetch('/api/network_watcher/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
@@ -729,21 +730,12 @@ If nothing interesting is found, say that clearly.`
           btn.disabled = false; return;
         }
 
-        if (isNwMode) {
-          _setStatus(true, null, { watching_mode: 'network', model: localSsm ? 'Local llama.cpp SSM' : model }, true);
-          _startNwStatusPoll();
-          const nwLiveLog = $('nw-live-log');
-          if (nwLiveLog) nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
-          const nwViewSsmBtn = $('nw-view-ssm-btn');
-          if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'inline-flex';
-        } else {
-          _setStatus(true, null, {
-            watching_mode: data.watching_mode,
-            model: model,
-            using_session_llm: data.using_session_llm
-          }, false);
-          _startStatusPoll();
-        }
+        _setStatus(true, null, { watching_mode: _currentMode, model: localSsm ? 'Local llama.cpp SSM' : model }, true);
+        _startNwStatusPoll();
+        const nwLiveLog = $('nw-live-log');
+        if (nwLiveLog) nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
+        const nwViewSsmBtn = $('nw-view-ssm-btn');
+        if (nwViewSsmBtn) nwViewSsmBtn.style.display = _currentMode === 'continuous' ? 'inline-flex' : 'none';
 
         // A successful start always opens the live metrics view.
         switchWatcherTab('metrics');
@@ -756,9 +748,7 @@ If nothing interesting is found, say that clearly.`
 
   // ─── Status polling ───────────────────────────────────────────────────────
   function _updateBtnUI() {
-    const activeIsNw = _currentMode === 'network';
-    const running = activeIsNw ? _isNwRunning : _isRunning;
-    _setStatus(running, null, null, activeIsNw);
+    _setStatus(_isNwRunning, null, null, true);
   }
 
   function _startStatusPoll() {
@@ -953,9 +943,10 @@ If nothing interesting is found, say that clearly.`
         _setStatus(isRunning, isRunning ? 'Watching network packets...' : 'Idle — not watching', null, true);
         if (isRunning) {
           if (pulseDot) { pulseDot.style.background = 'var(--success)'; pulseDot.style.boxShadow = '0 0 8px var(--success)'; }
-          if (statusText) statusText.textContent = 'Watching Network Packets';
+          const isContinuous = data.configuration?.analysis_engine !== 'batch_llm';
+          if (statusText) statusText.textContent = isContinuous ? 'Watching Continuous Packet Stream' : 'Watching Periodic Packet Batches';
           const nwViewSsmBtn = $('nw-view-ssm-btn');
-          if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'inline-flex';
+          if (nwViewSsmBtn) nwViewSsmBtn.style.display = isContinuous ? 'inline-flex' : 'none';
         } else {
           if (pulseDot) { pulseDot.style.background = 'var(--text-muted)'; pulseDot.style.boxShadow = 'none'; }
           if (statusText) statusText.textContent = 'Network Watcher Idle';
@@ -989,32 +980,27 @@ If nothing interesting is found, say that clearly.`
   function _updateSessionNotice() {
     const notice = $('watcher-no-session-notice');
     if (!notice) return;
-    if (_currentMode === 'network') {
-      notice.style.display = 'none';
-    } else {
-      notice.style.display = _cyberAgentFlowDataAvailable ? 'none' : '';
-    }
+    notice.style.display = 'none';
   }
 
   function _updateStartBtnState() {
     const btn = $('watcher-start-btn');
     const model = $('watcher-model-select')?.value;
     if (!btn) return;
-    if (_currentMode === 'network') {
+    if (_currentMode === 'continuous') {
       btn.disabled = _isLocalSsmEngine() ? !($('nw-ssm-model-path')?.value || '').trim() : !model;
     } else {
-      btn.disabled = !model || !_cyberAgentFlowDataAvailable || !$('watcher-periodic-use-caf-data')?.checked;
+      btn.disabled = !model;
     }
   }
 
   function _updateMetricsView() {
-    const isNw = _currentMode === 'network';
     const suggestionsView = $('watcher-view-suggestions');
     const networkView = $('watcher-view-network');
 
-    if (suggestionsView) suggestionsView.style.display = isNw ? 'none' : 'block';
+    if (suggestionsView) suggestionsView.style.display = 'none';
     if (networkView) {
-        networkView.style.display = isNw ? 'flex' : 'none';
+        networkView.style.display = 'flex';
     }
     _updateSessionNotice();
     _updateStartBtnState();
