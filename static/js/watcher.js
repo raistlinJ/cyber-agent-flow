@@ -312,9 +312,8 @@ If nothing interesting is found, say that clearly.`
   function _updateNetworkEngineUi() {
     const localSsm = _isLocalSsmEngine();
     const networkMode = _currentMode === 'network';
-    const engineTab = $('watcher-network-engine-tab-btn');
     const engineSettings = $('nw-engine-settings-section');
-    const engineSettingsTarget = networkMode ? $('nw-engine-settings-slot') : $('nw-engine-settings-setup-slot');
+    const engineSettingsTarget = $('nw-engine-settings-setup-slot');
     const discoverySection = $('watcher-model-discovery-section');
     const discoveryTarget = networkMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const remoteSettings = $('watcher-remote-model-settings');
@@ -346,11 +345,6 @@ If nothing interesting is found, say that clearly.`
     }
     if (localSettings) localSettings.style.display = _currentMode === 'network' && localSsm ? '' : 'none';
     if (remoteNote) remoteNote.style.display = _currentMode === 'network' && !localSsm ? '' : 'none';
-    if (engineTab) {
-      engineTab.disabled = !networkMode;
-      engineTab.classList.toggle('config-subtab-btn-muted', !networkMode);
-      engineTab.title = networkMode ? 'Configure the network analysis engine' : 'Select Network analysis mode in Setup first';
-    }
     if (sameModel && localSsm) sameModel.style.display = 'none';
     _updateStartBtnState();
     _renderSsmCompatibility();
@@ -1033,33 +1027,28 @@ If nothing interesting is found, say that clearly.`
   // ─── Tab active tracking ──────────────────────────────────────────────────
   function switchWatcherTab(target) {
     const setupTabBtn = $('watcher-setup-tab-btn');
-    const engineTabBtn = $('watcher-network-engine-tab-btn');
     const metricsTabBtn = $('watcher-metrics-tab-btn');
     const setupPanel = $('watcher-setup-panel');
-    const enginePanel = $('watcher-network-engine-panel');
     const metricsPanel = $('watcher-metrics-panel');
 
-    if (!setupTabBtn || !engineTabBtn || !metricsTabBtn || !setupPanel || !enginePanel || !metricsPanel) {
-      console.warn('Watcher tab elements missing:', {setupTabBtn, engineTabBtn, metricsTabBtn, setupPanel, enginePanel, metricsPanel});
+    if (!setupTabBtn || !metricsTabBtn || !setupPanel || !metricsPanel) {
+      console.warn('Watcher tab elements missing:', {setupTabBtn, metricsTabBtn, setupPanel, metricsPanel});
       return;
     }
 
     // Toggle tab button active state
     setupTabBtn.classList.toggle('active', target === 'setup');
-    engineTabBtn.classList.toggle('active', target === 'engine');
-    metricsTabBtn.classList.toggle('active', target === 'metrics');
+    metricsTabBtn.classList.toggle('active', target !== 'setup');
 
     // Toggle panel active class — CSS rules control display via .watcher-subtab-panel / .watcher-subtab-panel.active
     setupPanel.classList.toggle('active', target === 'setup');
-    enginePanel.classList.toggle('active', target === 'engine');
-    metricsPanel.classList.toggle('active', target === 'metrics');
+    metricsPanel.classList.toggle('active', target !== 'setup');
 
     // Remove any leftover inline display styles that could conflict with CSS class rules
     setupPanel.style.removeProperty('display');
-    enginePanel.style.removeProperty('display');
     metricsPanel.style.removeProperty('display');
 
-    if (target === 'metrics') {
+    if (target !== 'setup') {
         _updateMetricsView();
     }
   }
@@ -1188,7 +1177,6 @@ If nothing interesting is found, say that clearly.`
     _initModeToggle();
 
     $('watcher-setup-tab-btn')?.addEventListener('click', () => switchWatcherTab('setup'));
-    $('watcher-network-engine-tab-btn')?.addEventListener('click', () => switchWatcherTab('engine'));
     $('watcher-metrics-tab-btn')?.addEventListener('click', () => switchWatcherTab('metrics'));
 
     const ssmModalOverlay = $('nw-ssm-modal-overlay');

@@ -980,9 +980,6 @@
                         <button type="button" class="config-subtab-btn active" id="watcher-setup-tab-btn" data-watcher-target="watcher-setup-panel">
                             <i class="ph ph-gear"></i> Setup
                         </button>
-                        <button type="button" class="config-subtab-btn" id="watcher-network-engine-tab-btn" data-watcher-target="watcher-network-engine-panel" disabled title="Select Network analysis mode in Setup first">
-                            <i class="ph ph-cpu"></i> Network Engine
-                        </button>
                         <button type="button" class="config-subtab-btn" id="watcher-metrics-tab-btn" data-watcher-target="watcher-metrics-panel">
                             <i class="ph ph-chart-line-up"></i> Live Metrics
                         </button>
@@ -1201,6 +1198,7 @@
                                         </div>
                                         <span class="input-hint">Local mode retains flow state in this watcher process. Remote mode sends normalized events to an SSM service that owns the flow state; ordinary chat APIs are not stream-state compatible.</span>
                                     </div>
+                                    <div id="watcher-network-runtime-slot"></div>
 
                                     <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
                                         <div class="input-group nw-ssm-model-path" style="margin:0">
@@ -1416,17 +1414,6 @@
                                 </div>
                             </div>
                         </div>
-
-                    <!-- Network Analysis Engine Panel -->
-                    <div class="watcher-subtab-panel" id="watcher-network-engine-panel" style="padding:0 1rem;">
-                        <div class="watcher-config-card" style="max-width:800px; margin:0 auto;">
-                            <h3 class="section-title" style="margin-bottom:1rem; font-size:0.95rem">
-                                <i class="ph ph-cpu"></i> Network Analysis Engine
-                            </h3>
-                            <div id="nw-engine-settings-slot"></div>
-                            <div id="watcher-network-runtime-slot"></div>
-                        </div>
-                    </div>
 
                     <!-- Metrics Panel -->
                     <div class="watcher-subtab-panel" id="watcher-metrics-panel" style="padding:0 1rem;">
