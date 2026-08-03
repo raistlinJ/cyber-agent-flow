@@ -356,7 +356,7 @@ If nothing interesting is found, say that clearly.`;
     const requestLimits = $('watcher-request-limits');
     const streamLimits = $('nw-stream-limits');
     const streamLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-periodic-stream-limits-slot');
-    const promptSection = $('watcher-system-prompt-section');
+    const promptBox = $('watcher-system-prompt-box');
     const promptTarget = continuousMode ? $('watcher-system-prompt-continuous-slot') : $('watcher-system-prompt-periodic-slot');
     const cafDataSection = $('nw-caf-data-section');
     const remoteSettings = $('watcher-remote-model-settings');
@@ -378,8 +378,8 @@ If nothing interesting is found, say that clearly.`;
     if (streamLimits && streamLimitsTarget && streamLimits.parentElement !== streamLimitsTarget) {
       streamLimitsTarget.append(streamLimits);
     }
-    if (promptSection && promptTarget && promptSection.parentElement !== promptTarget) {
-      promptTarget.append(promptSection);
+    if (promptBox && promptTarget && promptBox.parentElement !== promptTarget) {
+      promptTarget.append(promptBox);
     }
     if (requestLimits) requestLimits.style.display = continuousMode ? 'none' : '';
     document.querySelectorAll('.nw-batch-only').forEach((element) => {
