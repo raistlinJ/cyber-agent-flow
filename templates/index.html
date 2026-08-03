@@ -1059,31 +1059,33 @@
                                     <span id="watcher-ssm-provider-hint" class="input-hint" style="display:none;margin-top:0.45rem">Discovery is advisory: a remote service must explicitly support persistent per-flow SSM state. Local mode uses the GGUF path below.</span>
                                 </div>
 
-                                <div class="input-group">
-                                    <label for="watcher-context-size">Max Context Size (Chars)</label>
-                                    <div class="select-wrapper">
-                                        <i class="ph ph-text-align-justify icon-left"></i>
-                                        <select id="watcher-context-size">
-                                            <option value="64000" selected>64,000</option>
-                                            <option value="128000">128,000</option>
-                                            <option value="256000">256,000 (SSMs)</option>
-                                        </select>
-                                        <i class="ph ph-caret-down icon-right"></i>
+                                <div class="nw-config-grid">
+                                    <div class="input-group" style="margin:0">
+                                        <label for="watcher-context-size">Max Context Size (Chars)</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-text-align-justify icon-left"></i>
+                                            <select id="watcher-context-size">
+                                                <option value="64000" selected>64,000</option>
+                                                <option value="128000">128,000</option>
+                                                <option value="256000">256,000 (SSMs)</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
                                     </div>
-                                </div>
 
-                                <div class="input-group">
-                                    <label for="watcher-timeout-select">LLM Request Timeout (seconds)</label>
-                                    <div class="select-wrapper">
-                                        <i class="ph ph-timer icon-left"></i>
-                                        <select id="watcher-timeout-select">
-                                            <option value="15">15 seconds</option>
-                                            <option value="30">30 seconds</option>
-                                            <option value="60" selected>60 seconds</option>
-                                            <option value="120">120 seconds (2 mins)</option>
-                                            <option value="300">300 seconds (5 mins)</option>
-                                        </select>
-                                        <i class="ph ph-caret-down icon-right"></i>
+                                    <div class="input-group" style="margin:0">
+                                        <label for="watcher-timeout-select">LLM Request Timeout (seconds)</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-timer icon-left"></i>
+                                            <select id="watcher-timeout-select">
+                                                <option value="15">15 seconds</option>
+                                                <option value="30">30 seconds</option>
+                                                <option value="60" selected>60 seconds</option>
+                                                <option value="120">120 seconds (2 mins)</option>
+                                                <option value="300">300 seconds (5 mins)</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="input-group">
@@ -1236,6 +1238,61 @@
                                     </div>
                                     </div>
 
+                                    <div class="nw-config-grid" id="nw-stream-limits">
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-analysis-interval">Send packet data every</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-clock icon-left"></i>
+                                                <select id="nw-analysis-interval">
+                                                    <option value="1">1 second</option>
+                                                    <option value="2">2 seconds</option>
+                                                    <option value="5" selected>5 seconds</option>
+                                                    <option value="10">10 seconds</option>
+                                                    <option value="30">30 seconds</option>
+                                                    <option value="60">1 minute</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">Cadence for compatible packet-batch analysis.</span>
+                                        </div>
+
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-max-payload-bytes">Max packet data sent</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-file-code icon-left"></i>
+                                                <select id="nw-max-payload-bytes">
+                                                    <option value="128">128 bytes / packet</option>
+                                                    <option value="384" selected>384 bytes / packet</option>
+                                                    <option value="1024">1 KB / packet</option>
+                                                    <option value="4096">4 KB / packet</option>
+                                                    <option value="8192">8 KB / packet</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">Larger samples use more model context.</span>
+                                        </div>
+
+                                        <div class="input-group" style="margin:0">
+                                            <label for="nw-max-packets-per-analysis">Max packets per send</label>
+                                            <div class="select-wrapper">
+                                                <i class="ph ph-stack icon-left"></i>
+                                                <select id="nw-max-packets-per-analysis">
+                                                    <option value="1">1 packet</option>
+                                                    <option value="6">6 packets</option>
+                                                    <option value="12" selected>12 packets</option>
+                                                    <option value="24">24 packets</option>
+                                                    <option value="50">50 packets</option>
+                                                    <option value="100">100 packets</option>
+                                                    <option value="300">300 packets</option>
+                                                    <option value="500">500 packets</option>
+                                                    <option value="0">Unlimited</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <span class="input-hint">Caps each batch when batch analysis is in use.</span>
+                                        </div>
+                                    </div>
+
                                     <div id="nw-suricata-source-settings" style="display:none">
                                         <div class="nw-packet-fields">
                                             <div>
@@ -1275,61 +1332,6 @@
                                             <div style="color: var(--text-muted); font-size: 0.85rem;">Loading interfaces...</div>
                                         </div>
                                         <span class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
-                                    </div>
-
-                                    <div class="nw-config-grid">
-                                        <div class="input-group" style="margin:0">
-                                            <label for="nw-analysis-interval">Send packet data every</label>
-                                            <div class="select-wrapper">
-                                                <i class="ph ph-clock icon-left"></i>
-                                                <select id="nw-analysis-interval">
-                                                    <option value="1">1 second</option>
-                                                    <option value="2">2 seconds</option>
-                                                    <option value="5" selected>5 seconds</option>
-                                                    <option value="10">10 seconds</option>
-                                                    <option value="30">30 seconds</option>
-                                                    <option value="60">1 minute</option>
-                                                </select>
-                                                <i class="ph ph-caret-down icon-right"></i>
-                                            </div>
-                                            <span class="input-hint">Queued packets are sent together at this cadence.</span>
-                                        </div>
-
-                                        <div class="input-group" style="margin:0">
-                                            <label for="nw-max-payload-bytes">Max packet data sent</label>
-                                            <div class="select-wrapper">
-                                                <i class="ph ph-file-code icon-left"></i>
-                                                <select id="nw-max-payload-bytes">
-                                                    <option value="128">128 bytes / packet</option>
-                                                    <option value="384" selected>384 bytes / packet</option>
-                                                    <option value="1024">1 KB / packet</option>
-                                                    <option value="4096">4 KB / packet</option>
-                                                    <option value="8192">8 KB / packet</option>
-                                                </select>
-                                                <i class="ph ph-caret-down icon-right"></i>
-                                            </div>
-                                            <span class="input-hint">Applies to TCP/UDP payload samples and decoded application data; larger values use more context.</span>
-                                        </div>
-
-                                        <div class="input-group" style="margin:0">
-                                            <label for="nw-max-packets-per-analysis">Max packets per send</label>
-                                            <div class="select-wrapper">
-                                                <i class="ph ph-stack icon-left"></i>
-                                                <select id="nw-max-packets-per-analysis">
-                                                    <option value="1">1 packet</option>
-                                                    <option value="6">6 packets</option>
-                                                    <option value="12" selected>12 packets</option>
-                                                    <option value="24">24 packets</option>
-                                                    <option value="50">50 packets</option>
-                                                    <option value="100">100 packets</option>
-                                                    <option value="300">300 packets</option>
-                                                    <option value="500">500 packets</option>
-                                                    <option value="0">Unlimited</option>
-                                                </select>
-                                                <i class="ph ph-caret-down icon-right"></i>
-                                            </div>
-                                            <span class="input-hint">A request may contain fewer packets when the queue is smaller or the context cap is reached.</span>
-                                        </div>
                                     </div>
 
                                     <div class="nw-packet-fields">
