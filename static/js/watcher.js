@@ -309,7 +309,7 @@ If nothing interesting is found, say that clearly.`
     const discoverySection = $('watcher-model-discovery-section');
     const discoveryTarget = continuousMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const requestLimits = $('watcher-request-limits');
-    const requestLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-request-limits-setup-slot');
+    const requestLimitsTarget = $('watcher-request-limits-setup-slot');
     const streamLimits = $('nw-stream-limits');
     const streamLimitsTarget = continuousMode ? $('nw-stream-runtime-config') : $('watcher-periodic-stream-limits-slot');
     const cafDataSection = $('nw-caf-data-section');
@@ -334,6 +334,10 @@ If nothing interesting is found, say that clearly.`
     if (streamLimits && streamLimitsTarget && streamLimits.parentElement !== streamLimitsTarget) {
       streamLimitsTarget.append(streamLimits);
     }
+    if (requestLimits) requestLimits.style.display = continuousMode ? 'none' : '';
+    document.querySelectorAll('.nw-batch-only').forEach((element) => {
+      element.style.display = continuousMode ? 'none' : '';
+    });
     if (engineSettings) engineSettings.style.display = continuousMode ? '' : 'none';
     if (cafDataSection) cafDataSection.style.display = continuousMode ? '' : 'none';
     if (discoverySection) discoverySection.style.display = continuousMode && localSsm ? 'none' : '';
