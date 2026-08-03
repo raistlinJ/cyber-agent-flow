@@ -55,25 +55,12 @@
   }
 
   const DEFAULT_PROMPTS = {
-    periodic: `You are an expert MCP tooling analyst reviewing a penetration-testing agent session log.
-Your job has two parts:
-
-1. ANALYSIS NOTE — Write a concise 2-4 sentence summary of what the agent has been doing in the log window, highlighting any patterns or inefficiencies.
-
-2. TOOL SUGGESTIONS — Identify up to 2 small MCP tools that would meaningfully reduce friction based on what you observed. Do NOT suggest existing tools.
-
-Respond ONLY with valid JSON (no markdown fences, no extra text):
-{
-  "note": "<2-4 sentence analysis>",
-  "tools": [
-    {
-      "name": "<snake_case_name>",
-      "one_line": "<one sentence>",
-      "rationale": "<2-3 sentences>",
-      "commands": "<shell command(s)>"
-    }
-  ]
-}`,
+    periodic: `You are an anomaly detection SSM watching a live packet stream.
+Review the structured packet records: protocol stack, decoded headers, and bounded payloads.
+Treat HTTPS payload bytes as encrypted unless the record explicitly contains decoded HTTP data.
+If you see plaintext credentials, API keys, sensitive server banners, or anything notable,
+state the finding in 2-3 concise sentences. Return only the final observation, with no internal reasoning.
+If nothing interesting is found, say that clearly.`,
 
     network: `You are an anomaly detection SSM watching a live packet stream.
 Review the structured packet records: protocol stack, decoded headers, and bounded payloads.
@@ -316,6 +303,9 @@ If nothing interesting is found, say that clearly.`
     const engineSettingsTarget = $('nw-engine-settings-setup-slot');
     const discoverySection = $('watcher-model-discovery-section');
     const discoveryTarget = networkMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
+    const requestLimits = $('watcher-request-limits');
+    const requestLimitsTarget = networkMode ? $('nw-stream-runtime-config') : $('watcher-request-limits-setup-slot');
+    const streamLimits = $('nw-stream-limits');
     const remoteSettings = $('watcher-remote-model-settings');
     const heading = $('watcher-model-heading');
     const localSettings = $('nw-local-ssm-settings');
@@ -330,6 +320,12 @@ If nothing interesting is found, say that clearly.`
     }
     if (discoverySection && discoveryTarget && discoverySection.parentElement !== discoveryTarget) {
       discoveryTarget.append(discoverySection);
+    }
+    if (requestLimits && requestLimitsTarget && requestLimits.parentElement !== requestLimitsTarget) {
+      requestLimitsTarget.append(requestLimits);
+    }
+    if (networkMode && streamLimits && streamLimits.parentElement !== $('nw-stream-runtime-config')) {
+      $('nw-stream-runtime-config')?.append(streamLimits);
     }
     if (discoverySection) discoverySection.style.display = networkMode && localSsm ? 'none' : '';
     if (remoteSettings) remoteSettings.style.display = !networkMode || !localSsm ? '' : 'none';

@@ -1059,7 +1059,8 @@
                                     <span id="watcher-ssm-provider-hint" class="input-hint" style="display:none;margin-top:0.45rem">Discovery is advisory: a remote service must explicitly support persistent per-flow SSM state. Local mode uses the GGUF path below.</span>
                                 </div>
 
-                                <div class="nw-config-grid">
+                                <div id="watcher-request-limits-setup-slot">
+                                <div id="watcher-request-limits" class="nw-config-grid">
                                     <div class="input-group" style="margin:0">
                                         <label for="watcher-context-size">Max Context Size (Chars)</label>
                                         <div class="select-wrapper">
@@ -1087,6 +1088,7 @@
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
                                     </div>
+                                </div>
                                 </div>
                                 <div class="input-group">
                                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
@@ -1162,6 +1164,7 @@
                                         </label>
                                         <span id="nw-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
                                     </div>
+                                    <div id="nw-stream-runtime-config"></div>
                                     <div class="input-group" style="margin:0">
                                         <label for="nw-capture-source">Telemetry source</label>
                                         <div class="select-wrapper">
