@@ -401,19 +401,25 @@ If nothing interesting is found, say that clearly.`
 
   // ─── Mode toggle ─────────────────────────────────────────────────────────
   let _interfacesFetched = false;
+  let _interfacesLoading = false;
   async function _fetchNetworkInterfaces() {
     if (_isSuricataSource()) return;
-    if (_interfacesFetched) return;
+    if (_interfacesFetched || _interfacesLoading) return;
     const container = $('nw-interface-container');
     if (!container) return;
+    _interfacesLoading = true;
     try {
       const res = await fetch('/api/network_watcher/interfaces');
       const data = await res.json();
-      if (data.success && data.interfaces) {
+      if (!res.ok || !data.success || !Array.isArray(data.interfaces)) {
+        throw new Error(data.error || 'Interface discovery was unavailable.');
+      }
+      {
         let savedIfaces = null;
         try {
           const raw = localStorage.getItem(SETTINGS_KEY);
-          if (raw) savedIfaces = JSON.parse(raw).selectedInterfaces;
+          const saved = raw ? JSON.parse(raw).selectedInterfaces : null;
+          savedIfaces = Array.isArray(saved) ? saved : null;
         } catch {}
 
         container.innerHTML = data.interfaces.map(iface => {
@@ -430,8 +436,20 @@ If nothing interesting is found, say that clearly.`
           cb.addEventListener('change', _saveFormSettings);
         });
       }
-    } catch (e) {
-      container.innerHTML = `<div style="color:var(--error);font-size:0.85rem">Failed to load interfaces.</div>`;
+    } catch (error) {
+      container.replaceChildren();
+      const message = document.createElement('div');
+      message.style.cssText = 'color:var(--error);font-size:0.85rem';
+      message.textContent = `Could not load interfaces${error.message ? `: ${error.message}` : '.'}`;
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'watcher-btn-ghost';
+      retry.style.cssText = 'font-size:0.75rem;padding:0.25rem 0.45rem';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', _fetchNetworkInterfaces);
+      container.append(message, retry);
+    } finally {
+      _interfacesLoading = false;
     }
   }
 
