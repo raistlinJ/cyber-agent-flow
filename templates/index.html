@@ -1175,6 +1175,10 @@
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
                                         <span class="input-hint">Python mode decodes live packets by network layer. Suricata mode tails already-parsed EVE JSON and sends only selected event types into the same SSM pipeline.</span>
+                                        <div id="nw-suricata-availability" class="input-hint" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.45rem">
+                                            <span>Checking local Suricata availability…</span>
+                                            <button type="button" id="nw-refresh-suricata-btn" class="watcher-btn-ghost" style="font-size:0.75rem">Refresh</button>
+                                        </div>
                                     </div>
                                     <div class="input-group" style="margin:0">
                                         <label for="nw-analysis-engine">Network analysis engine</label>

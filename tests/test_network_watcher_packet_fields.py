@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from network_watcher import DEFAULT_PACKET_FIELDS, NetworkWatcher
 
 
@@ -135,3 +137,16 @@ def test_remote_ssm_endpoint_uses_the_explicit_stream_contract():
     watcher.api_url = "https://gpu.example.test/v1/models"
 
     assert watcher._remote_ssm_endpoint() == "https://gpu.example.test/v1/ssm/events"
+
+
+def test_suricata_readiness_gate_blocks_eve_mode_when_binary_is_missing(monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    monkeypatch.setattr(watcher, "_refresh_suricata_status", lambda include_version=True: {
+        "available": False, "executable": "", "version": ""
+    })
+
+    with pytest.raises(RuntimeError, match="Suricata is not installed"):
+        watcher.start(
+            "run", "ignored", "", "", "",
+            capture_source="suricata_eve",
+        )

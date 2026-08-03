@@ -3382,6 +3382,14 @@ def network_watcher_interfaces():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/network_watcher/suricata/status', methods=['GET'])
+def network_watcher_suricata_status():
+    """Refresh local Suricata readiness for the Network Watcher setup UI."""
+    if not _network_watcher:
+        return jsonify({'available': False, 'error': 'NetworkWatcher not available.'}), 503
+    return jsonify(_network_watcher._refresh_suricata_status(include_version=True))
+
+
 @app.route('/api/session/stream')
 def session_stream():
     """Replayable SSE endpoint for the active session's durable event log."""

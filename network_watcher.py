@@ -7,6 +7,8 @@ import requests
 import queue
 import logging
 import psutil
+import shutil
+import subprocess
 from datetime import datetime
 from ssm_stream import LlamaCppSsmRuntime, SsmObservation, packet_flow_key, packet_stream_event
 
@@ -93,6 +95,9 @@ class NetworkWatcher:
         self.capture_source = "python"
         self.suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
         self.suricata_event_types = set(DEFAULT_SURICATA_EVENT_TYPES)
+        # Checked once at application startup, then refreshed before a
+        # Suricata watcher starts or when the setup UI requests a refresh.
+        self.suricata_status = self._refresh_suricata_status(include_version=False)
         self.analysis_engine = "llamacpp_ssm"
         self.ssm_alert_threshold = DEFAULT_SSM_ALERT_THRESHOLD
         self.ssm_alert_cooldown_seconds = DEFAULT_SSM_ALERT_COOLDOWN_SECONDS
@@ -312,6 +317,12 @@ class NetworkWatcher:
         self.capture_source = "suricata_eve" if capture_source == "suricata_eve" else "python"
         if self.capture_source == "python" and not self.watcher_available:
             raise RuntimeError("pyshark is not installed. Select Suricata EVE JSON or install pyshark.")
+        if self.capture_source == "suricata_eve":
+            status = self._refresh_suricata_status(include_version=True)
+            if not status["available"]:
+                raise RuntimeError(
+                    "Suricata is not installed or not on PATH. Install Suricata on this host before enabling EVE JSON mode."
+                )
 
         self.stop()
         self.run_id = run_id
@@ -454,6 +465,25 @@ class NetworkWatcher:
             return f"Suricata EVE JSON ({self.suricata_eve_path})"
         return f"Python packet decoder on interface {self.interface}"
 
+    def _refresh_suricata_status(self, include_version: bool = True) -> dict:
+        """Return local Suricata readiness without modifying the host system."""
+        executable = shutil.which("suricata")
+        status = {"available": bool(executable), "executable": executable or "", "version": ""}
+        if executable and include_version:
+            try:
+                result = subprocess.run(
+                    [executable, "-V"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                status["version"] = (result.stdout or result.stderr or "").strip().splitlines()[0][:160]
+            except (OSError, subprocess.SubprocessError):
+                status["version"] = "Detected (version probe unavailable)"
+        self.suricata_status = status
+        return status
+
     def stop(self):
         self.running = False
         self._stop_event.set()
@@ -502,6 +532,7 @@ class NetworkWatcher:
             "model": self.model,
             "configuration": {
                 "capture_source": self.capture_source,
+                "suricata_status": dict(self.suricata_status),
                 "suricata_eve_path": self.suricata_eve_path,
                 "suricata_event_types": sorted(self.suricata_event_types),
                 "analysis_engine": self.analysis_engine,

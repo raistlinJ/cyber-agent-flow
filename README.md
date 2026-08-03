@@ -98,6 +98,11 @@ newline-delimited EVE JSON output. In Watcher → Setup → Network, choose
 event types to normalize. The watcher tails new events and does not start,
 configure, or replace Suricata itself.
 
+At application startup, the watcher checks whether the local `suricata`
+executable is on `PATH`. EVE mode stays disabled until that prerequisite is
+present and is checked again when the watcher starts. The app does not
+automatically install or upgrade system packages.
+
 ---
 
 ## Installation & Setup

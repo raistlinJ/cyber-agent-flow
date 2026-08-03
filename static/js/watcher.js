@@ -32,6 +32,7 @@
   let _nwStatusPollInterval = null;
   let _nwInteractionRevision = null;
   let _modelSsmCompatibility = new Map();
+  let _suricataStatus = null;
   let _currentMode = 'continuous'; // 'continuous' | 'timer' | 'network'
 
   // ─── Storage ─────────────────────────────────────────────────────────────
@@ -262,6 +263,46 @@ If nothing interesting is found, say that clearly.`
     if (pythonSettings) pythonSettings.style.display = _currentMode === 'network' && !suricata ? '' : 'none';
     if (suricataSettings) suricataSettings.style.display = _currentMode === 'network' && suricata ? '' : 'none';
     if (_currentMode === 'network' && !suricata) _fetchNetworkInterfaces();
+  }
+
+  async function _fetchSuricataStatus() {
+    const statusEl = $('nw-suricata-availability');
+    const option = $('nw-capture-source')?.querySelector('option[value="suricata_eve"]');
+    const refresh = $('nw-refresh-suricata-btn');
+    if (refresh) refresh.disabled = true;
+    try {
+      const response = await fetch('/api/network_watcher/suricata/status');
+      const status = await response.json();
+      _suricataStatus = status;
+      if (option) option.disabled = !status.available;
+      if (statusEl) {
+        const text = document.createElement('span');
+        if (status.available) {
+          text.textContent = `Suricata ready${status.version ? ` — ${status.version}` : ''}`;
+          text.style.color = 'var(--success)';
+        } else {
+          text.textContent = 'Suricata is not installed on this host. Install it and restart or refresh before enabling EVE JSON mode.';
+          text.style.color = 'var(--error)';
+          if ($('nw-capture-source')?.value === 'suricata_eve') {
+            $('nw-capture-source').value = 'python';
+            _updateCaptureSourceUi();
+            _saveFormSettings();
+          }
+        }
+        const button = $('nw-refresh-suricata-btn');
+        statusEl.replaceChildren(text, button || document.createTextNode(''));
+      }
+    } catch (error) {
+      if (statusEl) {
+        const text = document.createElement('span');
+        text.textContent = 'Could not verify local Suricata availability.';
+        text.style.color = 'var(--error)';
+        statusEl.replaceChildren(text, refresh || document.createTextNode(''));
+      }
+      if (option) option.disabled = true;
+    } finally {
+      if (refresh) refresh.disabled = false;
+    }
   }
 
   function _updateNetworkEngineUi() {
@@ -1170,7 +1211,14 @@ If nothing interesting is found, say that clearly.`
     document.querySelectorAll('.nw-packet-field-cb').forEach((checkbox) => {
       checkbox.addEventListener('change', _saveFormSettings);
     });
-    $('nw-capture-source')?.addEventListener('change', () => { _updateCaptureSourceUi(); _saveFormSettings(); });
+    $('nw-capture-source')?.addEventListener('change', () => {
+      if ($('nw-capture-source')?.value === 'suricata_eve' && !_suricataStatus?.available) {
+        $('nw-capture-source').value = 'python';
+      }
+      _updateCaptureSourceUi();
+      _saveFormSettings();
+    });
+    $('nw-refresh-suricata-btn')?.addEventListener('click', _fetchSuricataStatus);
     $('nw-suricata-eve-path')?.addEventListener('input', _saveFormSettings);
     document.querySelectorAll('.nw-suricata-event-cb').forEach((checkbox) => {
       checkbox.addEventListener('change', _saveFormSettings);
@@ -1195,6 +1243,7 @@ If nothing interesting is found, say that clearly.`
     // Restore saved form settings
     _loadFormSettings();
     _updateNetworkEngineUi();
+    _fetchSuricataStatus();
 
     // Scaffold modal
     $('watcher-modal-close')?.addEventListener('click', () => { $('watcher-modal-overlay').style.display = 'none'; });
