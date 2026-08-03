@@ -219,9 +219,19 @@ If nothing interesting is found, say that clearly.`
     const pythonSettings = $('nw-python-source-settings');
     const pythonPacketFields = $('nw-python-packet-fields');
     const suricataSettings = $('nw-suricata-source-settings');
+    const captureHeading = $('nw-capture-interface-heading');
+    const captureSummary = $('nw-capture-interface-summary');
+    const interfaceLabel = $('nw-interface-label');
+    const interfaceHint = $('nw-interface-hint');
     if (pythonSettings) pythonSettings.style.display = '';
     if (pythonPacketFields) pythonPacketFields.style.display = suricata ? 'none' : '';
     if (suricataSettings) suricataSettings.style.display = suricata ? '' : 'none';
+    if (captureHeading) captureHeading.textContent = suricata ? 'Suricata capture interface' : 'PyShark decoder and fields';
+    if (captureSummary) captureSummary.textContent = suricata ? 'Required to launch Suricata' : 'Interfaces and decoded packet data';
+    if (interfaceLabel) interfaceLabel.textContent = suricata ? 'Suricata capture interface' : 'Network Interface(s)';
+    if (interfaceHint) interfaceHint.textContent = suricata
+      ? 'Select exactly one interface. The watcher starts Suricata on it.'
+      : 'Select one or more interfaces to sniff.';
     _fetchNetworkInterfaces();
   }
 

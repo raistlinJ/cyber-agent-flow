@@ -1328,15 +1328,15 @@
                                     </details>
 
                                     <details id="nw-python-source-settings" class="watcher-config-section" open>
-                                    <summary><span>PyShark decoder and fields</span><small>Interfaces and decoded packet data</small></summary>
+                                    <summary><span id="nw-capture-interface-heading">PyShark decoder and fields</span><small id="nw-capture-interface-summary">Interfaces and decoded packet data</small></summary>
                                     <div class="watcher-config-section-body">
                                     <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service, which retains its own per-flow state.</p>
                                     <div class="input-group" style="margin:0">
-                                        <label>Network Interface(s)</label>
+                                        <label id="nw-interface-label">Network Interface(s)</label>
                                         <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
                                             <div style="color: var(--text-muted); font-size: 0.85rem;">Loading interfaces...</div>
                                         </div>
-                                        <span class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
+                                        <span id="nw-interface-hint" class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
                                     </div>
 
                                     <div id="nw-python-packet-fields" class="nw-packet-fields">
