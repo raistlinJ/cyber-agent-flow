@@ -711,12 +711,14 @@ If nothing interesting is found, say that clearly.`;
     const txt = $('watcher-status-text');
     const lbl = $('watcher-start-btn-label');
     const icn = $('watcher-start-btn-icon');
+    const stopBtn = $('watcher-stop-btn');
 
     if (btn) btn.disabled = false;
 
     // Both Periodic and Continuous are network watcher modes. They share one
     // capture service, but differ in batch versus per-flow SSM analysis.
     const showRunning = _isNwRunning;
+    if (stopBtn) stopBtn.disabled = !showRunning;
 
     if (showRunning) {
       if (lbl) lbl.textContent = 'Stop Watcher';
@@ -835,6 +837,22 @@ If nothing interesting is found, say that clearly.`;
     error.style.display = '';
   }
 
+  async function _stopNetworkWatcher() {
+    const startBtn = $('watcher-start-btn');
+    const stopBtn = $('watcher-stop-btn');
+    if (startBtn) startBtn.disabled = true;
+    if (stopBtn) stopBtn.disabled = true;
+    try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
+    _setStatus(false, 'Idle — not watching', null, true);
+    _stopNwStatusPoll();
+    const nwLiveLog = $('nw-live-log');
+    if (nwLiveLog) nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
+  }
+
+  function _openLiveWatcherWindow() {
+    window.open('/network_watcher/live_results', 'LiveSSMResults', 'width=960,height=650,resizable=yes,scrollbars=yes');
+  }
+
   async function _toggleWatcher() {
     const btn = $('watcher-start-btn');
     if (!btn) return;
@@ -843,13 +861,7 @@ If nothing interesting is found, say that clearly.`;
     const running = _isNwRunning;
 
     if (running) {
-      try { await fetch('/api/network_watcher/stop', { method: 'POST' }); } catch {}
-      _setStatus(false, 'Idle — not watching', null, true);
-      _stopNwStatusPoll();
-      const nwLiveLog = $('nw-live-log');
-      if (nwLiveLog) nwLiveLog.innerHTML += '<div style="color: var(--text-muted);">Watcher stopped.</div>';
-      const nwViewSsmBtn = $('nw-view-ssm-btn');
-      if (nwViewSsmBtn) nwViewSsmBtn.style.display = 'none';
+      await _stopNetworkWatcher();
     } else {
       const url = ($('watcher-url-input')?.value || '').trim();
       const model = $('watcher-model-select')?.value || '';
@@ -893,9 +905,6 @@ If nothing interesting is found, say that clearly.`;
         _startNwStatusPoll();
         const nwLiveLog = $('nw-live-log');
         if (nwLiveLog) nwLiveLog.innerHTML = '<div style="color: var(--text-muted);">Watcher started. Listening for packets...</div>';
-        const nwViewSsmBtn = $('nw-view-ssm-btn');
-        if (nwViewSsmBtn) nwViewSsmBtn.style.display = _currentMode === 'continuous' ? 'inline-flex' : 'none';
-
         // A successful start always opens the live metrics view.
         switchWatcherTab('metrics');
       } catch (err) {
@@ -1104,8 +1113,6 @@ If nothing interesting is found, say that clearly.`;
           if (pulseDot) { pulseDot.style.background = 'var(--success)'; pulseDot.style.boxShadow = '0 0 8px var(--success)'; }
           const isContinuous = data.configuration?.analysis_engine !== 'batch_llm';
           if (statusText) statusText.textContent = isContinuous ? 'Watching Continuous Packet Stream' : 'Watching Periodic Packet Batches';
-          const nwViewSsmBtn = $('nw-view-ssm-btn');
-          if (nwViewSsmBtn) nwViewSsmBtn.style.display = isContinuous ? 'inline-flex' : 'none';
         } else {
           if (pulseDot) { pulseDot.style.background = 'var(--text-muted)'; pulseDot.style.boxShadow = 'none'; }
           if (statusText) statusText.textContent = 'Network Watcher Idle';
@@ -1325,10 +1332,9 @@ If nothing interesting is found, say that clearly.`;
     const ssmCloseBtn = $('close-nw-ssm-btn');
 
     if (ssmTriggerBtn) {
-        ssmTriggerBtn.addEventListener('click', () => {
-            window.open('/network_watcher/live_results', 'LiveSSMResults', 'width=960,height=650,resizable=yes,scrollbars=yes');
-        });
+        ssmTriggerBtn.addEventListener('click', _openLiveWatcherWindow);
     }
+    $('nw-open-live-window-btn')?.addEventListener('click', _openLiveWatcherWindow);
     if (ssmCloseBtn && ssmModalOverlay) {
         ssmCloseBtn.addEventListener('click', () => ssmModalOverlay.style.display = 'none');
     }
@@ -1406,6 +1412,7 @@ If nothing interesting is found, say that clearly.`;
       _saveFormSettings();
     });
     $('watcher-start-btn')?.addEventListener('click', _toggleWatcher);
+    $('watcher-stop-btn')?.addEventListener('click', _stopNetworkWatcher);
     $('watcher-clear-all-btn')?.addEventListener('click', _clearAll);
 
     // Restore saved form settings
