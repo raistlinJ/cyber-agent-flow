@@ -269,7 +269,20 @@ If nothing interesting is found, say that clearly.`;
     if (interfaceHint) interfaceHint.textContent = suricata
       ? 'Select exactly one interface. The watcher starts Suricata on it.'
       : 'Select one or more interfaces to sniff.';
-    _fetchNetworkInterfaces();
+    _fetchNetworkInterfaces().then(_enforceSuricataInterfaceSelection);
+  }
+
+  function _enforceSuricataInterfaceSelection() {
+    if (!_isSuricataSource()) return;
+    const interfaces = Array.from(document.querySelectorAll('.nw-iface-cb'));
+    if (!interfaces.length) return;
+    const selected = interfaces.filter((checkbox) => checkbox.checked);
+    if (!selected.length) {
+      interfaces[0].checked = true;
+    } else {
+      selected.slice(1).forEach((checkbox) => { checkbox.checked = false; });
+    }
+    _saveFormSettings();
   }
 
   function _updateCyberAgentFlowDataControls() {
@@ -460,7 +473,6 @@ If nothing interesting is found, say that clearly.`;
   let _interfacesFetched = false;
   let _interfacesLoading = false;
   async function _fetchNetworkInterfaces() {
-    if (_isSuricataSource()) return;
     if (_interfacesFetched || _interfacesLoading) return;
     const container = $('nw-interface-container');
     if (!container) return;
@@ -490,7 +502,18 @@ If nothing interesting is found, say that clearly.`;
         }).join('');
         _interfacesFetched = true;
         container.querySelectorAll('.nw-iface-cb').forEach(cb => {
-          cb.addEventListener('change', _saveFormSettings);
+          cb.addEventListener('change', () => {
+            if (_isSuricataSource()) {
+              if (cb.checked) {
+                container.querySelectorAll('.nw-iface-cb').forEach((other) => {
+                  if (other !== cb) other.checked = false;
+                });
+              } else if (!container.querySelector('.nw-iface-cb:checked')) {
+                cb.checked = true;
+              }
+            }
+            _saveFormSettings();
+          });
         });
       }
     } catch (error) {
