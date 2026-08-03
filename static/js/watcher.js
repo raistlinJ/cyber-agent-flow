@@ -305,7 +305,7 @@ If nothing interesting is found, say that clearly.`
     const localSsm = _isLocalSsmEngine();
     const continuousMode = _currentMode === 'continuous';
     const engineSettings = $('nw-engine-settings-section');
-    const engineSettingsTarget = $('nw-engine-settings-setup-slot');
+    const engineSettingsTarget = continuousMode ? $('nw-continuous-engine-top') : $('nw-engine-settings-setup-slot');
     const discoverySection = $('watcher-model-discovery-section');
     const discoveryTarget = continuousMode ? $('watcher-network-runtime-slot') : $('watcher-model-discovery-setup-slot');
     const requestLimits = $('watcher-request-limits');
