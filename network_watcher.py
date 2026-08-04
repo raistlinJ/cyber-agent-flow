@@ -204,10 +204,12 @@ class NetworkWatcher:
                 flow["last_timestamp"] = str(entry.get("timestamp") or flow["last_timestamp"])
                 flow["last_outcome"] = str(entry.get("outcome") or "pending")
                 flow["active"] = flow_key in active_flow_keys
+        # Keep the flow browser predictable while packets arrive. Active flows
+        # remain at the top, but a newer packet does not reshuffle every row.
         return sorted(flows.values(), key=lambda flow: (
-            flow["active"],
-            flow["last_timestamp"],
-        ), reverse=True)
+            not flow["active"],
+            flow["key"],
+        ))
 
     def clear_old_stream_interactions(self) -> int:
         """Remove retained diagnostics for flows that are no longer active."""

@@ -3279,10 +3279,11 @@ def network_watcher_live_results():
         .interaction-label { padding: 0.55rem 0.7rem 0.25rem; font-size: 0.8rem; font-weight: 600; }
         .interaction-entry pre { margin: 0 0.7rem 0.7rem; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.76rem/1.45 "SFMono-Regular", Consolas, monospace; color: var(--text-muted); }
         @media (max-width: 700px) { .flow-browser { grid-template-columns: 1fr; height: 560px; } .flow-list-pane { border-right: 0; border-bottom: 1px solid var(--border); max-height: 210px; } }
-        .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; display: flex; flex-direction: column; height: 360px; }
-        .findings-header { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 600; }
+        .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; height: 420px; overflow: hidden; }
+        .findings-header { display: flex; justify-content: space-between; gap: 1rem; padding: 0.8rem 1rem; font-size: 0.9rem; font-weight: 600; }
         .findings-header small { color: var(--text-muted); font-weight: 400; }
         .findings-list { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 0.65rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+        .findings-panel .flow-browser { flex: 1; height: auto; }
         .findings-empty { color: var(--text-muted); font-size: 0.84rem; }
         .finding { padding: 0.7rem 0.8rem; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--surface-2); }
         .finding.error { border-color: var(--error); color: #fca5a5; }
@@ -3317,10 +3318,22 @@ def network_watcher_live_results():
     <section class="findings-panel">
         <div class="findings-header">
             <span>✨ SSM Stream Findings <span id="findings-count"></span></span>
-            <small>Latest per-flow scores and runtime errors</small>
+            <small>Select a flow to see its latest scores and runtime findings</small>
         </div>
-        <div id="findings-empty" class="findings-empty">No SSM stream observations yet. Scores and runtime errors appear here as decoded packets are processed.</div>
-        <div id="findings-list" class="findings-list"></div>
+        <div class="flow-browser">
+            <section class="flow-list-pane" aria-label="SSM finding flows">
+                <div class="flow-pane-header">Flows <span id="findings-flow-count"></span></div>
+                <div id="findings-flow-list" class="flow-list">
+                    <div id="findings-flow-empty" class="interaction-empty">No SSM flows observed yet.</div>
+                </div>
+            </section>
+            <section class="flow-output-pane" aria-label="Selected flow findings">
+                <div id="findings-output-header" class="flow-pane-header">Select a flow to view findings</div>
+                <div id="findings-list" class="findings-list" style="padding:0.75rem;">
+                    <div id="findings-empty" class="findings-empty">No SSM stream observations yet. Scores and runtime errors appear here as decoded packets are processed.</div>
+                </div>
+            </section>
+        </div>
     </section>
 
     <details class="interaction-panel" open>
@@ -3366,6 +3379,10 @@ def network_watcher_live_results():
         let autoScroll = true;
         let interactionRevision = null;
         let selectedFlowKey = null;
+        let currentInteractions = [];
+        let currentFlowSummaries = [];
+        const expandedInteractionIds = new Set();
+        const knownInteractionIds = new Set();
         const consoleEl = document.getElementById('console');
 
         function formatBytes(bytes) {
@@ -3416,50 +3433,27 @@ def network_watcher_live_results():
                 .map(({ entry }) => entry);
         }
 
-        function renderFindings(interactions) {
-            const list = document.getElementById('findings-list');
-            const empty = document.getElementById('findings-empty');
-            const count = document.getElementById('findings-count');
-            const findings = streamFindingEntries(interactions);
-            count.textContent = findings.length ? `(${findings.length})` : '';
-            empty.style.display = findings.length ? 'none' : '';
-            list.replaceChildren();
-
-            findings.slice().reverse().forEach((entry) => {
-                const card = document.createElement('article');
-                const isError = entry.outcome !== 'success';
-                card.className = `finding${isError ? ' error' : ''}`;
-                const meta = document.createElement('div');
-                meta.className = 'finding-meta';
-                const flow = entry.engine === 'llamacpp_ssm' ? entry.request?.flow : null;
-                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'}${flow ? ` · ${flow}` : ''} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
-                const content = document.createElement('div');
-                content.className = 'finding-content';
-                content.textContent = formattedResponse(entry);
-                card.append(meta, content);
-                list.appendChild(card);
-            });
+        function selectFlow(flowKey) {
+            selectedFlowKey = flowKey;
+            renderFlowViews(currentInteractions, currentFlowSummaries);
         }
 
-        function renderInteractions(interactions, flowSummaries = []) {
-            const flowList = document.getElementById('flow-list');
-            const flowEmpty = document.getElementById('flow-empty');
-            const output = document.getElementById('flow-output');
-            const outputHeader = document.getElementById('flow-output-header');
-            const count = document.getElementById('interaction-count');
-            const flowCount = document.getElementById('flow-count');
-            const records = Array.isArray(interactions) ? interactions : [];
-            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
-            const flowKeys = new Set(flows.map(flow => flow.key));
-            renderFindings(records);
-            count.textContent = flows.length ? `(${flows.length})` : '';
-            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+        function renderFlowViews(interactions, flowSummaries = []) {
+            currentInteractions = Array.isArray(interactions) ? interactions : [];
+            currentFlowSummaries = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const flowKeys = new Set(currentFlowSummaries.map(flow => flow.key));
             if (!selectedFlowKey || !flowKeys.has(selectedFlowKey)) {
-                selectedFlowKey = flows[0]?.key || null;
+                selectedFlowKey = currentFlowSummaries[0]?.key || null;
             }
+            renderInteractions(currentInteractions, currentFlowSummaries);
+            renderFindings(currentInteractions, currentFlowSummaries);
+        }
 
-            flowEmpty.style.display = flows.length ? 'none' : '';
-            flowList.replaceChildren(flowEmpty);
+        function renderFlowList(listId, emptyId, flows) {
+            const list = document.getElementById(listId);
+            const empty = document.getElementById(emptyId);
+            empty.style.display = flows.length ? 'none' : '';
+            list.replaceChildren(empty);
             flows.forEach((flow) => {
                 const button = document.createElement('button');
                 const isSelected = flow.key === selectedFlowKey;
@@ -3477,12 +3471,63 @@ def network_watcher_live_results():
                 meta.className = 'flow-row-meta';
                 meta.textContent = `${flow.active ? 'Active' : 'Inactive'} · ${flow.event_count} event${flow.event_count === 1 ? '' : 's'} · ${formatTimestamp(flow.last_timestamp)}`;
                 button.append(title, meta);
-                button.addEventListener('click', () => {
-                    selectedFlowKey = flow.key;
-                    renderInteractions(records, flows);
-                });
-                flowList.appendChild(button);
+                button.addEventListener('click', () => selectFlow(flow.key));
+                list.appendChild(button);
             });
+        }
+
+        function renderFindings(interactions, flowSummaries = []) {
+            const list = document.getElementById('findings-list');
+            const empty = document.getElementById('findings-empty');
+            const count = document.getElementById('findings-count');
+            const flowCount = document.getElementById('findings-flow-count');
+            const outputHeader = document.getElementById('findings-output-header');
+            const findings = streamFindingEntries(interactions);
+            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const selectedFlow = flows.find(flow => flow.key === selectedFlowKey);
+            const selectedFindings = findings.filter(entry =>
+                entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
+            );
+            count.textContent = selectedFindings.length ? `(${selectedFindings.length})` : '';
+            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+            renderFlowList('findings-flow-list', 'findings-flow-empty', flows);
+            empty.style.display = selectedFindings.length ? 'none' : '';
+            outputHeader.textContent = selectedFlow
+                ? `${selectedFlow.active ? 'Active' : 'Inactive'} flow · ${selectedFlowKey}`
+                : 'Select a flow to view findings';
+            list.replaceChildren();
+
+            selectedFindings.forEach((entry) => {
+                const card = document.createElement('article');
+                const isError = entry.outcome !== 'success';
+                card.className = `finding${isError ? ' error' : ''}`;
+                const meta = document.createElement('div');
+                meta.className = 'finding-meta';
+                const flow = entry.engine === 'llamacpp_ssm' ? entry.request?.flow : null;
+                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'}${flow ? ` · ${flow}` : ''} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+                const content = document.createElement('div');
+                content.className = 'finding-content';
+                content.textContent = formattedResponse(entry);
+                card.append(meta, content);
+                list.appendChild(card);
+            });
+            if (!selectedFindings.length) list.appendChild(empty);
+        }
+
+        function renderInteractions(interactions, flowSummaries = []) {
+            const output = document.getElementById('flow-output');
+            const outputHeader = document.getElementById('flow-output-header');
+            const count = document.getElementById('interaction-count');
+            const flowCount = document.getElementById('flow-count');
+            const records = Array.isArray(interactions) ? interactions : [];
+            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const flowKeys = new Set(flows.map(flow => flow.key));
+            count.textContent = flows.length ? `(${flows.length})` : '';
+            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+            if (!selectedFlowKey || !flowKeys.has(selectedFlowKey)) {
+                selectedFlowKey = flows[0]?.key || null;
+            }
+            renderFlowList('flow-list', 'flow-empty', flows);
 
             output.replaceChildren();
             if (!selectedFlowKey) {
@@ -3499,9 +3544,19 @@ def network_watcher_live_results():
                 entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
             );
 
-            selectedRecords.slice().reverse().forEach((entry) => {
+            selectedRecords.forEach((entry) => {
                 const item = document.createElement('details');
                 item.className = 'interaction-entry';
+                const interactionId = String(entry.id || `${entry.timestamp}:${entry.request?.flow || ''}`);
+                if (!knownInteractionIds.has(interactionId)) {
+                    knownInteractionIds.add(interactionId);
+                    expandedInteractionIds.add(interactionId);
+                }
+                item.open = expandedInteractionIds.has(interactionId);
+                item.addEventListener('toggle', () => {
+                    if (item.open) expandedInteractionIds.add(interactionId);
+                    else expandedInteractionIds.delete(interactionId);
+                });
                 const outcome = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
                 const timing = entry.elapsed_ms == null ? 'In progress' : `${entry.elapsed_ms} ms`;
                 const { messages, ...requestMeta } = entry.request || {};
@@ -3532,7 +3587,7 @@ def network_watcher_live_results():
             const res = await fetch('/api/network_watcher/interactions');
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions, data.flows);
+            renderFlowViews(data.interactions, data.flows);
         }
 
         async function poll() {
@@ -3594,7 +3649,7 @@ def network_watcher_live_results():
             });
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions, data.flows);
+            renderFlowViews(data.interactions, data.flows);
         }
 
         document.getElementById('clear-old-flows').addEventListener('click', () => clearFlowDetails('old'));
