@@ -3411,6 +3411,30 @@ def network_watcher_live_results():
             return entry.response || 'No findings reported for this packet batch.';
         }
 
+        function appendStructuredSummary(container, flow) {
+            const summary = flow?.summary;
+            if (!summary) return;
+            const card = document.createElement('article');
+            card.className = 'finding';
+            const meta = document.createElement('div');
+            meta.className = 'finding-meta';
+            meta.textContent = 'STRUCTURED FLOW SUMMARY · deterministic telemetry and score trend';
+            const content = document.createElement('div');
+            content.className = 'finding-content';
+            const protocols = summary.protocols?.join(', ') || '—';
+            const apps = summary.applications?.join(', ') || 'none decoded';
+            const ports = summary.destination_ports?.join(', ') || '—';
+            content.textContent = [
+                `Duration: ${formatTimestamp(summary.first_seen)} → ${formatTimestamp(summary.last_seen)}`,
+                `Events: ${summary.event_count || 0} · Observed bytes: ${formatBytes(summary.byte_count || 0)}`,
+                `Protocols: ${protocols} · Applications: ${apps} · Destination ports: ${ports}`,
+                `Score: last ${summary.last_score ?? '—'} · average ${summary.average_score ?? '—'} · peak ${summary.peak_score ?? '—'} · trend ${summary.score_trend || '—'}`,
+                `Alerts emitted: ${summary.alert_count || 0}`,
+            ].join('\n');
+            card.append(meta, content);
+            container.appendChild(card);
+        }
+
         function streamFindingEntries(interactions) {
             // A stream scores every event. The compact findings panel keeps the
             // newest score and newest error for each flow instead of growing
@@ -3496,6 +3520,7 @@ def network_watcher_live_results():
                 ? `${selectedFlow.active ? 'Active' : 'Inactive'} flow · ${selectedFlowKey}`
                 : 'Select a flow to view findings';
             list.replaceChildren();
+            appendStructuredSummary(list, selectedFlow);
 
             selectedFindings.forEach((entry) => {
                 const card = document.createElement('article');
@@ -3543,6 +3568,7 @@ def network_watcher_live_results():
             const selectedRecords = records.filter(entry =>
                 entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
             );
+            appendStructuredSummary(output, selectedFlow);
 
             selectedRecords.forEach((entry) => {
                 const item = document.createElement('details');

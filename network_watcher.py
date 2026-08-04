@@ -10,7 +10,7 @@ import psutil
 import shutil
 import subprocess
 import re
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime
 from ssm_stream import LlamaCppSsmRuntime, SsmObservation, packet_flow_key, packet_stream_event
 
@@ -39,6 +39,7 @@ DEFAULT_PER_FLOW_EVENTS_PER_SECOND = 0
 DEFAULT_FLOW_IDLE_TIMEOUT_SECONDS = 300
 DEFAULT_PAYLOAD_SAMPLE_EVERY = 1
 DEFAULT_BURST_ALERT_WINDOW_SECONDS = 0
+MAX_RETAINED_FLOW_SUMMARIES = 100
 DEFAULT_SURICATA_EVE_PATH = "/tmp/cyber-agent-flow/suricata/eve.json"
 DEFAULT_SURICATA_EVENT_TYPES = frozenset({"flow", "dns", "http", "tls", "alert", "anomaly", "fileinfo"})
 PAYLOAD_FIELD_NAMES = {"payload", "data", "file_data", "tcp_segment_data"}
@@ -127,6 +128,7 @@ class NetworkWatcher:
         self._flow_last_seen = {}
         self._flow_event_times = {}
         self._flow_payload_counts = {}
+        self._flow_summaries: OrderedDict[str, dict] = OrderedDict()
         self._burst_alerts = []
         self._burst_started_at = None
         self._buffer = queue.Queue(maxsize=self.max_queued_events)
@@ -179,6 +181,7 @@ class NetworkWatcher:
     def clear_interactions(self):
         with self._interaction_lock:
             self.interactions = []
+            self._flow_summaries.clear()
             self.interaction_revision += 1
 
     def get_stream_flows(self) -> list[dict]:
@@ -204,6 +207,9 @@ class NetworkWatcher:
                 flow["last_timestamp"] = str(entry.get("timestamp") or flow["last_timestamp"])
                 flow["last_outcome"] = str(entry.get("outcome") or "pending")
                 flow["active"] = flow_key in active_flow_keys
+                summary = self._flow_summaries.get(flow_key)
+                if summary:
+                    flow["summary"] = dict(summary)
         # Keep the flow browser predictable while packets arrive. Active flows
         # remain at the top, but a newer packet does not reshuffle every row.
         return sorted(flows.values(), key=lambda flow: (
@@ -217,15 +223,74 @@ class NetworkWatcher:
         active_flow_keys = set(self._flow_last_seen)
         with self._interaction_lock:
             original_count = len(self.interactions)
+            old_flow_keys = {
+                str((entry.get("request") or {}).get("flow") or "")
+                for entry in self.interactions
+                if entry.get("engine") == "llamacpp_ssm"
+                and str((entry.get("request") or {}).get("flow") or "") not in active_flow_keys
+            }
             self.interactions = [
                 entry for entry in self.interactions
                 if entry.get("engine") != "llamacpp_ssm"
                 or str((entry.get("request") or {}).get("flow") or "") in active_flow_keys
             ]
             removed = original_count - len(self.interactions)
+            for flow_key in old_flow_keys:
+                self._flow_summaries.pop(flow_key, None)
             if removed:
                 self.interaction_revision += 1
             return removed
+
+    def _record_flow_summary(self, flow_key: str, event: dict, observation: SsmObservation, is_alert: bool) -> None:
+        """Maintain compact, deterministic per-flow telemetry for the UI."""
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            event_bytes = max(0, int(event.get("len") or 0))
+        except (TypeError, ValueError):
+            event_bytes = 0
+        protocol = str(event.get("p") or "other")
+        applications = [str(value) for value in event.get("app") or [] if value]
+        destination_port = str(event.get("dst_port") or "")
+
+        with self._interaction_lock:
+            summary = self._flow_summaries.pop(flow_key, {
+                "first_seen": now,
+                "event_count": 0,
+                "byte_count": 0,
+                "protocols": [],
+                "applications": [],
+                "destination_ports": [],
+                "scores": [],
+                "alert_count": 0,
+            })
+            summary["last_seen"] = now
+            summary["event_count"] += 1
+            summary["byte_count"] += event_bytes
+            if protocol and protocol not in summary["protocols"]:
+                summary["protocols"].append(protocol)
+            for application in applications:
+                if application not in summary["applications"]:
+                    summary["applications"].append(application)
+            if destination_port and destination_port not in summary["destination_ports"]:
+                summary["destination_ports"].append(destination_port)
+            scores = (summary.get("scores") or [])[-11:] + [round(float(observation.score), 4)]
+            summary["scores"] = scores
+            summary["last_score"] = scores[-1]
+            summary["peak_score"] = round(max(summary.get("peak_score", 0.0), scores[-1]), 4)
+            summary["average_score"] = round(sum(scores) / len(scores), 4)
+            if len(scores) < 2:
+                summary["score_trend"] = "new"
+            elif scores[-1] - scores[0] > 0.03:
+                summary["score_trend"] = "rising"
+            elif scores[-1] - scores[0] < -0.03:
+                summary["score_trend"] = "falling"
+            else:
+                summary["score_trend"] = "steady"
+            if is_alert:
+                summary["alert_count"] += 1
+            self._flow_summaries[flow_key] = summary
+            while len(self._flow_summaries) > MAX_RETAINED_FLOW_SUMMARIES:
+                self._flow_summaries.popitem(last=False)
 
     def _add_log(self, kind: str, message: str):
         entry = {
@@ -1042,6 +1107,7 @@ class NetworkWatcher:
             self.inference_count += 1
             self.total_tokens_analyzed += len(observation.event) // 4
             is_alert = self._should_emit_ssm_alert(observation.flow_key, observation.score)
+            self._record_flow_summary(flow_key, event, observation, is_alert)
             analysis = (
                 f"{'Alert' if is_alert else 'Stream score'} {observation.score:.3f} "
                 f"for flow {observation.flow_key} ({observation.active_flows} active flow states)."

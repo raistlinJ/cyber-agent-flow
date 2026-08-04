@@ -9,6 +9,7 @@ import pytest
 import network_watcher
 from app import _discover_local_gguf_models
 from network_watcher import DEFAULT_PACKET_FIELDS, NetworkWatcher
+from ssm_stream import SsmObservation
 
 
 def _layer(name, **fields):
@@ -220,6 +221,32 @@ def test_stream_flow_list_marks_inactive_flows_and_clears_old_history():
     assert watcher.clear_old_stream_interactions() == 1
     _, interactions = watcher.get_interactions()
     assert [entry["request"]["flow"] for entry in interactions] == [active_flow]
+
+
+def test_structured_flow_summary_tracks_telemetry_and_score_trend():
+    watcher = NetworkWatcher(event_store=None)
+    flow_key = "tcp|a:1|b:443"
+    watcher._flow_last_seen = {flow_key: time.monotonic()}
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T17:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": flow_key},
+        "outcome": "success",
+    })
+    event = {"p": "tcp", "len": "120", "dst_port": "443", "app": ["tls"]}
+    watcher._record_flow_summary(flow_key, event, SsmObservation(flow_key, "{}", 0.10, 0.10, 1), False)
+    watcher._record_flow_summary(flow_key, event, SsmObservation(flow_key, "{}", 0.20, 0.20, 1), True)
+
+    summary = watcher.get_stream_flows()[0]["summary"]
+
+    assert summary["event_count"] == 2
+    assert summary["byte_count"] == 240
+    assert summary["protocols"] == ["tcp"]
+    assert summary["applications"] == ["tls"]
+    assert summary["destination_ports"] == ["443"]
+    assert summary["peak_score"] == 0.20
+    assert summary["score_trend"] == "rising"
+    assert summary["alert_count"] == 1
 
 
 def test_suricata_eve_record_is_normalized_to_the_shared_flow_shape():
