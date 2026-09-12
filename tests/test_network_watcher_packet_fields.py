@@ -1,7 +1,15 @@
 import json
+import queue
+import time
+from collections import deque
 from types import SimpleNamespace
 
+import pytest
+
+import network_watcher
+from app import _discover_local_gguf_models
 from network_watcher import DEFAULT_PACKET_FIELDS, NetworkWatcher
+from ssm_stream import SsmObservation
 
 
 def _layer(name, **fields):
@@ -84,3 +92,284 @@ def test_unlimited_packet_cap_serializes_all_available_records():
 
     watcher.max_packets_per_analysis = None
     assert json.loads(watcher._serialize_packet_batch(records))["packet_count"] == 3
+
+
+def test_periodic_batch_engine_remains_distinct_from_the_flow_ssm_engines():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.analysis_engine = "batch_llm"
+    watcher.analysis_interval_seconds = 10
+
+    assert "periodic packet-batch LLM" in watcher._engine_label()
+
+
+def test_local_gguf_discovery_recurses_into_model_subfolders(tmp_path):
+    nested = tmp_path / "recurrent" / "mamba"
+    nested.mkdir(parents=True)
+    expected = nested / "mamba-130m.gguf"
+    expected.write_bytes(b"GGUF")
+    (tmp_path / "recurrent" / "notes.txt").write_text("not a model", encoding="utf-8")
+
+    models, roots = _discover_local_gguf_models([str(tmp_path)])
+
+    assert roots == [str(tmp_path)]
+    assert models == [{
+        "id": str(expected),
+        "label": "mamba-130m.gguf",
+        "relative_path": "recurrent/mamba/mamba-130m.gguf",
+        "size_bytes": 4,
+    }]
+
+
+def test_local_gguf_discovery_accepts_a_model_path_and_hidden_subfolder(tmp_path):
+    model_dir = tmp_path / ".model-cache" / "download"
+    model_dir.mkdir(parents=True)
+    expected = model_dir / "recurrent.gguf"
+    expected.write_bytes(b"GGUF")
+
+    models, roots = _discover_local_gguf_models([str(expected)])
+
+    assert roots == [str(model_dir)]
+    assert [model["id"] for model in models] == [str(expected)]
+
+
+def test_ssm_alert_threshold_respects_per_flow_cooldown():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.ssm_alert_threshold = 0.72
+    watcher.ssm_alert_cooldown_seconds = 60
+
+    assert watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.72)
+    assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.90)
+    assert not watcher._should_emit_ssm_alert("tcp|a:1|b:443", 0.71)
+    assert watcher._should_emit_ssm_alert("tcp|c:1|d:443", 0.90)
+
+
+def test_continuous_intake_limits_bound_payloads_rate_and_queue():
+    watcher = NetworkWatcher(event_store=None)
+    record = {
+        "highest_protocol": "tcp",
+        "headers": {
+            "ip": {"src": "192.0.2.1", "dst": "198.51.100.2"},
+            "tcp": {"srcport": "50000", "dstport": "443"},
+        },
+        "payloads": {"tcp": {"data": "x" * 4000}},
+    }
+    watcher.max_normalized_event_bytes = 512
+    bounded = watcher._bounded_normalized_record(record)
+    assert "payloads" not in bounded
+    assert bounded["headers"]["tcp"]["dstport"] == "443"
+
+    watcher._buffer = queue.Queue(maxsize=1)
+    watcher.queue_overflow_policy = "drop_oldest"
+    watcher.max_normalized_event_bytes = 8192
+    watcher._enqueue_record({"id": "first"}, 0, "Captured")
+    watcher._enqueue_record({"id": "second"}, 0, "Captured")
+    assert watcher.events_overflowed == 1
+    assert watcher._buffer.get_nowait()["id"] == "second"
+
+    watcher._buffer = queue.Queue(maxsize=10)
+    watcher.per_flow_events_per_second = 1
+    watcher._enqueue_record(record, 0, "Captured")
+    watcher._enqueue_record(record, 0, "Captured")
+    assert watcher.events_rate_limited == 1
+
+
+def test_idle_flow_cleanup_releases_local_runtime_state():
+    class Runtime:
+        def __init__(self):
+            self.forgotten = set()
+
+        def forget_flows(self, flow_keys):
+            self.forgotten.update(flow_keys)
+            return len(flow_keys)
+
+    watcher = NetworkWatcher(event_store=None)
+    watcher._ssm_runtime = Runtime()
+    watcher.flow_idle_timeout_seconds = 60
+    watcher._flow_last_seen = {"tcp|a:1|b:443": 10.0}
+    watcher._flow_event_times = {"tcp|a:1|b:443": deque()}
+
+    watcher._expire_idle_flows(now=70.0)
+
+    assert watcher._flow_last_seen == {}
+    assert watcher._ssm_runtime.forgotten == {"tcp|a:1|b:443"}
+
+
+def test_stream_flow_list_marks_inactive_flows_and_clears_old_history():
+    watcher = NetworkWatcher(event_store=None)
+    active_flow = "tcp|a:1|b:443"
+    old_flow = "tcp|c:2|d:53"
+    watcher._flow_last_seen = {active_flow: time.monotonic()}
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T17:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": active_flow},
+        "outcome": "success",
+    })
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T16:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": old_flow},
+        "outcome": "success",
+    })
+
+    flows = watcher.get_stream_flows()
+
+    assert [(flow["key"], flow["active"]) for flow in flows] == [
+        (active_flow, True),
+        (old_flow, False),
+    ]
+    assert watcher.clear_old_stream_interactions() == 1
+    _, interactions = watcher.get_interactions()
+    assert [entry["request"]["flow"] for entry in interactions] == [active_flow]
+
+
+def test_structured_flow_summary_tracks_telemetry_and_score_trend():
+    watcher = NetworkWatcher(event_store=None)
+    flow_key = "tcp|a:1|b:443"
+    watcher._flow_last_seen = {flow_key: time.monotonic()}
+    watcher._record_interaction({
+        "timestamp": "2026-08-03T17:00:00+00:00",
+        "engine": "llamacpp_ssm",
+        "request": {"flow": flow_key},
+        "outcome": "success",
+    })
+    event = {"p": "tcp", "len": "120", "dst_port": "443", "app": ["tls"]}
+    watcher._record_flow_summary(flow_key, event, SsmObservation(flow_key, "{}", 0.10, 0.10, 1), False)
+    watcher._record_flow_summary(flow_key, event, SsmObservation(flow_key, "{}", 0.20, 0.20, 1), True)
+
+    summary = watcher.get_stream_flows()[0]["summary"]
+
+    assert summary["event_count"] == 2
+    assert summary["byte_count"] == 240
+    assert summary["protocols"] == ["tcp"]
+    assert summary["applications"] == ["tls"]
+    assert summary["destination_ports"] == ["443"]
+    assert summary["peak_score"] == 0.20
+    assert summary["score_trend"] == "rising"
+    assert summary["alert_count"] == 1
+
+
+def test_suricata_eve_record_is_normalized_to_the_shared_flow_shape():
+    watcher = NetworkWatcher(event_store=None)
+    eve = {
+        "timestamp": "2026-08-03T16:00:00.000000+0000",
+        "event_type": "tls",
+        "flow_id": 123456,
+        "community_id": "1:example",
+        "src_ip": "192.0.2.10",
+        "dest_ip": "198.51.100.20",
+        "src_port": 50000,
+        "dest_port": 443,
+        "proto": "TCP",
+        "app_proto": "tls",
+        "tls": {"sni": "api.example.test", "version": "TLS 1.3", "ja3": "abc"},
+    }
+
+    record = watcher._suricata_record(eve)
+
+    assert record["highest_protocol"] == "tls"
+    assert record["headers"]["ip"] == {"src": "192.0.2.10", "dst": "198.51.100.20"}
+    assert record["headers"]["tcp"] == {"srcport": "50000", "dstport": "443"}
+    assert record["headers"]["suricata"]["sni"] == "api.example.test"
+    assert record["headers"]["tls"] == {"present": True}
+
+
+def test_suricata_event_selection_filters_unselected_types():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.suricata_event_types = {"flow"}
+
+    assert watcher._suricata_record({"event_type": "dns"}) is None
+    assert watcher._suricata_record({"event_type": "flow", "flow": {"state": "established"}})
+
+
+def test_remote_ssm_endpoint_uses_the_explicit_stream_contract():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.api_url = "https://gpu.example.test/v1/models"
+
+    assert watcher._remote_ssm_endpoint() == "https://gpu.example.test/v1/ssm/events"
+
+
+def test_remote_ssm_receives_the_continuous_stream_policy(monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    watcher.api_url = "https://gpu.example.test"
+    watcher.model = "recurrent-test"
+    watcher.api_key = ""
+    watcher.ssl_verify = True
+    watcher.request_timeout = 60
+    watcher.system_prompt = "Score behavior changes by flow."
+    sent = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"score": 0.8, "active_flows": 4}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(network_watcher.requests, "post", fake_post)
+
+    observation = watcher._observe_remote_ssm("tcp|a:1|b:443", {"p": "tcp"})
+
+    assert sent["url"] == "https://gpu.example.test/v1/ssm/events"
+    assert sent["json"]["system_prompt"] == "Score behavior changes by flow."
+    assert observation.score == 0.8
+
+
+def test_cyber_agent_flow_context_is_bounded_and_only_sent_on_updates(tmp_path, monkeypatch):
+    transcript = tmp_path / "runs" / "run-1" / "transcript.md"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("first session update", encoding="utf-8")
+    monkeypatch.setattr(network_watcher.os.path, "abspath", lambda _path: str(tmp_path / "network_watcher.py"))
+
+    watcher = NetworkWatcher(event_store=None)
+    watcher.run_id = "run-1"
+    watcher.use_cyber_agent_flow_data = True
+
+    assert watcher._cyber_agent_flow_update() == "first session update"
+    assert watcher._cyber_agent_flow_update() == ""
+
+
+def test_suricata_readiness_gate_blocks_eve_mode_when_binary_is_missing(monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    monkeypatch.setattr(watcher, "_refresh_suricata_status", lambda include_version=True: {
+        "available": False, "executable": "", "version": ""
+    })
+
+    with pytest.raises(RuntimeError, match="Suricata is not installed"):
+        watcher.start(
+            "run", "ignored", "", "", "",
+            capture_source="suricata_eve",
+        )
+
+
+def test_suricata_mode_launches_the_selected_interface_and_uses_eve_log_directory(tmp_path, monkeypatch):
+    watcher = NetworkWatcher(event_store=None)
+    watcher.interface = "en0"
+    watcher.suricata_eve_path = str(tmp_path / "suricata" / "eve.json")
+    watcher.suricata_status = {"available": True, "executable": "/usr/local/bin/suricata", "version": ""}
+    commands = []
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(network_watcher.subprocess, "Popen", lambda command, **_kwargs: commands.append(command) or fake_process)
+
+    watcher._start_suricata_capture()
+
+    assert commands == [["/usr/local/bin/suricata", "-i", "en0", "-l", str(tmp_path / "suricata")]]
+    assert watcher._suricata_process is fake_process
+
+
+def test_suricata_mode_requires_exactly_one_interface():
+    watcher = NetworkWatcher(event_store=None)
+    watcher.interface = "en0,en1"
+
+    with pytest.raises(RuntimeError, match="exactly one selected network interface"):
+        watcher._start_suricata_capture()

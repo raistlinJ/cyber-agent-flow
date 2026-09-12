@@ -27,6 +27,81 @@ except Exception as _system_loggers_import_err:
 
 app = Flask(__name__)
 
+LOCAL_GGUF_MODEL_SEARCH_ENV = "CYBER_AGENT_FLOW_GGUF_DIR"
+MAX_LOCAL_GGUF_MODEL_RESULTS = 1_000
+MAX_LOCAL_GGUF_SEARCH_DEPTH = 12
+
+
+def _default_local_gguf_search_roots() -> list[str]:
+    """Return small, explicit model roots; recursive scanning happens below them."""
+    roots = [
+        os.environ.get(LOCAL_GGUF_MODEL_SEARCH_ENV, ""),
+        os.path.join(app.root_path, "models"),
+        os.path.expanduser("~/models"),
+        os.path.expanduser("~/.cache/llama.cpp"),
+        os.path.expanduser("~/.cache/huggingface/hub"),
+        os.path.expanduser("~/.lmstudio/models"),
+        os.path.expanduser("~/Library/Application Support/LM Studio/models"),
+        "/models",
+    ]
+    unique_roots = []
+    for root in roots:
+        normalized = os.path.abspath(os.path.expanduser(root)) if root else ""
+        if normalized and normalized not in unique_roots:
+            unique_roots.append(normalized)
+    return unique_roots
+
+
+def _normalize_local_gguf_search_root(raw_root: str) -> str:
+    """Accept a directory, an existing GGUF path, or a typed GGUF destination."""
+    root = os.path.abspath(os.path.expanduser(str(raw_root or "")))
+    if root.lower().endswith(".gguf"):
+        return os.path.dirname(root)
+    return root
+
+
+def _discover_local_gguf_models(search_roots: list[str]) -> tuple[list[dict], list[str]]:
+    """Find GGUF files recursively below operator-selected roots."""
+    models = []
+    scanned_roots = []
+    for search_root in search_roots:
+        root = _normalize_local_gguf_search_root(search_root)
+        if not os.path.isdir(root):
+            continue
+        scanned_roots.append(root)
+        root_depth = root.rstrip(os.sep).count(os.sep)
+        visited_directories = set()
+        for directory, subdirectories, filenames in os.walk(root, followlinks=True):
+            resolved_directory = os.path.realpath(directory)
+            if resolved_directory in visited_directories:
+                subdirectories[:] = []
+                continue
+            visited_directories.add(resolved_directory)
+            depth = directory.rstrip(os.sep).count(os.sep) - root_depth
+            if depth >= MAX_LOCAL_GGUF_SEARCH_DEPTH:
+                subdirectories[:] = []
+            for filename in filenames:
+                if not filename.lower().endswith(".gguf"):
+                    continue
+                path = os.path.join(directory, filename)
+                try:
+                    models.append({
+                        "id": path,
+                        "label": filename,
+                        "relative_path": os.path.relpath(path, root),
+                        "size_bytes": os.path.getsize(path),
+                    })
+                except OSError:
+                    continue
+                if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+                    break
+            if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+                break
+        if len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS:
+            break
+    models.sort(key=lambda model: (model["label"].lower(), model["id"].lower()))
+    return models, scanned_roots
+
 # Keylogger integration
 def _running_in_docker() -> bool:
     """Detect whether we are executing inside a Docker container."""
@@ -76,11 +151,12 @@ _event_store.recover_interrupted_work()
 
 # Network Watcher — background agent that sniffs packets for SSM analysis
 try:
-    from network_watcher import NetworkWatcher
+    from network_watcher import NetworkWatcher, DEFAULT_SURICATA_EVE_PATH
     _network_watcher = NetworkWatcher(_event_store)
 except Exception as _nw_import_err:
     print(f"[app] NetworkWatcher unavailable: {_nw_import_err}", flush=True)
     _network_watcher = None
+    DEFAULT_SURICATA_EVE_PATH = "/tmp/cyber-agent-flow/suricata/eve.json"
 
 # Path to plugins/ directory — AI-generated tools and playbooks, kept
 # separate from the hand-built kali_tools.json catalog
@@ -449,16 +525,52 @@ def _format_model_label(model_name: str, model_family: str = '') -> str:
     return f"{model_name} ({arch}, MCP: {mcp})"
 
 
+def _detect_ssm_compatibility(model_name: str, model_family: str = '') -> dict:
+    """Describe whether discovery metadata suggests a recurrent SSM model.
+
+    This is intentionally advisory.  A model name/family does not tell us
+    whether a remote OpenAI-compatible server exposes persistent per-flow
+    state, which is a separate runtime capability.
+    """
+    value = f"{model_name} {model_family}".lower()
+    if any(term in value for term in ("falcon-mamba", "mamba", "rwkv", "recurrentgemma")):
+        return {
+            "status": "likely_recurrent",
+            "label": "Likely recurrent SSM",
+            "detail": "Name or provider metadata indicates a recurrent/SSM family. Verify the GGUF or remote runtime supports persistent state.",
+        }
+    if any(term in value for term in ("jamba", "zamba", "samba", "hybrid")):
+        return {
+            "status": "hybrid_verify",
+            "label": "Hybrid — verify",
+            "detail": "This appears to be a hybrid architecture. It is not accepted by the current pure recurrent local runtime without explicit support.",
+        }
+    if _detect_model_arch(model_name, model_family) == "Transformer":
+        return {
+            "status": "not_ssm",
+            "label": "Not an SSM",
+            "detail": "Discovery metadata identifies a transformer family, so it is not suitable for the persistent SSM stream path.",
+        }
+    return {
+        "status": "unknown",
+        "label": "SSM compatibility unknown",
+        "detail": "The provider did not expose enough architecture metadata. Check the model card and runtime capabilities before using it for a stream state.",
+    }
+
+
 def _extract_provider_models(provider: str, payload: dict) -> list[dict]:
     if provider in {'litellm', 'openai', 'claude'}:
-        return [
-            {
-                "id": str(model.get('id')),
-                "label": _format_model_label(str(model.get('id')))
-            }
-            for model in payload.get('data', [])
-            if isinstance(model, dict) and model.get('id')
-        ]
+        models = []
+        for model in payload.get('data', []):
+            if not isinstance(model, dict) or not model.get('id'):
+                continue
+            model_id = str(model.get('id'))
+            models.append({
+                "id": model_id,
+                "label": _format_model_label(model_id),
+                "ssm_compatibility": _detect_ssm_compatibility(model_id),
+            })
+        return models
 
     models = []
     for model in payload.get('models', []):
@@ -468,7 +580,11 @@ def _extract_provider_models(provider: str, payload: dict) -> list[dict]:
         m_name = str(model.get('name'))
         m_family = model.get('details', {}).get('family', '').lower()
 
-        models.append({"id": m_name, "label": _format_model_label(m_name, m_family)})
+        models.append({
+            "id": m_name,
+            "label": _format_model_label(m_name, m_family),
+            "ssm_compatibility": _detect_ssm_compatibility(m_name, m_family),
+        })
 
     return models
 
@@ -1533,9 +1649,35 @@ def _log_request_end(response):
     response.headers['Expires'] = '0'
     return response
 
+def _web_cli_defaults():
+    """Non-secret first-visit defaults; browser-saved settings take precedence."""
+    from pathlib import Path
+    try:
+        config = json.loads((Path(__file__).parent / 'configs' / 'cli.json').read_text(encoding='utf-8'))
+        if not isinstance(config, dict):
+            return {}
+    except (OSError, ValueError):
+        return {}
+    fields = {'provider': 'provider', 'url': 'url', 'model': 'model',
+              'ssl_verify': 'sslVerify', 'context_window': 'contextWindow',
+              'max_turns': 'maxTurns', 'tool_timeout': 'toolTimeout'}
+    defaults = {target: config[source] for source, target in fields.items()
+                if source in config and isinstance(config[source], (str, int, float, bool))}
+    # API keys (including environment-derived keys) never enter the page.
+    from urllib.parse import urlsplit
+    try:
+        endpoint = urlsplit(str(defaults.get('url', '')))
+        if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+            defaults.pop('url', None)
+    except ValueError:
+        defaults.pop('url', None)
+    return defaults
+
+
 @app.route('/')
 def index():
-    return render_template('index.html', static_asset_version=_static_asset_version())
+    return render_template('index.html', static_asset_version=_static_asset_version(),
+                           cli_defaults=_web_cli_defaults())
 
 
 @app.route('/api/models', methods=['POST'])
@@ -1582,6 +1724,21 @@ def get_models():
     except requests.exceptions.RequestException:
         provider_label = _provider_display_name(provider)
         return jsonify({'success': False, 'error': f'Could not reach the selected {provider_label} endpoint.'}), 400
+
+
+@app.route('/api/network_watcher/local-models', methods=['POST'])
+def network_watcher_local_models():
+    """Discover local GGUF files for the llama.cpp recurrent SSM runtime."""
+    data = request.get_json(silent=True) or {}
+    requested_root = str(data.get('root') or '').strip()
+    roots = [requested_root] if requested_root else _default_local_gguf_search_roots()
+    models, scanned_roots = _discover_local_gguf_models(roots)
+    return jsonify({
+        'success': True,
+        'models': models,
+        'search_roots': scanned_roots,
+        'truncated': len(models) >= MAX_LOCAL_GGUF_MODEL_RESULTS,
+    })
 
 
 # -----------------------------------------------------------------------
@@ -2855,12 +3012,16 @@ def watcher_start():
     watcher_ssl = bool(data.get('ssl_verify', session_ssl))
 
     # Watch mode config
-    watch_mode = str(data.get('watch_mode', 'continuous'))  # 'continuous' | 'timer'
+    watch_mode = str(data.get('watch_mode', 'timer'))  # 'continuous' (legacy) | 'timer' (periodic)
     poll_interval = max(5, int(data.get('poll_interval', 10)))
     min_new_lines = max(1, int(data.get('min_new_lines', 3)))
     timer_interval = max(10, int(data.get('timer_interval', 60)))
     timer_span = str(data.get('timer_span', 'all'))  # 'all'|'last_N_lines:N'|'last_N_min:M'
     max_context_chars = int(data.get('max_context_chars', 4000))
+    use_cyber_agent_flow_data = bool(data.get('use_cyber_agent_flow_data', True))
+
+    if watch_mode == 'timer' and not use_cyber_agent_flow_data:
+        return jsonify({'success': False, 'error': 'Periodic analysis requires CyberAgentFlow session data.'}), 400
 
     if not watcher_model:
         return jsonify({'success': False, 'error': 'No model specified.'}), 400
@@ -2905,6 +3066,7 @@ def watcher_start():
                 'timer_interval': timer_interval,
                 'timer_span': timer_span,
                 'max_context_chars': max_context_chars,
+                'use_cyber_agent_flow_data': use_cyber_agent_flow_data,
             },
             event_queue=event_queue,
         )
@@ -2967,6 +3129,24 @@ def network_watcher_start():
     max_packet_payload_bytes = data.get('max_packet_payload_bytes', 384)
     max_packets_per_analysis = data.get('max_packets_per_analysis', 12)
     packet_fields = data.get('packet_fields')
+    analysis_engine = data.get('analysis_engine', 'llamacpp_ssm')
+    ssm_model_path = data.get('ssm_model_path', '')
+    ssm_gpu_layers = data.get('ssm_gpu_layers', 0)
+    ssm_context_tokens = data.get('ssm_context_tokens', 1024)
+    ssm_max_flows = data.get('ssm_max_flows', 256)
+    ssm_alert_threshold = data.get('ssm_alert_threshold', 0.72)
+    ssm_alert_cooldown_seconds = data.get('ssm_alert_cooldown_seconds', 60)
+    max_queued_events = data.get('max_queued_events', 500)
+    queue_overflow_policy = data.get('queue_overflow_policy', 'drop_newest')
+    max_normalized_event_bytes = data.get('max_normalized_event_bytes', 8192)
+    per_flow_events_per_second = data.get('per_flow_events_per_second', 0)
+    flow_idle_timeout_seconds = data.get('flow_idle_timeout_seconds', 300)
+    payload_sample_every = data.get('payload_sample_every', 1)
+    burst_alert_window_seconds = data.get('burst_alert_window_seconds', 0)
+    capture_source = data.get('capture_source', 'python')
+    suricata_eve_path = DEFAULT_SURICATA_EVE_PATH
+    suricata_event_types = data.get('suricata_event_types')
+    use_cyber_agent_flow_data = bool(data.get('use_cyber_agent_flow_data', False))
     try:
         _network_watcher.start(
             run_id,
@@ -2981,6 +3161,24 @@ def network_watcher_start():
             max_packet_payload_bytes,
             max_packets_per_analysis,
             packet_fields,
+            analysis_engine,
+            ssm_model_path,
+            ssm_gpu_layers,
+            ssm_context_tokens,
+            ssm_max_flows,
+            ssm_alert_threshold,
+            ssm_alert_cooldown_seconds,
+            max_queued_events,
+            queue_overflow_policy,
+            max_normalized_event_bytes,
+            per_flow_events_per_second,
+            flow_idle_timeout_seconds,
+            payload_sample_every,
+            burst_alert_window_seconds,
+            capture_source,
+            suricata_eve_path,
+            suricata_event_types,
+            use_cyber_agent_flow_data,
         )
         return jsonify({'success': True})
     except Exception as e:
@@ -3003,13 +3201,18 @@ def network_watcher_status():
 def network_watcher_interactions():
     """Return or clear the transient SLM/LLM diagnostic history."""
     if not _network_watcher:
-        return jsonify({'available': False, 'interactions': [], 'revision': 0}), 503
+        return jsonify({'available': False, 'interactions': [], 'flows': [], 'revision': 0}), 503
     if request.method == 'POST':
-        _network_watcher.clear_interactions()
+        payload = request.get_json(silent=True) or {}
+        if payload.get('scope') == 'old':
+            _network_watcher.clear_old_stream_interactions()
+        else:
+            _network_watcher.clear_interactions()
     revision, interactions = _network_watcher.get_interactions()
     return jsonify({
         'available': True,
         'interactions': interactions,
+        'flows': _network_watcher.get_stream_flows(),
         'revision': revision,
     })
 
@@ -3050,7 +3253,7 @@ def network_watcher_live_results():
             --text-muted: #9ca3af;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg); color: var(--text); padding: 1rem; height: 100vh; display: flex; flex-direction: column; gap: 1rem; }
+        body { background: var(--bg); color: var(--text); padding: 1rem; min-height: 100vh; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
         header { display: flex; align-items: center; justify-content: space-between; background: var(--surface); padding: 0.75rem 1.25rem; border-radius: 8px; border: 1px solid var(--border); }
         .status-badge { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem; }
         .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
@@ -3075,17 +3278,38 @@ def network_watcher_live_results():
         .interaction-panel summary { cursor: pointer; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 0.9rem; font-weight: 600; }
         .interaction-panel summary > div { display: flex; flex-direction: column; gap: 0.15rem; }
         .interaction-panel summary small { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; }
-        .interaction-list { border-top: 1px solid var(--border); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: 320px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-        .interaction-empty { color: var(--text-muted); font-size: 0.84rem; }
+        .flow-browser { border-top: 1px solid var(--border); display: grid; grid-template-columns: minmax(215px, 0.7fr) minmax(0, 1.5fr); height: 420px; min-height: 0; }
+        .flow-list-pane, .flow-output-pane { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+        .flow-list-pane { border-right: 1px solid var(--border); background: rgba(0, 0, 0, 0.12); }
+        .flow-pane-header { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.77rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+        .flow-actions { display: flex; gap: 0.35rem; }
+        .flow-actions .btn { padding: 0.28rem 0.45rem; font-size: 0.72rem; }
+        .flow-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0.45rem; display: flex; flex-direction: column; gap: 0.35rem; }
+        .flow-row { width: 100%; appearance: none; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); padding: 0.55rem 0.6rem; cursor: pointer; text-align: left; }
+        .flow-row:hover, .flow-row.selected { background: var(--surface-2); border-color: var(--accent); }
+        .flow-row.dead { color: #707887; opacity: 0.7; }
+        .flow-row-title { display: flex; align-items: center; gap: 0.35rem; font: 0.74rem/1.35 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+        .flow-state-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px rgba(16, 185, 129, 0.65); }
+        .flow-row.dead .flow-state-dot { background: #6b7280; box-shadow: none; }
+        .flow-row-meta { margin-top: 0.35rem; font-size: 0.69rem; color: var(--text-muted); }
+        .flow-output { flex: 1; padding: 0.75rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 0.55rem; }
+        .interaction-empty { color: var(--text-muted); font-size: 0.84rem; padding: 0.75rem; }
         .interaction-entry { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface-2); }
-        .interaction-entry-header { padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        .interaction-entry > summary { list-style: none; cursor: pointer; padding: 0.55rem 0.7rem; font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+        .interaction-entry > summary::-webkit-details-marker { display: none; }
+        .interaction-entry > summary::after { content: '▸'; color: var(--accent); font-size: 1rem; }
+        .interaction-entry[open] > summary { border-bottom: 1px solid var(--border); }
+        .interaction-entry[open] > summary::after { content: '▾'; }
+        .interaction-entry-body { padding-top: 0.05rem; }
         .interaction-meta { padding: 0.55rem 0.7rem 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.74rem; color: var(--text-muted); overflow-wrap: anywhere; }
         .interaction-label { padding: 0.55rem 0.7rem 0.25rem; font-size: 0.8rem; font-weight: 600; }
         .interaction-entry pre { margin: 0 0.7rem 0.7rem; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.76rem/1.45 "SFMono-Regular", Consolas, monospace; color: var(--text-muted); }
-        .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem; display: flex; flex-direction: column; height: 360px; }
-        .findings-header { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 600; }
+        @media (max-width: 700px) { .flow-browser { grid-template-columns: 1fr; height: 560px; } .flow-list-pane { border-right: 0; border-bottom: 1px solid var(--border); max-height: 210px; } }
+        .findings-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; height: 420px; overflow: hidden; }
+        .findings-header { display: flex; justify-content: space-between; gap: 1rem; padding: 0.8rem 1rem; font-size: 0.9rem; font-weight: 600; }
         .findings-header small { color: var(--text-muted); font-weight: 400; }
         .findings-list { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 0.65rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+        .findings-panel .flow-browser { flex: 1; height: auto; }
         .findings-empty { color: var(--text-muted); font-size: 0.84rem; }
         .finding { padding: 0.7rem 0.8rem; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--surface-2); }
         .finding.error { border-color: var(--error); color: #fca5a5; }
@@ -3119,23 +3343,51 @@ def network_watcher_live_results():
 
     <section class="findings-panel">
         <div class="findings-header">
-            <span>✨ SLM/LLM Findings <span id="findings-count"></span></span>
-            <small>Formatted model responses</small>
+            <span>✨ SSM Stream Findings <span id="findings-count"></span></span>
+            <small>Select a flow to see its latest scores and runtime findings</small>
         </div>
-        <div id="findings-empty" class="findings-empty">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
-        <div id="findings-list" class="findings-list"></div>
+        <div class="flow-browser">
+            <section class="flow-list-pane" aria-label="SSM finding flows">
+                <div class="flow-pane-header">Flows <span id="findings-flow-count"></span></div>
+                <div id="findings-flow-list" class="flow-list">
+                    <div id="findings-flow-empty" class="interaction-empty">No SSM flows observed yet.</div>
+                </div>
+            </section>
+            <section class="flow-output-pane" aria-label="Selected flow findings">
+                <div id="findings-output-header" class="flow-pane-header">Select a flow to view findings</div>
+                <div id="findings-list" class="findings-list" style="padding:0.75rem;">
+                    <div id="findings-empty" class="findings-empty">No SSM stream observations yet. Scores and runtime errors appear here as decoded packets are processed.</div>
+                </div>
+            </section>
+        </div>
     </section>
 
-    <details class="interaction-panel">
+    <details class="interaction-panel" open>
         <summary>
             <div>
-                <span>🧠 SLM/LLM Interaction Details <span id="interaction-count"></span></span>
-                <small>Prompts, raw responses, request metadata, and processing time</small>
+                <span>🧠 SSM Stream Details <span id="interaction-count"></span></span>
+                <small>Select a flow to inspect its normalized events, scores, and runtime output</small>
             </div>
-            <button class="btn" id="clear-interactions" type="button">Clear</button>
         </summary>
-        <div id="interaction-list" class="interaction-list">
-            <div id="interaction-empty" class="interaction-empty">No SLM/LLM interactions recorded yet.</div>
+        <div class="flow-browser">
+            <section class="flow-list-pane" aria-label="SSM flows">
+                <div class="flow-pane-header">
+                    <span>Flows <span id="flow-count"></span></span>
+                    <div class="flow-actions">
+                        <button class="btn" id="clear-old-flows" type="button" title="Clear saved details for inactive flows">Clear old</button>
+                        <button class="btn" id="clear-all-flows" type="button" title="Clear all saved flow details">Clear all</button>
+                    </div>
+                </div>
+                <div id="flow-list" class="flow-list">
+                    <div id="flow-empty" class="interaction-empty">No SSM flows observed yet.</div>
+                </div>
+            </section>
+            <section class="flow-output-pane" aria-label="Selected flow output">
+                <div id="flow-output-header" class="flow-pane-header">Select a flow to view its details</div>
+                <div id="flow-output" class="flow-output">
+                    <div id="interaction-empty" class="interaction-empty">Normalized stream data and scores for the selected flow appear here.</div>
+                </div>
+            </section>
         </div>
     </details>
 
@@ -3152,6 +3404,11 @@ def network_watcher_live_results():
     <script>
         let autoScroll = true;
         let interactionRevision = null;
+        let selectedFlowKey = null;
+        let currentInteractions = [];
+        let currentFlowSummaries = [];
+        const expandedInteractionIds = new Set();
+        const knownInteractionIds = new Set();
         const consoleEl = document.getElementById('console');
 
         function formatBytes(bytes) {
@@ -3168,6 +3425,7 @@ def network_watcher_live_results():
         function formattedResponse(entry) {
             if (entry.analysis) return entry.analysis;
             if (entry.outcome === 'pending') return 'Awaiting the model response…';
+            if (entry.engine === 'llamacpp_ssm' && entry.error) return `SSM runtime failed: ${entry.error}`;
             try {
                 const parsed = JSON.parse(entry.response || '{}');
                 const content = parsed?.choices?.[0]?.message?.content || parsed?.message?.content;
@@ -3179,61 +3437,200 @@ def network_watcher_live_results():
             return entry.response || 'No findings reported for this packet batch.';
         }
 
-        function renderFindings(interactions) {
+        function appendStructuredSummary(container, flow) {
+            const summary = flow?.summary;
+            if (!summary) return;
+            const card = document.createElement('article');
+            card.className = 'finding';
+            const meta = document.createElement('div');
+            meta.className = 'finding-meta';
+            meta.textContent = 'STRUCTURED FLOW SUMMARY · deterministic telemetry and score trend';
+            const content = document.createElement('div');
+            content.className = 'finding-content';
+            const protocols = summary.protocols?.join(', ') || '—';
+            const apps = summary.applications?.join(', ') || 'none decoded';
+            const ports = summary.destination_ports?.join(', ') || '—';
+            content.textContent = [
+                `Duration: ${formatTimestamp(summary.first_seen)} → ${formatTimestamp(summary.last_seen)}`,
+                `Events: ${summary.event_count || 0} · Observed bytes: ${formatBytes(summary.byte_count || 0)}`,
+                `Protocols: ${protocols} · Applications: ${apps} · Destination ports: ${ports}`,
+                `Score: last ${summary.last_score ?? '—'} · average ${summary.average_score ?? '—'} · peak ${summary.peak_score ?? '—'} · trend ${summary.score_trend || '—'}`,
+                `Alerts emitted: ${summary.alert_count || 0}`,
+            ].join('\n');
+            card.append(meta, content);
+            container.appendChild(card);
+        }
+
+        function streamFindingEntries(interactions) {
+            // A stream scores every event. The compact findings panel keeps the
+            // newest score and newest error for each flow instead of growing
+            // once per packet.
+            const entries = Array.isArray(interactions) ? interactions : [];
+            const visible = [];
+            const streamLatest = new Map();
+            entries.forEach((entry, index) => {
+                if (entry.outcome === 'pending') return;
+                if (entry.engine !== 'llamacpp_ssm') {
+                    visible.push({ entry, index });
+                    return;
+                }
+                const flow = entry.request?.flow || 'unknown flow';
+                const kind = entry.outcome === 'success' ? 'observation' : 'error';
+                streamLatest.set(`${kind}:${flow}`, { entry, index });
+            });
+            return visible.concat([...streamLatest.values()])
+                .sort((left, right) => left.index - right.index)
+                .map(({ entry }) => entry);
+        }
+
+        function selectFlow(flowKey) {
+            selectedFlowKey = flowKey;
+            renderFlowViews(currentInteractions, currentFlowSummaries);
+        }
+
+        function renderFlowViews(interactions, flowSummaries = []) {
+            currentInteractions = Array.isArray(interactions) ? interactions : [];
+            currentFlowSummaries = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const flowKeys = new Set(currentFlowSummaries.map(flow => flow.key));
+            if (!selectedFlowKey || !flowKeys.has(selectedFlowKey)) {
+                selectedFlowKey = currentFlowSummaries[0]?.key || null;
+            }
+            renderInteractions(currentInteractions, currentFlowSummaries);
+            renderFindings(currentInteractions, currentFlowSummaries);
+        }
+
+        function renderFlowList(listId, emptyId, flows) {
+            const list = document.getElementById(listId);
+            const empty = document.getElementById(emptyId);
+            empty.style.display = flows.length ? 'none' : '';
+            list.replaceChildren(empty);
+            flows.forEach((flow) => {
+                const button = document.createElement('button');
+                const isSelected = flow.key === selectedFlowKey;
+                button.type = 'button';
+                button.className = `flow-row${isSelected ? ' selected' : ''}${flow.active ? '' : ' dead'}`;
+                button.setAttribute('aria-pressed', String(isSelected));
+                const title = document.createElement('div');
+                title.className = 'flow-row-title';
+                const dot = document.createElement('span');
+                dot.className = 'flow-state-dot';
+                const key = document.createElement('span');
+                key.textContent = flow.key;
+                title.append(dot, key);
+                const meta = document.createElement('div');
+                meta.className = 'flow-row-meta';
+                meta.textContent = `${flow.active ? 'Active' : 'Inactive'} · ${flow.event_count} event${flow.event_count === 1 ? '' : 's'} · ${formatTimestamp(flow.last_timestamp)}`;
+                button.append(title, meta);
+                button.addEventListener('click', () => selectFlow(flow.key));
+                list.appendChild(button);
+            });
+        }
+
+        function renderFindings(interactions, flowSummaries = []) {
             const list = document.getElementById('findings-list');
             const empty = document.getElementById('findings-empty');
             const count = document.getElementById('findings-count');
-            const findings = (Array.isArray(interactions) ? interactions : []).filter((entry) => entry.outcome !== 'pending');
-            count.textContent = findings.length ? `(${findings.length})` : '';
-            empty.style.display = findings.length ? 'none' : '';
+            const flowCount = document.getElementById('findings-flow-count');
+            const outputHeader = document.getElementById('findings-output-header');
+            const findings = streamFindingEntries(interactions);
+            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const selectedFlow = flows.find(flow => flow.key === selectedFlowKey);
+            const selectedFindings = findings.filter(entry =>
+                entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
+            );
+            count.textContent = selectedFindings.length ? `(${selectedFindings.length})` : '';
+            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+            renderFlowList('findings-flow-list', 'findings-flow-empty', flows);
+            empty.style.display = selectedFindings.length ? 'none' : '';
+            outputHeader.textContent = selectedFlow
+                ? `${selectedFlow.active ? 'Active' : 'Inactive'} flow · ${selectedFlowKey}`
+                : 'Select a flow to view findings';
             list.replaceChildren();
+            appendStructuredSummary(list, selectedFlow);
 
-            findings.slice().reverse().forEach((entry) => {
+            selectedFindings.forEach((entry) => {
                 const card = document.createElement('article');
                 const isError = entry.outcome !== 'success';
                 card.className = `finding${isError ? ' error' : ''}`;
                 const meta = document.createElement('div');
                 meta.className = 'finding-meta';
-                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
+                const flow = entry.engine === 'llamacpp_ssm' ? entry.request?.flow : null;
+                meta.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'}${flow ? ` · ${flow}` : ''} · ${entry.elapsed_ms ?? 0} ms${entry.http_status ? ` · HTTP ${entry.http_status}` : ''}`;
                 const content = document.createElement('div');
                 content.className = 'finding-content';
                 content.textContent = formattedResponse(entry);
                 card.append(meta, content);
                 list.appendChild(card);
             });
+            if (!selectedFindings.length) list.appendChild(empty);
         }
 
-        function renderInteractions(interactions) {
-            const list = document.getElementById('interaction-list');
-            const empty = document.getElementById('interaction-empty');
+        function renderInteractions(interactions, flowSummaries = []) {
+            const output = document.getElementById('flow-output');
+            const outputHeader = document.getElementById('flow-output-header');
             const count = document.getElementById('interaction-count');
+            const flowCount = document.getElementById('flow-count');
             const records = Array.isArray(interactions) ? interactions : [];
-            renderFindings(records);
-            count.textContent = records.length ? `(${records.length})` : '';
-            empty.style.display = records.length ? 'none' : '';
-            list.replaceChildren(empty);
+            const flows = Array.isArray(flowSummaries) ? flowSummaries : [];
+            const flowKeys = new Set(flows.map(flow => flow.key));
+            count.textContent = flows.length ? `(${flows.length})` : '';
+            flowCount.textContent = flows.length ? `(${flows.length})` : '';
+            if (!selectedFlowKey || !flowKeys.has(selectedFlowKey)) {
+                selectedFlowKey = flows[0]?.key || null;
+            }
+            renderFlowList('flow-list', 'flow-empty', flows);
 
-            records.slice().reverse().forEach((entry) => {
-                const item = document.createElement('article');
+            output.replaceChildren();
+            if (!selectedFlowKey) {
+                outputHeader.textContent = 'Select a flow to view its details';
+                const empty = document.createElement('div');
+                empty.className = 'interaction-empty';
+                empty.textContent = 'Normalized stream data and scores for the selected flow appear here.';
+                output.append(empty);
+                return;
+            }
+            const selectedFlow = flows.find(flow => flow.key === selectedFlowKey);
+            outputHeader.textContent = `${selectedFlow?.active ? 'Active' : 'Inactive'} flow · ${selectedFlowKey}`;
+            const selectedRecords = records.filter(entry =>
+                entry.engine === 'llamacpp_ssm' && entry.request?.flow === selectedFlowKey
+            );
+            appendStructuredSummary(output, selectedFlow);
+
+            selectedRecords.forEach((entry) => {
+                const item = document.createElement('details');
                 item.className = 'interaction-entry';
+                const interactionId = String(entry.id || `${entry.timestamp}:${entry.request?.flow || ''}`);
+                if (!knownInteractionIds.has(interactionId)) {
+                    knownInteractionIds.add(interactionId);
+                    expandedInteractionIds.add(interactionId);
+                }
+                item.open = expandedInteractionIds.has(interactionId);
+                item.addEventListener('toggle', () => {
+                    if (item.open) expandedInteractionIds.add(interactionId);
+                    else expandedInteractionIds.delete(interactionId);
+                });
                 const outcome = entry.outcome === 'pending' ? 'Sending to model…' : (entry.outcome === 'success' ? 'Completed' : (entry.outcome === 'http_error' ? 'HTTP error' : 'Request failed'));
                 const timing = entry.elapsed_ms == null ? 'In progress' : `${entry.elapsed_ms} ms`;
                 const { messages, ...requestMeta } = entry.request || {};
+                const header = document.createElement('summary');
+                header.textContent = `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`;
+                const body = document.createElement('div');
+                body.className = 'interaction-entry-body';
                 const fields = [
-                    ['interaction-entry-header', `${formatTimestamp(entry.timestamp)} · ${entry.model || 'Unknown model'} · ${timing} · ${outcome}${entry.http_status ? ` (${entry.http_status})` : ''}`],
                     ['interaction-meta', `Endpoint: ${entry.endpoint || '—'} · Request: ${JSON.stringify(requestMeta)}`],
-                    ['interaction-label', 'Prompt'],
-                    ['', entry.prompt || '', 'pre'],
-                    ['interaction-label', entry.error ? 'Response / Error' : 'Raw response'],
-                    ['', entry.response || entry.error || '(empty response)', 'pre'],
+                    ['interaction-label', 'Normalized stream event'],
+                    ['', JSON.stringify(entry.request || {}, null, 2), 'pre'],
+                    ['interaction-label', entry.error ? 'Runtime error' : 'SSM output'],
+                    ['', `${entry.analysis ? `${entry.analysis}\n\n` : ''}${entry.response || entry.error || '(awaiting output)'}`, 'pre'],
                 ];
                 fields.forEach(([className, text, tag = 'div']) => {
                     const element = document.createElement(tag);
                     if (className) element.className = className;
                     element.textContent = text;
-                    item.appendChild(element);
+                    body.appendChild(element);
                 });
-                list.appendChild(item);
+                item.append(header, body);
+                output.appendChild(item);
             });
         }
 
@@ -3242,7 +3639,7 @@ def network_watcher_live_results():
             const res = await fetch('/api/network_watcher/interactions');
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions);
+            renderFlowViews(data.interactions, data.flows);
         }
 
         async function poll() {
@@ -3296,14 +3693,19 @@ def network_watcher_live_results():
             consoleEl.innerHTML = '';
         }
 
-        document.getElementById('clear-interactions').addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const res = await fetch('/api/network_watcher/interactions', { method: 'POST' });
+        async function clearFlowDetails(scope) {
+            const res = await fetch('/api/network_watcher/interactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope }),
+            });
             const data = await res.json();
             interactionRevision = data.revision;
-            renderInteractions(data.interactions);
-        });
+            renderFlowViews(data.interactions, data.flows);
+        }
+
+        document.getElementById('clear-old-flows').addEventListener('click', () => clearFlowDetails('old'));
+        document.getElementById('clear-all-flows').addEventListener('click', () => clearFlowDetails('all'));
 
         setInterval(poll, 2000);
         poll();
@@ -3320,6 +3722,14 @@ def network_watcher_interfaces():
         return jsonify({'success': True, 'interfaces': interfaces})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/network_watcher/suricata/status', methods=['GET'])
+def network_watcher_suricata_status():
+    """Refresh local Suricata readiness for the Network Watcher setup UI."""
+    if not _network_watcher:
+        return jsonify({'available': False, 'error': 'NetworkWatcher not available.'}), 503
+    return jsonify(_network_watcher._refresh_suricata_status(include_version=True))
 
 
 @app.route('/api/session/stream')

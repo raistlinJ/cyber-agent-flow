@@ -3112,6 +3112,10 @@ option {
     gap: 0.9rem;
 }
 
+.watcher-analysis-mode-group {
+    order: -1;
+}
+
 /* Same-LLM warning chip */
 .watcher-same-llm-chip {
     display: flex;
@@ -3518,6 +3522,58 @@ option {
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
     animation: watcher-pop 0.2s ease;
+}
+
+.watcher-config-section {
+    width: 100%;
+    border: 1px solid rgba(139, 92, 246, 0.28);
+    border-radius: 9px;
+    background: rgba(15, 23, 42, 0.38);
+    overflow: hidden;
+}
+
+.watcher-config-section > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.7rem 0.8rem;
+    cursor: pointer;
+    color: #ddd6fe;
+    font-size: 0.82rem;
+    font-weight: 650;
+    user-select: none;
+}
+
+.watcher-config-section > summary:hover {
+    background: rgba(139, 92, 246, 0.1);
+}
+
+.watcher-config-section > summary::marker {
+    color: var(--accent-primary);
+}
+
+.watcher-config-section > summary small {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 400;
+    text-align: right;
+}
+
+.watcher-config-section[open] > summary {
+    border-bottom: 1px solid rgba(139, 92, 246, 0.18);
+    background: rgba(139, 92, 246, 0.08);
+}
+
+.watcher-config-section-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.8rem;
+}
+
+.nw-config-grid.watcher-config-section-body {
+    display: grid;
 }
 
 .nw-config-grid {

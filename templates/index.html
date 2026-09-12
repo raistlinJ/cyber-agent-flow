@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+    <script id="cli-config-defaults" type="application/json">{{ cli_defaults|default({})|tojson }}</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CyberAgentFlow</title>
@@ -990,10 +991,13 @@
                     <!-- Setup Panel -->
                     <div class="watcher-subtab-panel active" id="watcher-setup-panel" style="padding:0 1rem;">
                         <div class="watcher-config-card" style="max-width: 800px; margin: 0 auto;">
-                                <h3 class="section-title" style="margin-bottom:1rem; font-size:0.95rem">
-                                    <span>🔭</span> Watcher LLM
-                                </h3>
+                            <div id="watcher-model-discovery-setup-slot">
+                            <div id="watcher-model-discovery-section">
+                            <details id="watcher-model-discovery-box" class="watcher-config-section" open>
+                                <summary><span id="watcher-model-heading"><span>🔭</span> Packet Batch Model</span><small id="watcher-model-summary">Provider, model, request context, and timeout</small></summary>
+                                <div class="watcher-config-section-body">
 
+                            <div id="watcher-remote-model-settings">
                                 <!-- Same-LLM warning -->
                                 <div id="watcher-same-llm-chip" class="watcher-same-llm-chip" style="display:none">
                                     <span>⚠️</span>
@@ -1001,7 +1005,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-provider-select">Provider</label>
+                                    <label id="watcher-provider-label" for="watcher-provider-select">Provider</label>
                                     <div class="select-wrapper">
                                         <i class="ph ph-stack icon-left"></i>
                                         <select id="watcher-provider-select">
@@ -1015,7 +1019,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-url-input">LLM URL</label>
+                                    <label id="watcher-url-label" for="watcher-url-input">LLM URL</label>
                                     <div class="input-with-icon">
                                         <i class="ph ph-link icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
                                         <input type="url" id="watcher-url-input" placeholder="http://localhost:11434">
@@ -1038,7 +1042,7 @@
                                 </div>
 
                                 <div class="input-group">
-                                    <label for="watcher-model-select">Model</label>
+                                    <label id="watcher-model-label" for="watcher-model-select">Model</label>
                                     <div style="display:flex;gap:0.5rem;align-items:center">
                                         <div class="select-wrapper" style="flex:1">
                                             <i class="ph ph-robot icon-left"></i>
@@ -1052,36 +1056,44 @@
                                         </button>
                                     </div>
                                     <div id="watcher-fetch-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem;margin-top:0.4rem"></div>
+                                    <div id="watcher-ssm-compatibility" class="input-hint" style="display:none;margin-top:0.45rem"></div>
+                                    <span id="watcher-ssm-provider-hint" class="input-hint" style="display:none;margin-top:0.45rem">Discovery is advisory: a remote service must explicitly support persistent per-flow SSM state. Local mode uses the GGUF path below.</span>
                                 </div>
 
-                                <div class="input-group">
-                                    <label for="watcher-context-size">Max Context Size (Chars)</label>
-                                    <div class="select-wrapper">
-                                        <i class="ph ph-text-align-justify icon-left"></i>
-                                        <select id="watcher-context-size">
-                                            <option value="64000" selected>64,000</option>
-                                            <option value="128000">128,000</option>
-                                            <option value="256000">256,000 (SSMs)</option>
-                                        </select>
-                                        <i class="ph ph-caret-down icon-right"></i>
+                                <div id="watcher-request-limits" class="nw-config-grid">
+                                    <div class="input-group" style="margin:0">
+                                        <label for="watcher-context-size">Max Context Size (Chars)</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-text-align-justify icon-left"></i>
+                                            <select id="watcher-context-size">
+                                                <option value="64000" selected>64,000</option>
+                                                <option value="128000">128,000</option>
+                                                <option value="256000">256,000 (SSMs)</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
                                     </div>
-                                </div>
 
-                                <div class="input-group">
-                                    <label for="watcher-timeout-select">LLM Request Timeout (seconds)</label>
-                                    <div class="select-wrapper">
-                                        <i class="ph ph-timer icon-left"></i>
-                                        <select id="watcher-timeout-select">
-                                            <option value="15">15 seconds</option>
-                                            <option value="30">30 seconds</option>
-                                            <option value="60" selected>60 seconds</option>
-                                            <option value="120">120 seconds (2 mins)</option>
-                                            <option value="300">300 seconds (5 mins)</option>
-                                        </select>
-                                        <i class="ph ph-caret-down icon-right"></i>
+                                    <div class="input-group" style="margin:0">
+                                        <label for="watcher-timeout-select">LLM Request Timeout (seconds)</label>
+                                        <div class="select-wrapper">
+                                            <i class="ph ph-timer icon-left"></i>
+                                            <select id="watcher-timeout-select">
+                                                <option value="15">15 seconds</option>
+                                                <option value="30">30 seconds</option>
+                                                <option value="60" selected>60 seconds</option>
+                                                <option value="120">120 seconds (2 mins)</option>
+                                                <option value="300">300 seconds (5 mins)</option>
+                                            </select>
+                                            <i class="ph ph-caret-down icon-right"></i>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="input-group">
+                                <div id="watcher-system-prompt-periodic-slot">
+                                <details id="watcher-system-prompt-box" class="watcher-config-section" open>
+                                    <summary><span>System Prompt</span><small>Mode-specific model guidance</small></summary>
+                                    <div class="watcher-config-section-body">
+                                <div id="watcher-system-prompt-section" class="input-group">
                                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem;">
                                         <label for="watcher-system-prompt" style="margin:0;">System Prompt</label>
                                         <button type="button" id="watcher-reset-prompt-btn" class="btn btn-secondary" style="font-size:0.75rem; padding:0.2rem 0.5rem; display:inline-flex; align-items:center; gap:0.3rem;" title="Reset to default prompt for current mode">
@@ -1089,87 +1101,145 @@
                                         </button>
                                     </div>
                                     <textarea id="watcher-system-prompt" rows="6" style="width:100%; font-family:'SFMono-Regular',Consolas,Monaco,monospace; font-size:0.8rem; background:var(--bg-surface-2); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:6px; padding:0.65rem; resize:vertical; line-height:1.4;" placeholder="System prompt instructions..."></textarea>
-                                    <span class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Customize LLM instructions for the active mode. Click 'Default' to restore.</span>
+                                    <span id="watcher-system-prompt-hint" class="input-hint" style="font-size:0.75rem; margin-top:0.3rem; display:block;">Sent with each periodic packet batch. Click Default to restore the batch-triage policy.</span>
                                 </div>
-                                <div class="input-group">
+                                    </div>
+                                </details>
+                                </div>
+                            </div>
+                            </div>
+                            </details>
+                            </div>
+                            </div>
+                                <div class="input-group watcher-analysis-mode-group">
                                     <label>Analysis Mode</label>
                                     <div class="watcher-mode-toggle" id="watcher-mode-toggle">
-                                        <button type="button" class="watcher-mode-btn active" data-mode="continuous" id="watcher-mode-continuous">
-                                            <span>📡</span> Continuous
+                                        <button type="button" class="watcher-mode-btn active" data-mode="periodic" id="watcher-mode-periodic">
+                                            <i class="ph ph-clock-counter-clockwise"></i> Periodic
                                         </button>
-                                        <button type="button" class="watcher-mode-btn" data-mode="timer" id="watcher-mode-timer">
-                                            <span>⏱</span> Timer
-                                        </button>
-                                        <button type="button" class="watcher-mode-btn" data-mode="network" id="watcher-mode-network">
-                                            <i class="ph ph-wifi-high"></i> Network
+                                        <button type="button" class="watcher-mode-btn" data-mode="continuous" id="watcher-mode-continuous">
+                                            <i class="ph ph-waveform"></i> Continuous
                                         </button>
                                     </div>
                                 </div>
 
-                                <!-- ── Continuous mode settings ──────────── -->
-                                <div id="watcher-continuous-settings" class="watcher-mode-settings">
-                                    <div class="input-group" style="margin:0">
-                                        <label for="watcher-poll-interval">Poll interval (seconds)</label>
-                                        <div class="watcher-poll-row">
-                                            <input type="range" id="watcher-poll-interval" min="5" max="120" value="10" step="5" class="watcher-range">
-                                            <span id="watcher-poll-interval-val" class="watcher-range-val">10 s</span>
-                                        </div>
+                                <!-- ── Optional CyberAgentFlow context for periodic packet batches ──── -->
+                                <div id="watcher-periodic-settings" class="watcher-mode-settings">
+                                    <div id="watcher-periodic-caf-data-section" class="input-group" style="margin:0">
+                                        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
+                                            <input type="checkbox" id="watcher-periodic-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
+                                            Use CyberAgentFlow data
+                                        </label>
+                                        <span id="watcher-periodic-caf-data-hint" class="input-hint">Optionally append active CyberAgentFlow session data to packet batches. Start Service to enable it.</span>
                                     </div>
-                                    <div class="input-group" style="margin:0">
-                                        <label for="watcher-min-lines">Trigger sensitivity (min new lines)</label>
-                                        <div class="watcher-poll-row">
-                                            <input type="range" id="watcher-min-lines" min="1" max="20" value="3" step="1" class="watcher-range">
-                                            <span id="watcher-min-lines-val" class="watcher-range-val">3</span>
-                                        </div>
-                                        <span class="input-hint" style="font-size:0.75rem">Lower = more frequent analysis; higher = less noise</span>
-                                    </div>
+                                    <div id="watcher-periodic-stream-limits-slot"></div>
                                 </div>
 
-                                <!-- ── Timer mode settings ───────────────── -->
-                                <div id="watcher-timer-settings" class="watcher-mode-settings" style="display:none">
+                                <!-- ── Shared packet telemetry settings ───── -->
+                                <div id="watcher-packet-settings" class="watcher-mode-settings">
+                                    <div id="nw-continuous-engine-top"></div>
+                                    <div id="watcher-system-prompt-continuous-slot"></div>
+                                    <div id="nw-caf-data-section" class="input-group" style="margin:0">
+                                        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;text-transform:none;letter-spacing:0">
+                                            <input type="checkbox" id="nw-use-caf-data" disabled style="accent-color:var(--accent-primary);width:14px;height:14px">
+                                            Use CyberAgentFlow data
+                                        </label>
+                                        <span id="nw-caf-data-hint" class="input-hint">Start Service to enable CyberAgentFlow session data.</span>
+                                    </div>
+                                    <div id="nw-stream-runtime-config"></div>
+                                    <details class="watcher-config-section" open>
+                                        <summary><span>Telemetry source</span><small>Packet decoder or Suricata EVE</small></summary>
+                                        <div class="watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-interval">Run analysis every</label>
+                                        <label for="nw-capture-source">Telemetry source</label>
                                         <div class="select-wrapper">
-                                            <i class="ph ph-clock icon-left"></i>
-                                            <select id="watcher-timer-interval">
-                                                <option value="30">30 seconds</option>
-                                                <option value="60" selected>1 minute</option>
-                                                <option value="150">2.5 minutes</option>
-                                                <option value="300">5 minutes</option>
-                                                <option value="600">10 minutes</option>
+                                            <i class="ph ph-share-network icon-left"></i>
+                                            <select id="nw-capture-source">
+                                                <option value="python" selected>Python packet decoder (PyShark)</option>
+                                                <option value="suricata_eve">Suricata EVE JSON</option>
                                             </select>
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
+                                        <span class="input-hint">Python mode decodes live packets by network layer. Suricata mode launches Suricata on the selected interface, then tails its EVE JSON and sends selected event types into the same SSM pipeline.</span>
+                                        <div id="nw-suricata-availability" class="input-hint" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.45rem">
+                                            <span>Checking local Suricata availability…</span>
+                                            <button type="button" id="nw-refresh-suricata-btn" class="watcher-btn-ghost" style="font-size:0.75rem">Refresh</button>
+                                        </div>
                                     </div>
+                                        </div>
+                                    </details>
+                                    <div id="nw-engine-settings-setup-slot">
+                                    <details id="nw-engine-settings-section" class="watcher-config-section" open>
+                                    <summary><span>Continuous SSM runtime</span><small>Flow state and alerting</small></summary>
+                                    <div class="watcher-config-section-body">
                                     <div class="input-group" style="margin:0">
-                                        <label for="watcher-timer-span">Log span to analyze</label>
+                                        <label for="nw-analysis-engine">Continuous analysis engine</label>
                                         <div class="select-wrapper">
-                                            <i class="ph ph-list-magnifying-glass icon-left"></i>
-                                            <select id="watcher-timer-span">
-                                                <option value="all">All — full session log</option>
-                                                <option value="last_N_lines:50">Last 50 lines</option>
-                                                <option value="last_N_lines:100">Last 100 lines</option>
-                                                <option value="last_N_min:5">Last 5 minutes</option>
-                                                <option value="last_N_min:10">Last 10 minutes</option>
-                                                <option value="last_N_min:30">Last 30 minutes</option>
+                                            <i class="ph ph-cpu icon-left"></i>
+                                            <select id="nw-analysis-engine">
+                                                <option value="llamacpp_ssm" selected>Local recurrent SSM (llama-cpp-python)</option>
+                                                <option value="remote_ssm">Remote SSM stream service</option>
                                             </select>
                                             <i class="ph ph-caret-down icon-right"></i>
                                         </div>
+                                        <span class="input-hint">Local mode retains flow state in this watcher process. Remote mode sends normalized events to an SSM service that owns the flow state; ordinary chat APIs are not stream-state compatible.</span>
                                     </div>
-                                </div>
+                                    <div id="watcher-network-runtime-slot"></div>
 
-                                <!-- ── Network mode settings ─────────────── -->
-                                <div id="watcher-network-settings" class="watcher-mode-settings" style="display:none">
-                                    <div class="input-group" style="margin:0">
-                                        <label>Network Interface(s)</label>
-                                        <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                                            <div style="color: var(--text-muted); font-size: 0.85rem;">Loading interfaces...</div>
+                                    <div id="nw-local-ssm-settings" class="nw-local-ssm-settings">
+                                        <div class="input-group nw-ssm-model-path" style="margin:0">
+                                            <label for="nw-ssm-model-path">Local recurrent GGUF model path</label>
+                                            <div style="display:flex;gap:0.5rem;align-items:center">
+                                                <div class="input-with-icon" style="flex:1">
+                                                    <i class="ph ph-hard-drives icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
+                                                    <input type="text" id="nw-ssm-model-path" placeholder="/models/mamba-*.gguf" autocomplete="off">
+                                                </div>
+                                                <button type="button" id="nw-fetch-local-models-btn" class="btn btn-secondary" style="width:auto;padding:0.6rem 0.85rem;flex-shrink:0" title="Find local GGUF models">
+                                                    <i class="ph ph-folder-open"></i> Fetch
+                                                </button>
+                                            </div>
+                                            <div class="select-wrapper" style="margin-top:0.5rem">
+                                                <i class="ph ph-robot icon-left"></i>
+                                                <select id="nw-local-model-select" disabled>
+                                                    <option value="" selected>Fetch local GGUF models first</option>
+                                                </select>
+                                                <i class="ph ph-caret-down icon-right"></i>
+                                            </div>
+                                            <div id="nw-local-model-fetch-status" class="input-hint" style="display:none;margin-top:0.45rem"></div>
+                                            <span class="input-hint">This path is on the machine running the watcher. The model must be a llama.cpp-supported recurrent/SSM GGUF, not a standard transformer GGUF.</span>
                                         </div>
-                                        <span class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
-                                    </div>
-
-                                    <div class="nw-config-grid">
+                                        <div class="nw-config-grid">
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-gpu-layers">GPU layers</label>
+                                                <div class="select-wrapper"><i class="ph ph-gpu icon-left"></i><select id="nw-ssm-gpu-layers"><option value="0">CPU only</option><option value="20">20 layers</option><option value="40">40 layers</option><option value="-1">All supported layers</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-context-tokens">State/context tokens</label>
+                                                <div class="select-wrapper"><i class="ph ph-text-align-justify icon-left"></i><select id="nw-ssm-context-tokens"><option value="512">512</option><option value="1024" selected>1,024</option><option value="2048">2,048</option><option value="4096">4,096</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-max-flows">Max active flow states</label>
+                                                <div class="select-wrapper"><i class="ph ph-tree-structure icon-left"></i><select id="nw-ssm-max-flows"><option value="128">128</option><option value="256" selected>256</option><option value="512">512</option><option value="1024">1,024</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                            <div class="input-group" style="margin:0">
+                                                <label for="nw-ssm-alert-threshold">Alert threshold</label>
+                                                <div class="select-wrapper"><i class="ph ph-warning-circle icon-left"></i><select id="nw-ssm-alert-threshold"><option value="0.50">0.50 — sensitive</option><option value="0.72" selected>0.72 — balanced</option><option value="0.85">0.85 — high confidence</option><option value="0.95">0.95 — critical only</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            </div>
+                                        </div>
                                         <div class="input-group" style="margin:0">
+                                            <label for="nw-ssm-alert-cooldown">Per-flow alert cooldown</label>
+                                            <div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-ssm-alert-cooldown"><option value="0">No cooldown</option><option value="30">30 seconds</option><option value="60" selected>1 minute</option><option value="300">5 minutes</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                        </div>
+                                        <div id="nw-ssm-start-error" class="error-label" style="display:none;color:var(--error);font-size:0.82rem"></div>
+                                    </div>
+                                    </div>
+                                    </details>
+                                    </div>
+
+                                    <details id="nw-stream-limits" class="watcher-config-section" open>
+                                        <summary><span id="nw-stream-limits-heading">Packet batching and payload limits</span><small id="nw-stream-limits-summary">Batch size and sample bounds</small></summary>
+                                    <div class="nw-config-grid watcher-config-section-body">
+                                        <div class="input-group nw-batch-only" style="margin:0">
                                             <label for="nw-analysis-interval">Send packet data every</label>
                                             <div class="select-wrapper">
                                                 <i class="ph ph-clock icon-left"></i>
@@ -1183,7 +1253,7 @@
                                                 </select>
                                                 <i class="ph ph-caret-down icon-right"></i>
                                             </div>
-                                            <span class="input-hint">Queued packets are sent together at this cadence.</span>
+                                            <span class="input-hint">Cadence for compatible packet-batch analysis.</span>
                                         </div>
 
                                         <div class="input-group" style="margin:0">
@@ -1199,10 +1269,10 @@
                                                 </select>
                                                 <i class="ph ph-caret-down icon-right"></i>
                                             </div>
-                                            <span class="input-hint">Applies to TCP/UDP payload samples and decoded application data; larger values use more context.</span>
+                                            <span class="input-hint">Larger samples use more model context.</span>
                                         </div>
 
-                                        <div class="input-group" style="margin:0">
+                                        <div class="input-group nw-batch-only" style="margin:0">
                                             <label for="nw-max-packets-per-analysis">Max packets per send</label>
                                             <div class="select-wrapper">
                                                 <i class="ph ph-stack icon-left"></i>
@@ -1219,10 +1289,104 @@
                                                 </select>
                                                 <i class="ph ph-caret-down icon-right"></i>
                                             </div>
-                                            <span class="input-hint">A request may contain fewer packets when the queue is smaller or the context cap is reached.</span>
+                                            <span class="input-hint">Caps each batch when batch analysis is in use.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-max-queued-events">Max queued events</label>
+                                            <div class="select-wrapper"><i class="ph ph-queue icon-left"></i><select id="nw-max-queued-events"><option value="250">250 events</option><option value="500" selected>500 events</option><option value="1000">1,000 events</option><option value="2500">2,500 events</option><option value="5000">5,000 events</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Bounds watcher memory when capture bursts exceed inference speed.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-queue-overflow-policy">Queue overflow policy</label>
+                                            <div class="select-wrapper"><i class="ph ph-arrows-clockwise icon-left"></i><select id="nw-queue-overflow-policy"><option value="drop_newest" selected>Drop newest event</option><option value="drop_oldest">Drop oldest event</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Keep continuity, or prefer the freshest traffic during overload.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-max-normalized-event-bytes">Max normalized event size</label>
+                                            <div class="select-wrapper"><i class="ph ph-file-code icon-left"></i><select id="nw-max-normalized-event-bytes"><option value="2048">2 KB</option><option value="4096">4 KB</option><option value="8192" selected>8 KB</option><option value="16384">16 KB</option><option value="32768">32 KB</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Hard cap after decoding, before an event reaches batch or flow analysis.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-per-flow-events-per-second">Per-flow events per second</label>
+                                            <div class="select-wrapper"><i class="ph ph-gauge icon-left"></i><select id="nw-per-flow-events-per-second"><option value="0" selected>Unlimited</option><option value="25">25 events / second</option><option value="50">50 events / second</option><option value="100">100 events / second</option><option value="250">250 events / second</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Stops one noisy flow from crowding out other telemetry.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-flow-idle-timeout">Flow idle timeout</label>
+                                            <div class="select-wrapper"><i class="ph ph-timer icon-left"></i><select id="nw-flow-idle-timeout"><option value="60">1 minute</option><option value="300" selected>5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Releases intake tracking, plus local SSM state when Continuous is active.</span>
+                                        </div>
+
+                                        <div class="input-group nw-intake-limit" style="margin:0">
+                                            <label for="nw-payload-sample-every">Payload sampling rate</label>
+                                            <div class="select-wrapper"><i class="ph ph-funnel icon-left"></i><select id="nw-payload-sample-every"><option value="1" selected>Every event</option><option value="2">Every 2nd event</option><option value="5">Every 5th event</option><option value="10">Every 10th event</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Headers continue for every event; this samples decoded payloads only.</span>
+                                        </div>
+
+                                        <div class="input-group nw-continuous-only" style="margin:0">
+                                            <label for="nw-burst-alert-window">Burst alert aggregation</label>
+                                            <div class="select-wrapper"><i class="ph ph-bell-ringing icon-left"></i><select id="nw-burst-alert-window"><option value="0" selected>Off — alert immediately</option><option value="10">10-second window</option><option value="30">30-second window</option><option value="60">1-minute window</option><option value="300">5-minute window</option></select><i class="ph ph-caret-down icon-right"></i></div>
+                                            <span class="input-hint">Combines threshold crossings into one alert with the highest score.</span>
                                         </div>
                                     </div>
+                                    </details>
 
+                                    <details id="nw-suricata-source-settings" class="watcher-config-section" style="display:none" open>
+                                        <summary><span>Suricata EVE event types</span><small>Ingested and normalized for the SSM/LLM</small></summary>
+                                        <div class="watcher-config-section-body">
+                                        <div class="nw-packet-fields">
+                                            <div>
+                                                <label class="nw-packet-fields-title">Suricata EVE event types ingested and normalized for the SSM/LLM</label>
+                                                <p class="input-hint">These native EVE event types are emitted only when enabled and observed. All supported types are selected by default.</p>
+                                            </div>
+                                            <div class="nw-packet-fields-table-wrap">
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Network flow</span><small>Flow counters, state, Community ID</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody><tr><td><input class="nw-suricata-event-cb" type="checkbox" value="flow" checked></td><th scope="row">Flow</th><td>Packet/byte counters, direction, state, and close reason</td></tr></tbody></table>
+                                                </details>
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Application protocols</span><small>DNS, HTTP, TLS</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="dns" checked></td><th scope="row">DNS</th><td>Query name, type, and response code</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="http" checked></td><th scope="row">HTTP</th><td>Host, URL, method, status, and user agent</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="tls" checked></td><th scope="row">TLS</th><td>SNI, version, cipher, and available fingerprints</td></tr>
+                                                    </tbody></table>
+                                                </details>
+                                                <details class="nw-packet-layer">
+                                                    <summary><span>Detection and files</span><small>Alert, anomaly, file info</small></summary>
+                                                    <table class="nw-packet-fields-table"><tbody>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="alert" checked></td><th scope="row">Alert</th><td>Signature, category, severity, and action</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="anomaly" checked></td><th scope="row">Anomaly</th><td>Decoder and protocol anomalies</td></tr>
+                                                        <tr><td><input class="nw-suricata-event-cb" type="checkbox" value="fileinfo" checked></td><th scope="row">File info</th><td>File metadata, MIME type, size, and available hashes</td></tr>
+                                                    </tbody></table>
+                                                </details>
+                                            </div>
+                                        </div>
+                                        </div>
+                                    </details>
+
+                                    <details id="nw-python-source-settings" class="watcher-config-section" open>
+                                    <summary><span id="nw-capture-interface-heading">PyShark capture interface</span><small id="nw-capture-interface-summary">Choose packet capture interfaces</small></summary>
+                                    <div class="watcher-config-section-body">
+                                    <p id="nw-remote-batch-note" class="watcher-config-hint" style="display:none; margin:0;">Remote SSM mode sends each normalized event to the configured stream service, which retains its own per-flow state.</p>
+                                    <div class="input-group" style="margin:0">
+                                        <label id="nw-interface-label">Network Interface(s)</label>
+                                        <div id="nw-interface-container" style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 150px; overflow-y: auto; background: var(--bg-surface-2); padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-subtle);">
+                                            <div style="color: var(--text-muted); font-size: 0.85rem;">Loading interfaces...</div>
+                                        </div>
+                                        <span id="nw-interface-hint" class="input-hint" style="font-size:0.75rem; margin-top:0.4rem; display:block;">Select one or more interfaces to sniff.</span>
+                                    </div>
+                                    </div>
+                                    </details>
+
+                                    <details id="nw-python-packet-fields" class="watcher-config-section" open>
+                                    <summary><span>PyShark decoded packet data</span><small>Choose fields by network layer</small></summary>
+                                    <div class="watcher-config-section-body">
                                     <div class="nw-packet-fields">
                                         <div>
                                             <label class="nw-packet-fields-title">Packet data sent to the SSM/LLM</label>
@@ -1279,14 +1443,16 @@
                                             </details>
                                         </div>
                                     </div>
+                                    </div>
+                                    </details>
                                 </div>
 
                                 <p class="watcher-config-hint" id="watcher-config-hint-text">
-                                    <strong>📡 Continuous</strong> — watches new log lines as they arrive and surfaces suggestions on the fly.<br>
-                                    <strong>⏱ Timer</strong> — periodically reads the full (or windowed) session log for richer, summarizing analysis.
+                                    <strong>⏱ Periodic</strong> — sends bounded, decoded packet batches to the configured model on the selected cadence.<br>
+                                    <strong>〰️ Continuous</strong> — continuously normalizes telemetry into the flow-specific SSM pipeline and alerts on notable scores.
                                 </p>
                                 <p class="watcher-config-hint" style="margin-top:0.4rem;opacity:0.75">
-                                    <em><strong>Pro Tip:</strong> For continuous mode, try a State Space Model (SSM) like <code>mamba</code> or <code>falcon3</code>. They are perfect for infinite streaming logs because they run in $O(1)$ constant time without context window degradation.</em>
+                                    <em><strong>Pro Tip:</strong> Continuous works well with recurrent State Space Models (SSMs) such as <code>mamba</code> or <code>falcon3</code>, which maintain bounded flow state while processing an ongoing stream.</em>
                                 </p>
 
                             </div>
@@ -1296,6 +1462,9 @@
                                     <button type="button" id="watcher-start-btn" class="btn btn-primary" style="font-size:1rem;padding:0.75rem 1rem" disabled>
                                         <span id="watcher-start-btn-icon">▶</span>
                                         <span id="watcher-start-btn-label">Start Watcher</span>
+                                    </button>
+                                    <button type="button" id="nw-open-live-window-btn" class="btn btn-secondary" style="font-size:1rem;padding:0.75rem 1rem">
+                                        <i class="ph ph-arrow-square-out"></i> Open Live Watcher Window
                                     </button>
                                     <div id="watcher-status-badge" class="watcher-status-badge watcher-status-idle">
                                         <span class="watcher-status-dot"></span>
@@ -1348,10 +1517,10 @@
                                 <section id="nw-findings-panel" class="config-card-lite" style="padding:0.9rem 1rem;">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.7rem;">
                                         <h3 class="section-title" style="font-size:0.95rem; margin:0;"><i class="ph ph-sparkle"></i> SLM/LLM Findings <span id="nw-findings-count" style="font-weight:400; color:var(--text-secondary);"></span></h3>
-                                        <span style="font-size:0.76rem; color:var(--text-secondary);">Formatted model responses</span>
+                                        <span style="font-size:0.76rem; color:var(--text-secondary);">Latest per-flow scores and runtime errors</span>
                                     </div>
                                     <div class="nw-findings-body">
-                                        <div id="nw-findings-empty" style="color:var(--text-secondary); font-size:0.84rem;">No formatted responses yet. Model findings will appear here as packet batches are analyzed.</div>
+                                        <div id="nw-findings-empty" style="color:var(--text-secondary); font-size:0.84rem;">No SSM stream observations yet. Scores and runtime errors appear here as decoded packets are processed.</div>
                                         <div id="nw-findings-list" class="nw-findings-list scrollable-panel"></div>
                                     </div>
                                 </section>
@@ -1359,8 +1528,8 @@
                                 <details id="nw-interactions-panel" class="config-card-lite" style="padding:0; overflow:hidden;">
                                     <summary style="display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0.8rem 1rem; cursor:pointer; user-select:none;">
                                         <span style="display:flex; flex-direction:column; gap:0.15rem;">
-                                            <span style="font-weight:600; font-size:0.9rem;"><i class="ph ph-brain"></i> SLM/LLM Interaction Details <span id="nw-interactions-count" style="font-weight:400; color:var(--text-secondary);"></span></span>
-                                            <span style="font-size:0.76rem; color:var(--text-secondary);">Prompts, raw responses, request metadata, and processing time</span>
+                                            <span style="font-weight:600; font-size:0.9rem;"><i class="ph ph-brain"></i> SSM Stream Details <span id="nw-interactions-count" style="font-weight:400; color:var(--text-secondary);"></span></span>
+                                            <span style="font-size:0.76rem; color:var(--text-secondary);">Normalized events, per-flow scores, runtime metadata, and processing time</span>
                                         </span>
                                         <button type="button" id="nw-clear-interactions-btn" class="watcher-btn-ghost" style="flex-shrink:0;" title="Clear SLM/LLM interaction history">Clear</button>
                                     </summary>
@@ -1389,7 +1558,7 @@
                                             <div id="nw-metric-mem" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">-- / -- MB</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
-                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Sniffed</h4>
+                                            <h4 id="nw-metric-captured-label" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Packets Sniffed</h4>
                                             <div id="nw-metric-packets" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
@@ -1397,7 +1566,7 @@
                                             <div id="nw-metric-analyzed" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
-                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Payload Extracted</h4>
+                                            <h4 id="nw-metric-bytes-label" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Payload Extracted</h4>
                                             <div id="nw-metric-bytes" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">0 KB</div>
                                         </div>
                                         <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
@@ -1412,12 +1581,20 @@
                                             <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Alerts Emitted</h4>
                                             <div id="nw-metric-alerts" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--error);">0</div>
                                         </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Active Flow States</h4>
+                                            <div id="nw-metric-flows" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--accent-primary);">0</div>
+                                        </div>
+                                        <div class="metric-card config-card-lite" style="text-align: center; padding: 0.85rem;">
+                                            <h4 style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary);">Latest SSM Score</h4>
+                                            <div id="nw-metric-score" style="font-size: 1.3rem; font-weight: bold; margin-top: 0.3rem; color: var(--text-primary);">--</div>
+                                        </div>
                                     </div>
                                 </div>
 
                                 <div id="nw-ssm-trigger-container" style="margin-top: 1rem; text-align: center;">
                                     <button type="button" id="nw-view-ssm-btn" class="btn btn-secondary" style="display: inline-flex; gap:0.5rem; align-items:center; padding:0.6rem 1.25rem;">
-                                        <i class="ph ph-arrow-square-out" style="font-size:1.1rem"></i> View Live SSM Stream (New Window)
+                                        <i class="ph ph-arrow-square-out" style="font-size:1.1rem"></i> Open Live Watcher Window
                                     </button>
                                 </div>
                             </div>

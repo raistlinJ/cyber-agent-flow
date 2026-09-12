@@ -65,6 +65,44 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 - **LLM Provider**: [Ollama](https://ollama.com/) or another Ollama-compatible endpoint
 - **Model**: A capable tool-calling model (e.g. `ollama pull llama3` or `qwen3-coder`)
 
+### Optional: local recurrent SSM Network Watcher
+
+The `codex/ssm-llamacpp-stream-analyzer` branch adds a local stream engine for
+the Network Watcher. It loads a llama.cpp-supported recurrent/SSM GGUF through
+`llama-cpp-python`, keeps bounded state per network flow, and scores normalized
+packet events immediately rather than posting packet batches to a chat API.
+
+Install its optional runtime with the accelerator-specific build configuration
+that matches the machine hosting the watcher:
+
+```bash
+pip install -r requirements-ssm.txt
+```
+
+In Watcher → Setup → Network, select **Local recurrent SSM
+(llama-cpp-python)** and provide the GGUF path on the machine running the app.
+Standard transformer GGUF files are rejected for this path because they do not
+provide the intended bounded recurrent state per flow.
+
+The same provider/model selector remains available for model discovery. It
+labels models as likely recurrent SSM, hybrid/verify, not SSM, or unknown based
+on provider metadata. This is advisory: a normal chat-completions endpoint does
+not expose persistent per-flow state. For remote execution, expose a stream
+service at `POST /v1/ssm/events` that accepts
+`{"model", "flow_key", "event"}` and returns at least
+`{"score": 0.0..1.0}` (optionally `flow_key` and `active_flows`).
+
+The Network Watcher can also consume a running Suricata deployment through its
+newline-delimited EVE JSON output. In Watcher → Setup → Network, choose
+**Suricata EVE JSON**, provide the readable `eve.json` path, and select the EVE
+event types to normalize. The watcher tails new events and does not start,
+configure, or replace Suricata itself.
+
+At application startup, the watcher checks whether the local `suricata`
+executable is on `PATH`. EVE mode stays disabled until that prerequisite is
+present and is checked again when the watcher starts. The app does not
+automatically install or upgrade system packages.
+
 ---
 
 ## Installation & Setup

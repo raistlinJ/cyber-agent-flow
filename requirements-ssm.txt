@@ -1,0 +1,5 @@
+# Optional local recurrent-SSM runtime for the Network Watcher branch.
+# Install with the wheel/build options appropriate for the host GPU; see
+# llama-cpp-python's installation guide for Metal/CUDA/ROCm builds.
+-r requirements.txt
+llama-cpp-python>=0.3.0

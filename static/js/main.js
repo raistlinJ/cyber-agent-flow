@@ -752,8 +752,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function restoreLastSettings() {
         try {
-            const raw = localStorage.getItem(LAST_SETTINGS_STORAGE_KEY)
-                || sessionStorage.getItem(LAST_SETTINGS_SESSION_STORAGE_KEY);
+            let raw = document.getElementById('cli-config-defaults')?.textContent || '';
+            try {
+                raw = localStorage.getItem(LAST_SETTINGS_STORAGE_KEY)
+                    || sessionStorage.getItem(LAST_SETTINGS_SESSION_STORAGE_KEY) || raw;
+            } catch (err) {
+                console.warn('Browser storage unavailable; using CLI config defaults:', err);
+            }
             if (!raw) {
                 return false;
             }
