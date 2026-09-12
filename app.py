@@ -1649,9 +1649,35 @@ def _log_request_end(response):
     response.headers['Expires'] = '0'
     return response
 
+def _web_cli_defaults():
+    """Non-secret first-visit defaults; browser-saved settings take precedence."""
+    from pathlib import Path
+    try:
+        config = json.loads((Path(__file__).parent / 'configs' / 'cli.json').read_text(encoding='utf-8'))
+        if not isinstance(config, dict):
+            return {}
+    except (OSError, ValueError):
+        return {}
+    fields = {'provider': 'provider', 'url': 'url', 'model': 'model',
+              'ssl_verify': 'sslVerify', 'context_window': 'contextWindow',
+              'max_turns': 'maxTurns', 'tool_timeout': 'toolTimeout'}
+    defaults = {target: config[source] for source, target in fields.items()
+                if source in config and isinstance(config[source], (str, int, float, bool))}
+    # API keys (including environment-derived keys) never enter the page.
+    from urllib.parse import urlsplit
+    try:
+        endpoint = urlsplit(str(defaults.get('url', '')))
+        if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
+            defaults.pop('url', None)
+    except ValueError:
+        defaults.pop('url', None)
+    return defaults
+
+
 @app.route('/')
 def index():
-    return render_template('index.html', static_asset_version=_static_asset_version())
+    return render_template('index.html', static_asset_version=_static_asset_version(),
+                           cli_defaults=_web_cli_defaults())
 
 
 @app.route('/api/models', methods=['POST'])
