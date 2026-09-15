@@ -2928,20 +2928,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     setLiveToolsBadge(data.tools);
                 }
 
-                if (nwEnableToggle && nwEnableToggle.checked) {
-                    fetch('/api/network_watcher/start', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            run_id: data.run_id,
-                            interface: nwInterfaceInput.value.trim() || 'eth0',
-                            api_url: nwApiUrlInput.value.trim() || 'http://localhost:8000/v1/chat/completions',
-                            model: nwModelInput.value.trim() || 'mamba-130m',
-                            api_key: nwApiKeyInput.value.trim()
-                        })
-                    }).catch(e => console.error('Failed to start network watcher', e));
-                }
-
                 setLivePolicyBadge(data.network_policy || networkPolicy);
                 refreshLoggingChannelStatus();
 

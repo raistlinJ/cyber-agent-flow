@@ -1,6 +1,6 @@
 Flask==3.0.2
 requests==2.31.0
-mcp
+mcp>=1.28,<2
 ollama
 pynput>=1.7.6
 asyncssh

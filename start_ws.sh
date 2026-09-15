@@ -8,6 +8,10 @@ echo "[cyber-agentflow] Checking for required tools..."
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/venv"
 PYTHON_BIN="$VENV_DIR/bin/python"
+# Web sessions launch Python MCP subprocesses by name; keep them in the same
+# environment as the Flask server, including when invoked from a desktop icon.
+export VIRTUAL_ENV="$VENV_DIR"
+export PATH="$VENV_DIR/bin:$PATH"
 BUILD_MODE=0
 
 if [[ "$*" == *"--build"* ]]; then
