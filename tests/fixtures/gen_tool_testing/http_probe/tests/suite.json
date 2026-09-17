@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "template": "python-http",
+  "http_routes": {"/health": {"status": 200, "body": "fixture healthy"}},
+  "cases": [
+    {"name":"launch/help","args":["--help"],"exit_code":0,"stdout_contains":["Inspect an HTTP endpoint"]},
+    {"name":"known endpoint","args":["{target_url}/health"],"exit_code":0,"stdout_json":{"status":200,"body":"fixture healthy"}},
+    {"name":"missing input","args":[],"exit_code":2,"stderr_contains":["required"]},
+    {"name":"missing endpoint","args":["{target_url}/missing"],"exit_code":1,"stderr_contains":["404"]}
+  ]
+}

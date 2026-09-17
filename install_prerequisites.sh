@@ -1,6 +1,6 @@
 #!/bin/bash
 # install_prerequisites.sh
-# Installs required system packages for CyberAgentFlow keylogger support
+# Installs CyberAgentFlow system/Python dependencies and the native Claude Code CLI
 # Supports Kali Linux 2025.x and 2026.x
 
 set -e
@@ -8,7 +8,10 @@ set -e
 echo "[prerequisites] Checking system prerequisites..."
 
 # Detect distribution
-if [ -f /etc/os-release ]; then
+if [ "$(uname -s)" = "Darwin" ]; then
+    DISTRO_ID="macos"
+    DISTRO_VERSION="$(sw_vers -productVersion)"
+elif [ -f /etc/os-release ]; then
     . /etc/os-release
     DISTRO_ID="$ID"
     DISTRO_VERSION="$VERSION_ID"
@@ -20,7 +23,9 @@ fi
 echo "[prerequisites] Detected: $DISTRO_ID $DISTRO_VERSION"
 
 # Check if running as root (required for apt)
-if [ "$EUID" -ne 0 ] && command -v sudo &> /dev/null; then
+if [ "$DISTRO_ID" = "macos" ]; then
+    SUDO=""
+elif [ "$EUID" -ne 0 ] && command -v sudo &> /dev/null; then
     echo "[prerequisites] Using sudo for package installation..."
     SUDO="sudo"
 elif [ "$EUID" -ne 0 ]; then
@@ -42,8 +47,8 @@ if [ "$DISTRO_ID" = "kali" ]; then
     $SUDO apt-get install -y -qq xdotool x11-utils
     
     # Install psutil dependencies (for process info)
-    echo "[prerequisites] Installing python3-psutil, python3-venv, and npm..."
-    $SUDO apt-get install -y -qq python3-psutil python3-venv npm
+    echo "[prerequisites] Installing python3-psutil, python3-venv, and curl..."
+    $SUDO apt-get install -y -qq python3-psutil python3-venv curl ca-certificates
     
     echo "[prerequisites] Kali Linux prerequisites installed successfully!"
     echo "[prerequisites] The system keylogger will now be able to detect active windows."
@@ -51,16 +56,18 @@ elif [ "$DISTRO_ID" = "debian" ]; then
     echo "[prerequisites] Debian detected - installing keylogger dependencies..."
     
     $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv npm
+    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv curl ca-certificates
     
     echo "[prerequisites] Debian prerequisites installed successfully!"
 elif [ "$DISTRO_ID" = "ubuntu" ]; then
     echo "[prerequisites] Ubuntu detected - installing keylogger dependencies..."
     
     $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv npm
+    $SUDO apt-get install -y -qq xdotool x11-utils python3-psutil python3-venv curl ca-certificates
     
     echo "[prerequisites] Ubuntu prerequisites installed successfully!"
+elif [ "$DISTRO_ID" = "macos" ]; then
+    echo "[prerequisites] macOS detected; using installed Python and curl."
 else
     echo "[prerequisites] WARNING: Unknown distribution '$DISTRO_ID'"
     echo "[prerequisites] Please manually install the following packages:"
@@ -68,18 +75,19 @@ else
     echo "[prerequisites]   - xprop (for window class detection)"
     echo "[prerequisites]   - python3-psutil (for process information)"
     echo "[prerequisites]   - python3-venv (for Python virtual environments)"
-    echo "[prerequisites]   - npm (for installing Claude Code)"
+    echo "[prerequisites]   - curl and ca-certificates (for installing Claude Code)"
 fi
 
-echo "[prerequisites] Installing Claude Code..."
-if command -v npm &> /dev/null; then
-    $SUDO npm install -g @anthropic-ai/claude-code
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "[prerequisites] Installing/verifying native Claude Code..."
+# sudo installations must put the CLI in the account that will run the WebUI.
+if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    sudo -H -u "$SUDO_USER" bash "$PROJECT_DIR/install_claude.sh"
 else
-    echo "[prerequisites] WARNING: npm is not installed. Skipping Claude Code installation."
+    bash "$PROJECT_DIR/install_claude.sh"
 fi
 
 echo "[prerequisites] Setting up Python virtual environment and installing dependencies..."
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ ! -d "$PROJECT_DIR/venv" ]; then
     python3 -m venv "$PROJECT_DIR/venv"
 fi

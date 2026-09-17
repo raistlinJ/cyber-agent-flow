@@ -12,7 +12,6 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=static_asset_version) }}">
     <!-- Phosphor Icons fallback (deferred to avoid DNS blocking UI) -->
     <script src="https://unpkg.com/@phosphor-icons/web" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
 </head>
 
@@ -111,7 +110,7 @@
                             </button>
                             <button type="button" class="config-subtab-btn" data-config-target="config-plugins-panel" id="config-plugins-tab-btn">
                                 <i class="ph ph-puzzle-piece"></i>
-                                <span>Plugins</span>
+                                <span>Artifacts</span>
                             </button>
                             <button type="button" class="config-subtab-btn" data-config-target="config-logging-panel">
                                 <i class="ph ph-list-checks"></i>
@@ -517,17 +516,37 @@
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
                                     <h2 class="section-title" style="margin-bottom:0;">
                                         <i class="ph ph-puzzle-piece"></i>
-                                        Generated Plugins
+                                        Generated Artifacts
                                     </h2>
                                     <button type="button" id="plugins-refresh-btn" class="btn btn-secondary" style="width:auto;padding:0.4rem 0.85rem;font-size:0.82rem;">
                                         <i class="ph ph-arrows-clockwise"></i> Refresh
                                     </button>
                                 </div>
-                                <p class="input-hint" style="margin-bottom: 1rem;">AI-generated tools and playbooks approved from Recommendations. Enable any you want available for your next live session. Kept separate from the hand-configured Kali tools above.</p>
+                                <p class="input-hint" style="margin-bottom: 1rem;">Artifacts created from analysis jobs. Tools have container tests; documents, skills, and templates have format validation. Preview, download, or continue editing an artifact below. Enable tools and playbooks separately for live sessions.</p>
+
+                                <details class="config-collapse">
+                                    <summary><span>Generated tool test cleanup</span><i class="ph ph-caret-down collapse-caret"></i></summary>
+                                    <div class="config-card-lite">
+                                        <p class="input-hint">Remove leftover containers or unused reusable images for generated tool tests. Active tests and builds are protected. Artifacts and reports are kept.</p>
+                                        <label for="gen-tool-cleanup-scope">Remove</label>
+                                        <select id="gen-tool-cleanup-scope">
+                                            <option value="containers">Leftover test containers</option>
+                                            <option value="both">Containers and reusable images</option>
+                                            <option value="images">Reusable images only</option>
+                                        </select>
+                                        <p id="gen-tool-cleanup-image-hint" class="input-hint" hidden>Removing the reusable image requires rebuilding it before the next test: python gen-tool_tests.py build</p>
+                                        <div class="plugin-test-actions">
+                                            <button type="button" id="gen-tool-cleanup-preview" class="btn btn-secondary">Preview cleanup</button>
+                                            <button type="button" id="gen-tool-cleanup-run" class="btn btn-secondary">Clean up</button>
+                                        </div>
+                                        <p id="gen-tool-cleanup-status" role="status" aria-live="polite"></p>
+                                        <pre id="gen-tool-cleanup-results" class="gen-tool-cleanup-results" hidden></pre>
+                                    </div>
+                                </details>
 
                                 <details class="config-collapse" open>
                                     <summary>
-                                        <span><i class="ph ph-wrench"></i> MCP Tools</span>
+                                        <span><i class="ph ph-wrench"></i> Generated MCP Tools</span>
                                         <i class="ph ph-caret-down collapse-caret"></i>
                                     </summary>
                                     <div id="plugin-mcp-tools-list" class="config-card-lite">
@@ -543,6 +562,10 @@
                                     <div id="plugin-playbooks-list" class="config-card-lite">
                                         <div class="empty-state" id="plugin-playbooks-empty">No generated playbooks yet. Approve one from the Recommendations tab.</div>
                                     </div>
+                                </details>
+                                <details class="config-collapse" open>
+                                    <summary><span>Documents &amp; Reusable Assets</span><i class="ph ph-caret-down collapse-caret"></i></summary>
+                                    <div id="generated-document-list" class="config-card-lite"><div class="empty-state">No document artifacts yet. Choose Create artifact on a completed analysis.</div></div>
                                 </details>
                             </div>
                         </div>
@@ -1930,24 +1953,38 @@
                         <div class="divider"></div>
 
                         <div class="input-group">
+                            <label for="asset-kind-select">Artifact type</label>
+                            <select id="asset-kind-select">
+                                {% for kind, spec in artifact_types.items() %}<option value="{{ kind }}">{{ spec.label }}</option>{% endfor %}
+                            </select>
+                            <span id="asset-kind-hint" class="input-hint"></span>
+                        </div>
+                        <div class="input-group">
+                            <label for="asset-name-input">Artifact name</label>
+                            <input id="asset-name-input" maxlength="100" pattern="[A-Za-z0-9_-]+" placeholder="my-artifact">
+                        </div>
+                        <div class="input-group">
+                            <label for="asset-instructions-input">Additional instructions</label>
+                            <textarea id="asset-instructions-input" rows="3" maxlength="12000" placeholder="Describe the content, intended audience, or reusable workflow."></textarea>
+                        </div>
+                        <div class="input-group">
                             <label for="asset-provider-select">Provider</label>
                             <div class="select-wrapper">
                                 <i class="ph ph-stack icon-left"></i>
                                 <select id="asset-provider-select">
-                                    <option value="ollama_direct" selected>Ollama (direct)</option>
-                                    <option value="litellm">LiteLLM</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="claude">Claude</option>
+                                    <option value="openai" selected>llama.cpp / Anthropic-compatible gateway</option>
+                                    <option value="ollama_direct">Ollama</option>
+                                    <option value="claude">Anthropic API</option>
                                 </select>
                                 <i class="ph ph-caret-down icon-right"></i>
                             </div>
-                            <span class="input-hint">Choose the provider used to generate this plugin.</span>
+                            <span class="input-hint">Claude Code creates the files using your selected model. The endpoint must support the Anthropic Messages API; recent llama-server builds do.</span>
                         </div>
                         <div class="input-group">
                             <label for="asset-url-input">Instance URL</label>
                             <div class="input-with-icon">
                                 <i class="ph ph-plugs-connected icon-left" style="top:50%;transform:translateY(-50%);position:absolute"></i>
-                                <input type="url" id="asset-url-input" placeholder="http://localhost:11434">
+                                <input type="url" id="asset-url-input" placeholder="http://localhost:8080">
                             </div>
                         </div>
                         <div class="input-group">
@@ -2008,7 +2045,49 @@
 </body>
 
     <script src="{{ url_for('static', filename='js/keylogger.js', v=static_asset_version) }}"></script>
+    <dialog id="plugin-test-results-dialog" class="plugin-test-dialog">
+        <form method="dialog"><button class="btn btn-secondary" style="float:right;">Close</button></form>
+        <h3 id="plugin-test-results-title">Test Results</h3>
+        <pre id="plugin-test-results-content"></pre>
+        <button type="button" id="plugin-results-continue" class="btn btn-primary">Continue with Claude</button>
+    </dialog>
+    <dialog id="plugin-repair-dialog" class="plugin-test-dialog plugin-repair-dialog">
+        <form method="dialog"><button class="btn btn-secondary" style="float:right;">Close</button></form>
+        <h3 id="plugin-repair-title">Continue with Claude</h3>
+        <p id="plugin-repair-description" class="input-hint">Continue from the generation prompt and latest results.</p>
+        <details><summary>Original generation prompt</summary><pre id="plugin-repair-original"></pre></details>
+        <details><summary>Latest checks</summary><pre id="plugin-repair-results"></pre></details>
+        <div id="plugin-repair-history" role="log" aria-label="Artifact conversation" aria-live="polite"></div>
+        <form id="plugin-repair-form">
+            <div class="plugin-repair-settings">
+                <label>Inference URL<input id="plugin-repair-url" type="url" required placeholder="http://localhost:8080"></label>
+                <label>Model<input id="plugin-repair-model" required></label>
+                <label>API key<input id="plugin-repair-key" type="password" autocomplete="off" placeholder="Optional"></label>
+            </div>
+            <label class="checkbox-container"><input id="plugin-repair-ssl" type="checkbox" checked>Verify TLS certificates</label>
+            <label for="plugin-repair-input">Your instructions</label>
+            <textarea id="plugin-repair-input" rows="4" maxlength="12000" required placeholder="For example: The parser drops records without a timestamp. Preserve those records and label the timestamp as unknown."></textarea>
+            <p id="plugin-repair-status" role="status"></p>
+            <div class="plugin-repair-actions">
+                <button type="submit" id="plugin-repair-send" class="btn btn-primary" disabled>Send prompt</button>
+                <button type="button" id="plugin-repair-test" class="btn btn-secondary" disabled>Test</button>
+                <button type="button" id="plugin-repair-cancel" class="btn btn-secondary" hidden>Cancel prompt</button>
+                <button type="button" id="plugin-repair-refresh" class="btn btn-secondary">Refresh</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="generated-document-dialog" class="plugin-test-dialog">
+        <form method="dialog"><button class="btn btn-secondary" style="float:right;">Close</button></form>
+        <h3 id="generated-document-title">Artifact preview</h3>
+        <label for="generated-document-files">File</label><select id="generated-document-files"></select>
+        <pre id="generated-document-content"></pre>
+    </dialog>
+    <script id="artifact-type-catalog" type="application/json">{{ artifact_types | tojson }}</script>
+    <script src="{{ url_for('static', filename='vendor/marked/marked.umd.js', v=static_asset_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/analysis-markdown.js', v=static_asset_version) }}"></script>
     <script src="{{ url_for('static', filename='js/main.js', v=static_asset_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/plugin-repair.js', v=static_asset_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/gen-tool-cleanup.js', v=static_asset_version) }}"></script>
     <script src="{{ url_for('static', filename='js/recommendations.js', v=static_asset_version) }}"></script>
     <script src="{{ url_for('static', filename='js/watcher.js', v=static_asset_version) }}"></script>
 </html>

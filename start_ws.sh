@@ -11,7 +11,7 @@ PYTHON_BIN="$VENV_DIR/bin/python"
 # Web sessions launch Python MCP subprocesses by name; keep them in the same
 # environment as the Flask server, including when invoked from a desktop icon.
 export VIRTUAL_ENV="$VENV_DIR"
-export PATH="$VENV_DIR/bin:$PATH"
+export PATH="$VENV_DIR/bin:$HOME/.local/bin:$PATH"
 BUILD_MODE=0
 
 if [[ "$*" == *"--build"* ]]; then
@@ -34,6 +34,7 @@ fi
 
 # 2. Install dependencies only when explicitly building or after first-time venv creation
 if [ "$BUILD_MODE" -eq 1 ]; then
+    bash "$PROJECT_DIR/install_claude.sh"
     echo "[cyber-agentflow] Installing Python dependencies into the persistent venv..."
     "$PYTHON_BIN" -m pip install --upgrade pip
     "$PYTHON_BIN" -m pip install -r "$PROJECT_DIR/requirements.txt"
@@ -44,7 +45,7 @@ else
     # even though the package is correctly installed.  Keylogging is optional
     # and app.py already disables it gracefully in that environment; verify
     # the package exists without initialising its desktop backend.
-    if ! "$PYTHON_BIN" -c "import flask, requests, mcp, ollama, importlib.util; assert importlib.util.find_spec('pynput')" >/dev/null 2>&1; then
+    if ! "$PYTHON_BIN" -c "import flask, requests, mcp, ollama, yaml, importlib.util; assert importlib.util.find_spec('pynput')" >/dev/null 2>&1; then
         echo "[cyber-agentflow] ERROR: Required Python dependencies are missing from $VENV_DIR"
         echo "[cyber-agentflow] Run ./start_ws.sh --build once while online to install them."
         exit 1

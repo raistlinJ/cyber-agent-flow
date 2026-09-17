@@ -1,0 +1,1 @@
+{"name":"http_probe","description":"Inspect a fixture HTTP endpoint","command":"python3","base_args":["probe.py"],"allow_args":true}

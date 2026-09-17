@@ -3923,3 +3923,23 @@ body.zen-mode .live-log-viewer {
     background: var(--panel-bg);
     color: var(--primary-color);
 }
+
+/* Generated tool test controls */
+.plugin-test-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0.5rem 0 1rem 1.8rem; }
+.plugin-test-status { font-size: 0.8rem; padding: 0.2rem 0.55rem; border: 1px solid currentColor; border-radius: 1rem; }
+.plugin-test-status[data-status="passed"] { color: #4ade80; }
+.plugin-test-status[data-status="failed"], .plugin-test-status[data-status="error"] { color: #fb7185; }
+.plugin-test-status[data-status="outdated"], .plugin-test-status[data-status="blocked"] { color: #fbbf24; }
+.plugin-test-dialog { width: min(850px, 90vw); max-height: 85vh; padding: 1.5rem; color: var(--text-primary); background: var(--bg-secondary, #151a23); border: 1px solid var(--panel-border); border-radius: 12px; }
+.plugin-test-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+.plugin-test-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65vh; overflow: auto; }
+.plugin-repair-dialog { width: min(950px, 92vw); }
+.plugin-repair-dialog details { margin: 0.8rem 0; }
+.plugin-repair-dialog pre { max-height: 25vh; }
+#plugin-repair-history { max-height: 30vh; overflow: auto; margin: 1rem 0; }
+.plugin-repair-turn { padding: 0.75rem; border-left: 2px solid var(--panel-border); margin-bottom: 0.6rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.plugin-repair-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.plugin-repair-settings input, #plugin-repair-input { width: 100%; box-sizing: border-box; }
+.plugin-repair-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.gen-tool-cleanup-results { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
+@media (max-width: 650px) { .plugin-repair-settings { grid-template-columns: 1fr; } }

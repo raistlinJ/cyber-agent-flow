@@ -122,7 +122,9 @@ Run the setup script (installs system packages and sets up the Python virtualenv
 sudo ./install_prerequisites.sh
 ```
 
-This installs `xdotool`, `x11-utils`, npm, Claude Code, and all Python dependencies from `requirements.txt` into a local `venv/`.
+On supported Linux distributions, this installs `xdotool`, `x11-utils`, curl, the native Claude Code CLI, and all Python dependencies from `requirements.txt` into a local `venv/`. Claude Code is installed for the invoking user, including when using sudo. On macOS, run the script without sudo; Python and curl must already be installed.
+
+Artifact generation uses Claude Code with your selected model and an Anthropic-compatible inference endpoint. For an existing installation, run `./install_claude.sh`; `./start_ws.sh --build` also installs/verifies the CLI. See [Claude Code artifact generation](docs/claude-generation.md) for llama.cpp setup.
 
 ### 3. Start Ollama and Pull a Model
 
@@ -285,3 +287,36 @@ For headless environments, automation, or remote access, CyberAgentFlow also shi
 ---
 
 *Developed for advanced, privacy-first agentic infrastructure.*
+
+### Testing generated MCP tools
+
+This runner covers generated tools under `plugins/mcp_tools/`; built-in tools are
+outside its scope. Other generated artifacts use format validation.
+
+Generated tools include test plans and run automatically in a reusable container
+before publication, with up to two implementation repairs when checks fail. In **Configuration → Artifacts**, use **Run Tests** to rerun
+checks and **View Results** to inspect failures. The CLI uses the same runner:
+
+```bash
+python gen-tool_tests.py build
+python gen-tool_tests.py run <tool_folder>
+python gen-tool_tests.py show <tool_folder>
+python gen-tool_tests.py cleanup --dry-run
+python gen-tool_tests.py cleanup --images
+```
+
+See [Generated tool testing](docs/generated-tool-testing.md) for setup, file and HTTP fixture
+templates, report locations, and execution limits.
+
+Cleanup is also available under **Configuration → Artifacts → Generated tool test cleanup**.
+It removes leftover test containers and optionally unused reusable images, while
+protecting active tests and retaining artifacts and reports.
+
+### Documents, skills, and other artifacts
+
+In **Recommendations**, use **Create artifact from this analysis** or review a
+recommended asset and choose its output type. Supported outputs include Markdown
+documents, agent skills, RAG document packages, reusable templates, and structured JSON,
+alongside tools and playbooks. Open **Configuration → Artifacts** to preview, download,
+validate, and continue editing them. See [Generated artifacts](docs/generated-artifacts.md)
+for file formats, storage paths, and RAG ingestion details.

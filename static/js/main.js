@@ -3868,6 +3868,7 @@ document.addEventListener('DOMContentLoaded', () => {
             'Expected Gain',
             'Why Better Than Prompting Alone',
             'Starter Prompt',
+            'AI Scaffolding Details',
         ];
         const fieldSet = new Set(fieldOrder.map(field => field.toLowerCase()));
         let currentAsset = null;
@@ -3875,7 +3876,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         sectionBody.split(/\r?\n/).forEach(rawLine => {
             const line = rawLine.trimEnd();
-            const fieldMatch = line.match(/^\s*-\s*(Type|Name|Problem|Expected Gain|Why Better Than Prompting Alone|Starter Prompt):\s*(.*)$/i);
+            const fieldMatch = line.match(/^\s*-\s*(Type|Name|Problem|Expected Gain|Why Better Than Prompting Alone|Starter Prompt|AI Scaffolding Details):\s*(.*)$/i);
             if (fieldMatch) {
                 const fieldName = fieldOrder.find(field => field.toLowerCase() === fieldMatch[1].toLowerCase());
                 if (!fieldName) {
@@ -3936,10 +3937,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${assets.map(asset => {
                         const type = escapeHtml(asset.Type || 'Unspecified');
                         const name = escapeHtml(asset.Name || 'Unnamed asset');
-                        const problem = marked.parseInline(escapeHtml(asset.Problem || 'Not provided.'));
-                        const gain = marked.parseInline(escapeHtml(asset['Expected Gain'] || 'Not provided.'));
-                        const why = marked.parseInline(escapeHtml(asset['Why Better Than Prompting Alone'] || 'Not provided.'));
-                        const starterPrompt = escapeHtml(asset['Starter Prompt'] || 'Not provided.');
+                        const problem = window.renderSafeAnalysisMarkdown(asset.Problem || 'Not provided.', true);
+                        const gain = window.renderSafeAnalysisMarkdown(asset['Expected Gain'] || 'Not provided.', true);
+                        const why = window.renderSafeAnalysisMarkdown(asset['Why Better Than Prompting Alone'] || 'Not provided.', true);
+                        const starterPrompt = escapeHtml(asset['AI Scaffolding Details'] || asset['Starter Prompt'] || 'Not provided.');
 
                         return `
                             <article class="analysis-tool-card">
@@ -3961,7 +3962,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <dd>${why}</dd>
                                     </div>
                                     <div>
-                                        <dt>Starter Prompt</dt>
+                                        <dt>Scaffolding Instructions</dt>
                                         <dd><pre>${starterPrompt}</pre></dd>
                                     </div>
                                 </dl>
@@ -3981,7 +3982,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const { assets, markdownWithoutSection } = parseRecommendedToolingAssets(responseText);
         const markdownSource = String(markdownWithoutSection || responseText).trim();
-        const renderedMarkdown = markdownSource ? marked.parse(markdownSource) : '';
+        const renderedMarkdown = markdownSource ? window.renderSafeAnalysisMarkdown(markdownSource) : '';
         const assetsSection = renderRecommendedToolingAssets(assets);
 
         return `
@@ -4022,12 +4023,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         assetsHtml = `
                             <div class="scaffolding-assets-container" style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(var(--accent-primary-rgb, 100, 100, 255), 0.05); border-radius: 8px; border: 1px solid rgba(var(--accent-primary-rgb, 100, 100, 255), 0.2);">
                                 <h4 style="margin-top: 0; color: var(--accent-primary); display: flex; align-items: center; gap: 0.5rem;"><i class="ph ph-cube"></i> Generated Scaffolding Ready to Build</h4>
-                                <p class="input-hint" style="margin-bottom: 1rem;">The analysis engine extracted these assets. Click Generate to open an interactive Claude Code session and build them immediately.</p>
+                                <p class="input-hint" style="margin-bottom: 1rem;">The analysis engine extracted these assets. Click Generate to choose a model and create a tool, document, skill, or another artifact.</p>
                                 <div class="assets-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
                                     ${data.assets.map(a => `
                                         <div class="asset-card config-card-lite" style="display: flex; flex-direction: column; justify-content: space-between;">
                                             <div style="font-weight: 600; font-size: 1.1rem; margin-bottom: 1rem;">${escapeHtml(a.name)}</div>
-                                            <button type="button" class="btn btn-primary btn-generate-asset" data-asset-name="${escapeHtml(a.name)}" style="width: 100%; justify-content: center;">
+                                            <button type="button" class="btn btn-primary btn-generate-asset" data-asset-name="${escapeHtml(a.name)}" data-kind="${escapeHtml(a.kind || 'mcp_tool')}" style="width: 100%; justify-content: center;">
                                                 <i class="ph ph-robot"></i> Generate
                                             </button>
                                         </div>
@@ -4045,7 +4046,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Add event listeners for the new buttons
                 detailContent.querySelectorAll('.btn-generate-asset').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        openAssetConfigModal(btn.dataset.assetName, _browseRunId);
+                        openAssetConfigModal(btn.dataset.assetName, _browseRunId, { kind: btn.dataset.kind });
                     });
                 });
             } else {
@@ -4843,13 +4844,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Scaffolding Generation via Claude Code
     // ---------------------------------------------------------------
     const assetConfigModal = document.getElementById('asset-config-modal-overlay');
+    const artifactTypes = JSON.parse(document.getElementById('artifact-type-catalog').textContent);
     const assetTerminalModal = document.getElementById('asset-terminal-modal-overlay');
     let _activeAssetConfig = null;
     let _activeAssetTerminalId = null;
     let _assetTerminalEventSource = null;
 
     function openAssetConfigModal(assetName, runId, meta = {}) {
-        _activeAssetConfig = { assetName, runId, kind: meta.kind || 'mcp_tool' };
+        _activeAssetConfig = { assetName, runId, kind: meta.kind || 'mcp_tool', analysisJobId: meta.analysisJobId || null };
+        document.getElementById('asset-kind-select').value = _activeAssetConfig.kind;
+        document.getElementById('asset-name-input').value = assetName;
+        document.getElementById('asset-name-input').readOnly = !meta.analysisJobId;
+        document.getElementById('asset-instructions-input').value = '';
 
         // Auto-fill from active global context
         const providerSelect = document.getElementById('provider-select');
@@ -4860,12 +4866,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const assetUrl = document.getElementById('asset-url-input');
         const assetApiKey = document.getElementById('asset-api-key');
 
-        assetProvider.value = providerSelect.value || 'ollama_direct';
-        assetUrl.value = ollamaUrlInput.value || 'http://localhost:11434';
+        assetProvider.value = ['ollama_direct', 'claude'].includes(providerSelect.value) ? providerSelect.value : 'openai';
+        assetUrl.value = ollamaUrlInput.value || (assetProvider.value === 'ollama_direct' ? 'http://localhost:11434' : 'http://localhost:8080');
         assetApiKey.value = apiKeyInput.value || '';
         document.getElementById('asset-ssl-verify-toggle').checked = true;
 
-        const kindLabel = _activeAssetConfig.kind === 'playbook' ? 'Markdown Playbook' : 'MCP Tool';
+        const kindLabel = artifactTypes[_activeAssetConfig.kind]?.label || 'Artifact';
+        document.getElementById('asset-kind-hint').textContent = artifactTypes[_activeAssetConfig.kind]?.checks || '';
         document.getElementById('asset-modal-title').innerHTML = `<i class="ph ph-magic-wand"></i> Generate ${kindLabel}: ${escapeHtml(assetName)}`;
         document.getElementById('asset-info-problem').innerHTML = `<strong>Problem:</strong> ${escapeHtml(meta.problem || 'Not specified.')}`;
         document.getElementById('asset-info-gain').innerHTML = `<strong>Expected Gain:</strong> ${escapeHtml(meta.gain || 'Not specified.')}`;
@@ -4882,6 +4889,12 @@ document.addEventListener('DOMContentLoaded', () => {
         assetConfigModal.style.display = 'flex';
     }
     window.openAssetConfigModal = openAssetConfigModal; // Expose to global for button onclick
+    document.getElementById('asset-kind-select').addEventListener('change', event => {
+        if (!_activeAssetConfig) return;
+        _activeAssetConfig.kind = event.target.value;
+        document.getElementById('asset-kind-hint').textContent = artifactTypes[event.target.value].checks;
+        document.getElementById('asset-modal-title').textContent = `Generate ${artifactTypes[event.target.value].label}`;
+    });
     window.showAlert = showAlert; // Expose to global for error handling
 
     document.getElementById('asset-fetch-models-btn').addEventListener('click', async () => {
@@ -4929,8 +4942,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const cancelBtn = document.getElementById('progress-cancel-btn');
         if (cancelBtn) cancelBtn.style.display = '';
 
-        const maxAttempts = 60;
-        for (let i = 0; i < maxAttempts; i++) {
+        while (_activePluginJobId === jobId) {
             await new Promise(resolve => setTimeout(resolve, 2000));
             if (_activePluginJobId !== jobId) return; // superseded or canceled locally
             try {
@@ -4942,7 +4954,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     progressModal.style.display = 'none';
                     if (cancelBtn) cancelBtn.style.display = 'none';
                     _activePluginJobId = null;
-                    showAlert(`Generated "${assetName}" successfully.`, 'success');
+                    await loadPluginsIntoConfig();
+                    showAlert(`Generated "${assetName}". ${job.status_detail || ''}`, 'success');
                     return;
                 }
                 if (job.status === 'canceled') {
@@ -4964,10 +4977,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 // keep polling through transient network errors
             }
         }
-        progressModal.style.display = 'none';
-        if (cancelBtn) cancelBtn.style.display = 'none';
-        _activePluginJobId = null;
-        showAlert(`Generation of "${assetName}" is taking longer than expected — check back shortly.`, 'error');
     }
 
     document.getElementById('progress-cancel-btn').addEventListener('click', async () => {
@@ -4995,21 +5004,30 @@ document.addEventListener('DOMContentLoaded', () => {
     // and toggled here, merged into the session-start request separately
     // from the hand-configured kali_tools.json checkboxes.
     // ---------------------------------------------------------------
-    let _pluginsCache = { mcp_tools: [], playbooks: [] };
+    let _pluginsCache = { mcp_tools: [], playbooks: [], artifacts: [] };
+    let pluginTestRefreshTimer = null;
+    document.addEventListener('plugin-artifact-updated', () => loadPluginsIntoConfig());
 
     async function loadPluginsIntoConfig() {
+        clearTimeout(pluginTestRefreshTimer);
         try {
             const res = await fetch('/api/plugins');
             const data = await res.json();
             _pluginsCache.mcp_tools = Array.isArray(data.mcp_tools) ? data.mcp_tools : [];
             _pluginsCache.playbooks = Array.isArray(data.playbooks) ? data.playbooks : [];
+            _pluginsCache.artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         } catch (err) {
             console.error('Failed to load plugins', err);
             _pluginsCache.mcp_tools = [];
             _pluginsCache.playbooks = [];
+            _pluginsCache.artifacts = [];
         }
         renderPluginMcpTools();
         renderPluginPlaybooks();
+        renderGeneratedDocuments();
+        if (_pluginsCache.mcp_tools.some(entry => entry.test_report?.status === 'running')) {
+            pluginTestRefreshTimer = setTimeout(loadPluginsIntoConfig, 2000);
+        }
     }
 
     function renderPluginMcpTools() {
@@ -5017,6 +5035,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const emptyState = document.getElementById('plugin-mcp-tools-empty');
         if (!container || !emptyState) return;
 
+        const checked = new Set(Array.from(container.querySelectorAll('.plugin-mcp-tool-checkbox:checked'), el => el.dataset.pluginFolder));
         container.querySelectorAll('.plugin-tool-item').forEach(el => el.remove());
 
         if (!_pluginsCache.mcp_tools.length) {
@@ -5029,14 +5048,71 @@ document.addEventListener('DOMContentLoaded', () => {
             const manifest = entry.manifest || {};
             const name = manifest.name || entry.folder || 'unnamed_tool';
             const description = manifest.description || 'No description provided.';
-            const wrapper = document.createElement('label');
-            wrapper.className = 'checkbox-container plugin-tool-item';
+            const report = entry.test_report || { status: 'not_tested' };
+            const state = report.outdated ? 'outdated' : report.status;
+            const labels = { not_tested: 'Not tested', canceled: 'Canceled', running: 'Testing…', passed: 'Passed', failed: 'Failed', blocked: 'Unavailable', error: 'Test error', outdated: 'Outdated' };
+            const wrapper = document.createElement('div');
+            wrapper.className = 'plugin-tool-item';
             wrapper.innerHTML = `
-                <input type="checkbox" class="plugin-mcp-tool-checkbox" data-plugin-folder="${escapeHtml(entry.folder || '')}">
-                <span><strong>${escapeHtml(name)}</strong>
-                    <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
-                </span>
+                <label class="checkbox-container">
+                    <input type="checkbox" class="plugin-mcp-tool-checkbox" data-plugin-folder="${escapeHtml(entry.folder || '')}">
+                    <span><strong>${escapeHtml(name)}</strong>
+                        <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
+                    </span>
+                </label>
+                <div class="plugin-test-actions">
+                    <span class="plugin-test-status" data-status="${escapeHtml(state)}">${escapeHtml(labels[state] || state)}</span>
+                    <button type="button" class="btn btn-secondary btn-compact plugin-run-tests" ${report.status === 'running' ? 'disabled' : ''}>Run Tests</button>
+                    <button type="button" class="btn btn-secondary btn-compact plugin-view-tests" ${report.test_id ? '' : 'disabled'}>View Results</button>
+                    <button type="button" class="btn btn-secondary btn-compact plugin-continue">Continue with Claude</button>
+                </div>
+                ${report.message ? `<p class="input-hint">${escapeHtml(report.message)}</p>` : ''}
             `;
+            wrapper.querySelector('input').checked = checked.has(entry.folder);
+            wrapper.querySelector('.plugin-continue').addEventListener('click', () => window.openPluginRepair(entry.folder));
+            wrapper.querySelector('.plugin-run-tests').addEventListener('click', async event => {
+                event.currentTarget.disabled = true;
+                try {
+                    const response = await fetch(`/api/plugins/mcp-tools/${encodeURIComponent(entry.folder)}/tests`, { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Unable to start tests.');
+                } catch (error) {
+                    showAlert(error.message, 'error');
+                } finally {
+                    await loadPluginsIntoConfig();
+                }
+            });
+            wrapper.querySelector('.plugin-view-tests').addEventListener('click', async () => {
+                try {
+                    const response = await fetch(`/api/plugins/mcp-tools/${encodeURIComponent(entry.folder)}/tests`);
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Unable to load results.');
+                    document.getElementById('plugin-test-results-title').textContent = `Test Results: ${name}`;
+                    const lines = [
+                        `Status: ${result.status}${result.outdated ? ' (outdated — artifact changed)' : ''}`,
+                        `Environment: ${result.template || 'Not selected'}`,
+                        `Image: ${result.image_id || result.image || 'Not available'}`,
+                        `Started: ${result.started_at || ''}`,
+                        `Finished: ${result.finished_at || 'In progress'}`,
+                        result.message || '',
+                        ...((result.cases || []).map(test => [
+                            `\n${test.status.toUpperCase()}: ${test.name} (${test.duration_seconds}s)`,
+                            ...(test.failures || []),
+                            `stdout:\n${test.stdout || '(empty)'}`,
+                            `stderr:\n${test.stderr || '(empty)'}`,
+                            test.output_truncated ? '[Output truncated]' : '',
+                        ].join('\n'))),
+                    ];
+                    document.getElementById('plugin-test-results-content').textContent = lines.join('\n');
+                    document.getElementById('plugin-results-continue').onclick = () => {
+                        document.getElementById('plugin-test-results-dialog').close();
+                        window.openPluginRepair(entry.folder);
+                    };
+                    document.getElementById('plugin-test-results-dialog').showModal();
+                } catch (error) {
+                    showAlert(error.message, 'error');
+                }
+            });
             container.appendChild(wrapper);
         });
     }
@@ -5046,6 +5122,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const emptyState = document.getElementById('plugin-playbooks-empty');
         if (!container || !emptyState) return;
 
+        const checked = new Set(Array.from(container.querySelectorAll('.plugin-playbook-checkbox:checked'), el => el.dataset.pluginName));
         container.querySelectorAll('.plugin-playbook-item').forEach(el => el.remove());
 
         if (!_pluginsCache.playbooks.length) {
@@ -5064,8 +5141,65 @@ document.addEventListener('DOMContentLoaded', () => {
                     <p class="input-hint" style="margin-top:0.3rem;">${escapeHtml(description)}</p>
                 </span>
             `;
+            wrapper.querySelector('input').checked = checked.has(entry.name);
             container.appendChild(wrapper);
         });
+    }
+
+    function renderGeneratedDocuments() {
+        const container = document.getElementById('generated-document-list');
+        container.replaceChildren();
+        if (!_pluginsCache.artifacts.length) {
+            container.textContent = 'No document artifacts yet. Choose Create artifact on a completed analysis.';
+            return;
+        }
+        for (const entry of _pluginsCache.artifacts) {
+            const row = document.createElement('div');
+            row.className = 'plugin-document-item';
+            const base = `/api/artifacts/${encodeURIComponent(entry.kind)}/${encodeURIComponent(entry.name)}`;
+            const report = entry.validation || {};
+            row.innerHTML = `<strong>${escapeHtml(entry.name)}</strong> <span class="input-hint">${escapeHtml(entry.label)}</span>
+                <p class="input-hint">${escapeHtml(entry.files.join(', '))}</p>
+                <div class="plugin-test-actions">
+                    <span class="plugin-test-status" data-status="${escapeHtml(report.outdated ? 'outdated' : report.status)}">${escapeHtml(report.outdated ? 'Validation outdated' : `Validation: ${report.status || 'not checked'}`)}</span>
+                    <button type="button" class="btn btn-secondary btn-compact document-preview">Preview</button>
+                    <a class="btn btn-secondary btn-compact" href="${base}/download">Download ZIP</a>
+                    <button type="button" class="btn btn-secondary btn-compact document-validate">Validate</button>
+                    <button type="button" class="btn btn-secondary btn-compact document-continue">Continue with Claude</button>
+                </div>${report.message ? `<p class="input-hint">${escapeHtml(report.message)}</p>` : ''}`;
+            row.querySelector('.document-continue').addEventListener('click', () => window.openPluginRepair(entry.name, entry.kind));
+            row.querySelector('.document-validate').addEventListener('click', async event => {
+                event.currentTarget.disabled = true;
+                try {
+                    const response = await fetch(`${base}/validate`, { method: 'POST' });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Validation failed.');
+                    showAlert(result.message || `Validation ${result.status}.`, result.status === 'passed' ? 'success' : 'error');
+                } catch (error) { showAlert(error.message, 'error'); }
+                finally { await loadPluginsIntoConfig(); }
+            });
+            row.querySelector('.document-preview').addEventListener('click', async () => {
+                try {
+                    const response = await fetch(base);
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Unable to preview artifact.');
+                    const select = document.getElementById('generated-document-files');
+                    select.replaceChildren();
+                    Object.keys(result.files).sort().forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name;
+                        select.appendChild(option);
+                    });
+                    const showFile = () => { document.getElementById('generated-document-content').textContent = result.files[select.value]; };
+                    select.onchange = showFile;
+                    showFile();
+                    document.getElementById('generated-document-title').textContent = `${entry.label}: ${entry.name}`;
+                    document.getElementById('generated-document-dialog').showModal();
+                } catch (error) { showAlert(error.message, 'error'); }
+            });
+            container.appendChild(row);
+        }
     }
 
     document.getElementById('plugins-refresh-btn')?.addEventListener('click', loadPluginsIntoConfig);
@@ -5074,6 +5208,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('confirm-asset-config-btn').addEventListener('click', async () => {
         if (!_activeAssetConfig) return;
+        const artifactName = document.getElementById('asset-name-input').value.trim();
+        if (!artifactName || !/^[A-Za-z0-9_-]+$/.test(artifactName)) {
+            showAlert('Use letters, numbers, hyphens, or underscores for the artifact name.', 'error');
+            return;
+        }
 
         const provider = document.getElementById('asset-provider-select').value;
         const model = document.getElementById('asset-model-select').value;
@@ -5092,7 +5231,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     run_id: _activeAssetConfig.runId,
-                    asset_name: _activeAssetConfig.assetName,
+                    asset_name: artifactName,
+                    analysis_job_id: _activeAssetConfig.analysisJobId,
+                    instructions: document.getElementById('asset-instructions-input').value,
                     kind: _activeAssetConfig.kind,
                     provider: provider,
                     model: model,
@@ -5104,10 +5245,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (data.success) {
                 assetConfigModal.style.display = 'none';
-                progressTitle.innerText = 'Generating Plugin';
-                progressMsg.innerText = `Sending generation request to ${model}...`;
+                progressTitle.innerText = 'Generating Artifact';
+                progressMsg.innerText = `Starting Claude Code with ${model}...`;
                 progressModal.style.display = 'flex';
-                pollPluginGenerationJob(data.job_id, _activeAssetConfig.assetName);
+                pollPluginGenerationJob(data.job_id, artifactName);
             } else if (data.collision) {
                 showAlert(data.error, 'error');
             } else {

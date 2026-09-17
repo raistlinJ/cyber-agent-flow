@@ -5,6 +5,7 @@
     const scaffoldingCache = {}; // runId -> assets array
 
     const $ = (id) => document.getElementById(id);
+    const artifactTypes = JSON.parse($('artifact-type-catalog').textContent);
 
     function escapeHtml(value) {
         return String(value || '')
@@ -29,11 +30,7 @@
             return '<div class="empty-state">No analysis response captured yet.</div>';
         }
 
-        if (window.marked) {
-            return `<div class="markdown-body analysis-markdown">${window.marked.parse(responseSource)}</div>`;
-        }
-
-        return `<pre class="log-pre">${escapeHtml(responseSource)}</pre>`;
+        return `<div class="markdown-body analysis-markdown">${window.renderSafeAnalysisMarkdown(responseSource)}</div>`;
     }
 
     // ---------------------------------------------------------------
@@ -69,14 +66,13 @@
     }
 
     function splitAssetsByKind(assets) {
-        const markdown = [];
-        const mcp = [];
+        const groups = Object.fromEntries(Object.keys(artifactTypes).map(kind => [kind, []]));
         for (const asset of assets) {
             const meta = parseAssetMeta(asset.prompt_content);
-            const bucket = /markdown|playbook/i.test(meta.type) ? markdown : mcp;
-            bucket.push({ ...asset, meta });
+            const kind = asset.kind || (/playbook/i.test(meta.type) ? 'playbook' : 'mcp_tool');
+            (groups[kind] || groups.mcp_tool).push({ ...asset, meta });
         }
-        return { markdown, mcp };
+        return groups;
     }
 
     // ---------------------------------------------------------------
@@ -130,7 +126,6 @@
         const runLabel = job.run_id || job.session_id || job.job_id;
         const statusLabel = String(job.status || 'unknown').toUpperCase();
         const notesValue = job.analyst_notes || '';
-        const { markdown, mcp } = assetsByKind;
 
         return `
             <details class="recommendation-session-card" data-job-id="${escapeHtml(job.job_id)}">
@@ -178,8 +173,9 @@
                         </div>
                     </div>
 
-                    ${renderAssetSection('MARKDOWN PLAYBOOK GENERATION', markdown, job.run_id, 'markdown', 'No markdown playbooks recommended for this session.')}
-                    ${renderAssetSection('MCP TOOL GENERATION', mcp, job.run_id, 'mcp', 'No MCP tools recommended for this session.')}
+                    <button type="button" class="btn btn-primary recommendation-create-artifact" data-job-id="${escapeHtml(job.job_id)}" data-run-id="${escapeHtml(job.run_id)}">Create artifact from this analysis</button>
+                    ${Object.entries(assetsByKind).filter(([, assets]) => assets.length).map(([kind, assets]) =>
+                        renderAssetSection(escapeHtml(artifactTypes[kind].label), assets, job.run_id, kind, '')).join('')}
                 </div>
             </details>
         `;
@@ -252,11 +248,17 @@
     }
 
     function bindActionButtons() {
+        document.querySelectorAll('.recommendation-create-artifact').forEach(button => {
+            button.addEventListener('click', () => window.openAssetConfigModal('', button.dataset.runId, {
+                kind: 'markdown', analysisJobId: button.dataset.jobId,
+                problem: 'Create a reusable artifact from this completed analysis.', gain: 'Choose its format and describe what you need.',
+            }));
+        });
         document.querySelectorAll('.recommendation-approve-btn').forEach(button => {
             button.addEventListener('click', () => {
                 const runId = button.dataset.runId;
                 const assetName = button.dataset.assetName;
-                const kind = button.dataset.kind === 'markdown' ? 'playbook' : 'mcp_tool';
+                const kind = button.dataset.kind;
 
                 if (!runId || !assetName) {
                     console.error('Review clicked with missing runId/assetName', runId, assetName);
@@ -343,6 +345,7 @@
         }
 
         const data = await response.json();
+        Object.keys(scaffoldingCache).forEach(runId => delete scaffoldingCache[runId]);
         await renderRecommendations(data.jobs || []);
     }
 

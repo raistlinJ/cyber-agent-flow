@@ -14,9 +14,16 @@ import logging
 import fcntl
 import shutil #this will be for the clear button to clear runs
 import uuid
+import tempfile
 from datetime import datetime
 from timestamp_utils import now_timestamp
 from durable_event_store import DurableEventStore
+from gen_tool_tests import TestRun, TestBusyError, latest_report, write_report, tool_path, fingerprint
+from claude_generation import generate_artifact, refine_artifact, claude_executable, normalize_endpoint, GenerationCancelled
+from pathlib import Path
+from artifact_catalog import ARTIFACT_TYPES, DOCUMENT_KINDS, infer_kind, document_instructions
+from artifact_store import document_path, read_document, document_fingerprint, validate_document, validation_report, list_documents
+from gen_tool_test_runtime import cleanup_resources, RuntimeBusyError
 
 try:
     from system_loggers import NetworkCaptureLogger, SyscallLogger
@@ -260,6 +267,11 @@ def _static_asset_version() -> str:
     candidate_paths = [
         os.path.join(base_dir, 'static', 'css', 'style.css'),
         os.path.join(base_dir, 'static', 'js', 'main.js'),
+        os.path.join(base_dir, 'static', 'js', 'analysis-markdown.js'),
+        os.path.join(base_dir, 'static', 'js', 'recommendations.js'),
+        os.path.join(base_dir, 'static', 'vendor', 'marked', 'marked.umd.js'),
+        os.path.join(base_dir, 'static', 'js', 'plugin-repair.js'),
+        os.path.join(base_dir, 'static', 'js', 'gen-tool-cleanup.js'),
         os.path.join(base_dir, 'static', 'js', 'keylogger.js'),
         os.path.join(base_dir, 'static', 'js', 'watcher.js'),
         os.path.join(base_dir, 'templates', 'index.html'),
@@ -773,16 +785,27 @@ def _to_json_safe(value):
     return str(value)
 
 
+def _atomic_write_text(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".write-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def _write_analysis_job_record(run_id: str, job_id: str, record: dict):
     os.makedirs(_analysis_jobs_dir(run_id), exist_ok=True)
     safe_record = _to_json_safe(record)
 
     json_path = _analysis_job_json_path(run_id, job_id)
-    with open(json_path, 'w') as f:
-        json.dump(safe_record, f, indent=2)
+    _atomic_write_text(json_path, json.dumps(safe_record, indent=2))
 
     markdown_path = _analysis_job_markdown_path(run_id, job_id)
-    with open(markdown_path, 'w') as f:
+    with io.StringIO() as f:
         f.write(f"# Analysis Job {job_id}\n\n")
         f.write(f"- Run ID: {safe_record.get('run_id', 'unknown')}\n")
         f.write(f"- Status: {safe_record.get('status', 'unknown')}\n")
@@ -810,6 +833,7 @@ def _write_analysis_job_record(run_id: str, job_id: str, record: dict):
             f.write("## Response\n\n")
             f.write(safe_record['response'])
             f.write("\n")
+        _atomic_write_text(markdown_path, f.getvalue())
 
 
 def _normalize_analysis_outputs(raw_outputs) -> list[str]:
@@ -888,7 +912,7 @@ def _build_analysis_output_template(span_req: str, analysis_outputs=None) -> str
             "- Confidence: <high|medium|low>"
         ),
         "Recommended Tooling Assets": (
-            "- Type: <new MCP tool | existing tool enhancement | markdown playbook>\n"
+            "- Type: <new MCP tool | existing tool enhancement | markdown playbook | markdown document | agent skill | RAG document | reusable template | structured JSON>\n"
             "- Name: <short descriptive name>\n"
             "- Problem: <what recurring issue or delay it addresses>\n"
             "- Expected Gain: <estimated time, turns, or manual-step reduction>\n"
@@ -1000,7 +1024,7 @@ def _analysis_response_is_valid(response_text: str, span_req: str, analysis_outp
     first_section = required_sections[0].lower() if required_sections else ""
     if first_section:
         import re
-        first_heading_pattern = rf"^\s*(?:#{1,6}\s*)?{re.escape(first_section)}\b"
+        first_heading_pattern = rf"^\s*(?:#{{1,6}}\s*)?{re.escape(first_section)}\b"
         if not re.search(first_heading_pattern, text):
             return False
 
@@ -1037,8 +1061,7 @@ def _update_analysis_job_state(run_id: str, job_id: str, **updates):
             return False
         current.update(updates)
         _analysis_jobs[job_id] = current
-
-    _write_analysis_job_record(run_id, job_id, current)
+        _write_analysis_job_record(run_id, job_id, current)
     return True
 
 
@@ -1071,8 +1094,7 @@ def _mark_analysis_job_cancelled(run_id: str, job_id: str, status_detail: str = 
             "error": None,
         })
         _analysis_jobs[job_id] = current
-
-    _write_analysis_job_record(run_id, job_id, current)
+        _write_analysis_job_record(run_id, job_id, current)
     return current
 
 
@@ -1153,11 +1175,29 @@ def _load_plugin_mcp_tools() -> list[dict]:
         if not isinstance(manifest, dict) or not manifest.get("name"):
             continue
 
+        # The native MCP runner consumes base_args, not args. Resolve bundled
+        # files here because it runs from the application directory.
+        manifest = dict(manifest)
+        base_args = manifest.get("base_args", manifest.get("args", []))
+        if not isinstance(base_args, list) or not all(isinstance(arg, str) for arg in base_args):
+            continue
+        def resolve_bundled_file(value):
+            if not isinstance(value, str):
+                return value
+            candidate = os.path.abspath(os.path.join(entry_dir, value))
+            if os.path.commonpath([candidate, os.path.abspath(entry_dir)]) == os.path.abspath(entry_dir) and os.path.isfile(candidate):
+                return candidate
+            return value
+        manifest["command"] = resolve_bundled_file(manifest.get("command"))
+        manifest["base_args"] = [resolve_bundled_file(arg) for arg in base_args]
+        manifest.pop("args", None)
+
         provenance_path = os.path.join(entry_dir, "PROVENANCE.md")
         entries.append({
             "folder": entry_name,
             "manifest": manifest,
             "has_provenance": os.path.isfile(provenance_path),
+            "test_report": _plugin_test_summary(entry_name),
         })
     return entries
 
@@ -1200,23 +1240,14 @@ def _slugify_plugin_name(value: str) -> str:
 
 
 def _infer_plugin_kind(explicit_kind, prompt_content: str) -> str:
-    """Determine 'mcp_tool' or 'playbook' — explicit kind wins, else parsed from the asset's own Type field."""
-    normalized = str(explicit_kind or '').strip().lower()
-    if normalized in {'mcp', 'mcp_tool'}:
-        return 'mcp_tool'
-    if normalized in {'markdown', 'playbook'}:
-        return 'playbook'
-
-    type_match = re.search(r'\*\*Type\*\*:\s*(.+)', prompt_content)
-    type_value = (type_match.group(1) if type_match else '').strip().lower()
-    if 'markdown' in type_value or 'playbook' in type_value:
-        return 'playbook'
-    return 'mcp_tool'
+    return infer_kind(explicit_kind, prompt_content)
 
 
 def _plugin_target_path(kind: str, safe_name: str) -> str:
     if kind == 'playbook':
         return os.path.join(_plugin_playbooks_dir(), f"{safe_name}.md")
+    if kind in DOCUMENT_KINDS:
+        return str(document_path(PLUGINS_DIR, kind, safe_name, must_exist=False))
     return os.path.join(_plugin_mcp_tools_dir(), safe_name)
 
 
@@ -1225,7 +1256,7 @@ def _write_plugin_provenance(kind: str, safe_name: str, run_id: str, asset_name:
     Written by app.py itself — not left to the coding agent to self-report."""
     generated_time = now_timestamp()
     provenance = (
-        f"# AI-Generated {'Playbook' if kind == 'playbook' else 'MCP Tool'}\n\n"
+        f"# AI-Generated {ARTIFACT_TYPES[kind]['label']}\n\n"
         f"- Generated: {generated_time}\n"
         f"- Source engagement (run_id): {run_id}\n"
         f"- Source scaffolding asset: {asset_name}\n\n"
@@ -1251,6 +1282,7 @@ def _write_plugin_provenance(kind: str, safe_name: str, run_id: str, asset_name:
 # only existing as a live PTY terminal stream that vanishes if unwatched.
 _plugin_jobs = {}  # job_id -> {status, run_id, asset_name, kind, target_path, term_id, ...}
 _plugin_jobs_lock = threading.Lock()
+_plugin_generation_targets = set()  # Held until the worker exits, including cancellation.
 PLUGIN_JOBS_DIRNAME = "plugin_jobs"
 
 
@@ -1264,8 +1296,7 @@ def _plugin_job_json_path(run_id: str, job_id: str) -> str:
 
 def _write_plugin_job_record(run_id: str, job_id: str, record: dict):
     os.makedirs(_plugin_jobs_dir(run_id), exist_ok=True)
-    with open(_plugin_job_json_path(run_id, job_id), 'w') as f:
-        json.dump(_to_json_safe(record), f, indent=2)
+    _atomic_write_text(_plugin_job_json_path(run_id, job_id), json.dumps(_to_json_safe(record), indent=2))
 
 
 def _update_plugin_job_state(run_id: str, job_id: str, **updates):
@@ -1279,7 +1310,7 @@ def _update_plugin_job_state(run_id: str, job_id: str, **updates):
             return
         current.update(updates)
         _plugin_jobs[job_id] = current
-    _write_plugin_job_record(run_id, job_id, current)
+        _write_plugin_job_record(run_id, job_id, current)
 
 
 class PluginJobCancelled(Exception):
@@ -1312,7 +1343,7 @@ def _mark_plugin_job_cancelled(run_id: str, job_id: str, status_detail: str = "C
             "error": None,
         })
         _plugin_jobs[job_id] = current
-    _write_plugin_job_record(run_id, job_id, current)
+        _write_plugin_job_record(run_id, job_id, current)
     return current
 
 
@@ -1385,9 +1416,9 @@ def _build_system_prompt_for_analysis(span_req, sections_text, meaningful_eviden
                 "In the Recommended Tooling Assets section, propose concrete acceleration assets such as:\n"
                 "- a new MCP tool the agent could build\n"
                 "- an enhancement to an existing MCP tool\n"
-                "- a Markdown instruction/playbook file that would help the agent execute recurring sequences faster\n"
+                "- a Markdown document or playbook, a reusable agent skill, a RAG knowledge document, a template, or structured JSON derived from the analysis\n"
                 "For each recommended asset, use this exact mini-template:\n"
-                "- Type: <new MCP tool | existing tool enhancement | markdown playbook>\n"
+                "- Type: <new MCP tool | existing tool enhancement | markdown playbook | markdown document | agent skill | RAG document | reusable template | structured JSON>\n"
                 "- Name: <short descriptive name, e.g. my_tool_name>\n"
                 "- Problem: <what recurring issue or delay it addresses>\n"
                 "- Expected Gain: <estimated time, turns, or manual-step reduction>\n"
@@ -1677,7 +1708,7 @@ def _web_cli_defaults():
 @app.route('/')
 def index():
     return render_template('index.html', static_asset_version=_static_asset_version(),
-                           cli_defaults=_web_cli_defaults())
+                           cli_defaults=_web_cli_defaults(), artifact_types=ARTIFACT_TYPES)
 
 
 @app.route('/api/models', methods=['POST'])
@@ -2239,6 +2270,7 @@ def session_isess_close():
 @app.route('/api/sessions/<run_id>/scaffolding', methods=['GET'])
 def get_session_scaffolding(run_id):
     """List generated scaffolding assets for a specific session."""
+    _validate_run_id(run_id)
     scaffolding_dir = os.path.join(RUNS_DIR, run_id, "scaffolding")
     assets = []
 
@@ -2252,7 +2284,8 @@ def get_session_scaffolding(run_id):
 
                 assets.append({
                     "name": entry,
-                    "prompt_content": prompt_content
+                    "prompt_content": prompt_content,
+                    "kind": _infer_plugin_kind(None, prompt_content),
                 })
 
     return jsonify({"success": True, "assets": assets})
@@ -2263,14 +2296,229 @@ def list_plugins():
     return jsonify({
         "mcp_tools": _load_plugin_mcp_tools(),
         "playbooks": _load_plugin_playbooks(),
+        "artifacts": list_documents(PLUGINS_DIR),
     })
+
+
+@app.route('/api/artifacts/types', methods=['GET'])
+def artifact_types():
+    return jsonify(ARTIFACT_TYPES)
+
+
+@app.route('/api/plugins/test-runtime/cleanup', methods=['POST'])
+def cleanup_test_runtime():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object with cleanup options."}), 400
+    options = {key: data.get(key, default) for key, default in
+               (("remove_containers", True), ("remove_images", False), ("dry_run", False))}
+    if any(not isinstance(value, bool) for value in options.values()) or not (options["remove_containers"] or options["remove_images"]):
+        return jsonify({"error": "Select containers, images, or both using boolean options."}), 400
+    try:
+        report = cleanup_resources(**options, image=os.environ.get("CYBER_AGENT_FLOW_TEST_IMAGE", "cyber-agent-flow-tool-tests:1"))
+        return jsonify(report)
+    except RuntimeBusyError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route('/api/artifacts/<kind>/<name>', methods=['GET'])
+def artifact_detail(kind, name):
+    try:
+        path = document_path(PLUGINS_DIR, kind, name)
+        return jsonify({"kind": kind, "name": name, "files": read_document(path, kind),
+                        "validation": validation_report(PLUGINS_DIR, kind, name)})
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route('/api/artifacts/<kind>/<name>/download', methods=['GET'])
+def download_generated_artifact(kind, name):
+    try:
+        path = document_path(PLUGINS_DIR, kind, name)
+        files = read_document(path, kind)
+        provenance = path.with_name(f"{name}.PROVENANCE.md") if kind == "playbook" else path / "PROVENANCE.md"
+        if provenance.is_file() and not provenance.is_symlink():
+            files["PROVENANCE.md"] = provenance.read_text(encoding="utf-8")
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w', zipfile.ZIP_DEFLATED) as archive:
+            for filename, content in files.items():
+                archive.writestr(f"{name}/{filename}", content)
+        data.seek(0)
+        return send_file(data, mimetype='application/zip', as_attachment=True, download_name=f"{name}.zip")
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route('/api/artifacts/<kind>/<name>/validate', methods=['POST'])
+def validate_generated_artifact(kind, name):
+    try:
+        target = document_path(PLUGINS_DIR, kind, name)
+        with _plugin_jobs_lock:
+            if os.path.abspath(target) in _plugin_generation_targets:
+                return jsonify({"error": "Wait for the current prompt to finish before validating."}), 409
+            return jsonify(validate_document(PLUGINS_DIR, kind, name))
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+def _plugin_test_summary(name):
+    try:
+        report = latest_report(PLUGINS_DIR, name)
+        return {key: value for key, value in report.items() if key != "cases"}
+    except (OSError, ValueError) as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+def _start_plugin_tests(name, trigger):
+    run = TestRun(PLUGINS_DIR, name, trigger)
+    try:
+        threading.Thread(target=run.execute, daemon=True).start()
+    except Exception:
+        run.finish("error", "Unable to start test worker.")
+        raise
+    return dict(run.report)
+
+
+@app.route('/api/plugins/mcp-tools/<name>/tests', methods=['GET', 'POST'])
+def plugin_tests(name):
+    try:
+        if request.method == 'POST':
+            target = tool_path(PLUGINS_DIR, name)
+            with _plugin_jobs_lock:
+                if os.path.abspath(target) in _plugin_generation_targets:
+                    raise TestBusyError("Wait for the current prompt to finish before testing.")
+                report = _start_plugin_tests(name, "webui")
+            return jsonify(report), 202
+        return jsonify(latest_report(PLUGINS_DIR, name))
+    except TestBusyError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+def _plugin_conversation(name, kind="mcp_tool"):
+    target = tool_path(PLUGINS_DIR, name) if kind == "mcp_tool" else document_path(PLUGINS_DIR, kind, name)
+    records = _load_all_plugin_job_records()
+    with _plugin_jobs_lock:
+        records.update({key: dict(value) for key, value in _plugin_jobs.items()})
+        busy = os.path.abspath(target) in _plugin_generation_targets
+        live_ids = set(_plugin_jobs)
+    jobs = sorted((job for job in records.values() if job.get("kind") == kind and job.get("safe_name") == name),
+                  key=lambda job: job.get("start_time") or "")
+    roots = [job for job in jobs if job.get("mode") != "interactive" and job.get("status") == "success"]
+    if not roots:
+        raise ValueError("No completed generation prompt was found for this tool. Generate it from a recommendation first.")
+    root = roots[-1]
+    messages = root.get("generation_messages")
+    if not messages:
+        # Older generated tools retain their original scaffolding prompt.
+        _validate_run_id(root["run_id"])
+        _validate_filename(root["asset_name"])
+        prompt = Path(RUNS_DIR) / root["run_id"] / "scaffolding" / root["asset_name"] / "CLAUDE_PROMPT.md"
+        if not prompt.is_file():
+            raise ValueError("The original generation prompt is unavailable. Regenerate this tool from its recommendation.")
+        messages = [{"role": "user", "content": prompt.read_text(encoding="utf-8")}]
+    turns = [dict(job) for job in jobs if job.get("root_job_id") == root["job_id"]]
+    for turn in turns:
+        if turn.get("status") == "running" and turn["job_id"] not in live_ids:
+            turn.update(status="failed", error="The app stopped before this prompt finished. Submit your instructions again.")
+    report = latest_report(PLUGINS_DIR, name) if kind == "mcp_tool" else validation_report(PLUGINS_DIR, kind, name)
+    latest = turns[-1] if turns else root
+    return {"root_job_id": root["job_id"], "run_id": root["run_id"], "asset_name": root["asset_name"],
+            "original_messages": messages, "turns": turns, "test_report": report, "busy": busy,
+            "kind": kind, "check_label": "Test" if kind == "mcp_tool" else "Validate",
+            "artifact_sha256": fingerprint(target) if kind == "mcp_tool" else document_fingerprint(target, kind), "revision": latest["job_id"],
+            "base_url": latest.get("base_url") or root.get("base_url") or "http://localhost:8080",
+            "model": latest.get("model") or root.get("model"), "ssl_verify": latest.get("ssl_verify", True),
+            "can_test": bool(turns and turns[-1].get("status") == "success" and not busy and report.get("status") != "running")}
+
+
+def _plugin_refine_worker(record, messages, report, api_key):
+    job_id, run_id, name = record["job_id"], record["run_id"], record["safe_name"]
+    kind = record.get("kind", "mcp_tool")
+    target = _plugin_target_path(kind, name)
+    try:
+        result = refine_artifact(target, messages, report, record["artifact_sha256"], record["base_url"], api_key,
+                                 record["model"], record["ssl_verify"], cancel_check=lambda: _plugin_job_is_cancelled(job_id), kind=kind)
+        _update_plugin_job_state(run_id, job_id, status="success", status_detail="Prompt complete. Ready to check.",
+                                 generation=result, response=result.get("response", "Files updated. Ready to test."), end_time=now_timestamp())
+    except GenerationCancelled:
+        pass
+    except Exception as exc:
+        detail = str(exc)
+        if api_key:
+            detail = detail.replace(api_key, "[redacted]")
+        _update_plugin_job_state(run_id, job_id, status="failed", error=_safe_client_error(detail, "Unable to update artifact."), end_time=now_timestamp())
+    finally:
+        with _plugin_jobs_lock:
+            _plugin_generation_targets.discard(os.path.abspath(target))
+
+
+@app.route('/api/plugins/mcp-tools/<name>/conversation', methods=['GET', 'POST'])
+@app.route('/api/artifacts/<kind>/<name>/conversation', methods=['GET', 'POST'])
+def plugin_conversation(name, kind="mcp_tool"):
+    try:
+        context = _plugin_conversation(name, kind)
+        if request.method == 'GET':
+            return jsonify(context)
+        data = request.get_json() or {}
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object.")
+        prompt = data.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 12000:
+            raise ValueError("Enter instructions between 1 and 12,000 characters.")
+        model = data.get("model") or context["model"]
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("Select a model for this prompt.")
+        if data.get("revision") != context["revision"] or data.get("artifact_sha256") != context["artifact_sha256"]:
+            return jsonify({"error": "The artifact or conversation changed. Reopen it before sending another prompt."}), 409
+        if context["busy"] or context["test_report"].get("status") == "running":
+            return jsonify({"error": "Wait for the active prompt or test run to finish."}), 409
+        claude_executable()
+        host = normalize_endpoint(data.get("base_url") or context["base_url"])
+        api_key = _extract_optional_api_key(data)
+        messages = list(context["original_messages"])
+        for turn in context["turns"]:
+            messages.append({"role": "user", "content": turn["user_prompt"]})
+            messages.append({"role": "assistant", "content": turn.get("response") if turn["status"] == "success" else
+                             f"Turn {turn['status']}; artifact was not updated. {turn.get('error', '')}"})
+        messages.append({"role": "user", "content": prompt.strip()})
+        job_id = f"plugin_job_{uuid.uuid4().hex}"
+        record = {"job_id": job_id, "root_job_id": context["root_job_id"], "run_id": context["run_id"],
+                  "asset_name": context["asset_name"], "safe_name": name, "kind": kind, "mode": "interactive",
+                  "generation_backend": "claude_cli", "model": model.strip(), "base_url": host,
+                  "ssl_verify": _normalize_ssl_verify(data.get("ssl_verify", context["ssl_verify"])),
+                  "user_prompt": prompt.strip(), "artifact_sha256": context["artifact_sha256"],
+                  "status": "running", "status_detail": "Claude is updating the artifact…", "start_time": datetime.now().isoformat()}
+        target = os.path.abspath(_plugin_target_path(kind, name))
+        with _plugin_jobs_lock:
+            if target in _plugin_generation_targets or (kind == "mcp_tool" and latest_report(PLUGINS_DIR, name).get("status") == "running"):
+                return jsonify({"error": "A prompt or test is already running."}), 409
+            # Reject two requests based on the same conversation even if the first finished quickly.
+            known_turns = {turn["job_id"] for turn in context["turns"]}
+            if any(job.get("root_job_id") == context["root_job_id"] and job["job_id"] not in known_turns
+                   for job in _plugin_jobs.values()):
+                return jsonify({"error": "The conversation changed. Reopen it before sending another prompt."}), 409
+            _write_plugin_job_record(context["run_id"], job_id, record)
+            _plugin_jobs[job_id] = record
+            _plugin_generation_targets.add(target)
+        try:
+            threading.Thread(target=_plugin_refine_worker, args=(record, messages, context["test_report"], api_key), daemon=True).start()
+        except Exception:
+            with _plugin_jobs_lock:
+                _plugin_generation_targets.discard(target)
+            _update_plugin_job_state(context["run_id"], job_id, status="failed", error="Unable to start prompt worker.", end_time=now_timestamp())
+            return jsonify({"error": "Unable to start prompt worker."}), 500
+        return jsonify({"job_id": job_id}), 202
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
 #---------------------------------------------------------------------------Review here
 @app.route('/api/plugins/jobs/<job_id>/cancel', methods=['POST'])
 def cancel_plugin_job(job_id):
-    """Mark a running plugin generation job as canceled. Soft-cancel only — the
-    underlying LLM request can't be interrupted mid-flight, same limitation
-    analysis jobs already have."""
+    """Cancel generation; the worker terminates Claude Code and active tests."""
     _validate_filename(job_id)
 
     with _plugin_jobs_lock:
@@ -2297,7 +2545,7 @@ def cancel_plugin_job(job_id):
     canceled_record = _mark_plugin_job_cancelled(
         str(run_id),
         job_id,
-        "Canceled by user; ignoring any late model response",
+        "Canceled by user; stopping Claude Code and active tests",
         base_record=record,
     )
     app.logger.info('Plugin job cancel requested job_id=%s run_id=%s', job_id, run_id)
@@ -2310,7 +2558,7 @@ def list_plugin_jobs():
     disk_jobs = _load_all_plugin_job_records()
     with _plugin_jobs_lock:
         for job_id, record in _plugin_jobs.items():
-            disk_jobs.setdefault(job_id, dict(record))
+            disk_jobs[job_id] = dict(record)
 
     sorted_jobs = sorted(
         disk_jobs.values(),
@@ -2319,49 +2567,10 @@ def list_plugin_jobs():
     )
     return jsonify({"jobs": sorted_jobs})
 
-#---------------------------------------------------------------------------Review here
-# Plugin generation now reuses the exact same provider-agnostic LLM call as
-# Analysis Jobs (_analysis_chat_request) — no coding-agent CLI, no login, no
-# litellm proxy. Same mechanism as analyze_session(): send messages, get text
-# back, then this code parses/writes the result instead of the model doing it.
-def _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=None):
-    """Send the generation prompt to the configured provider and write the parsed result to disk."""
-    resp = _analysis_chat_request(provider, host, api_key, model, messages, {"temperature": 0.2}, ssl_verify)
-    if cancel_check and cancel_check():
-        raise PluginJobCancelled()
-    safe_resp = _to_json_safe(resp)
-    response_text = ""
-    if isinstance(safe_resp, dict):
-        response_text = _analysis_extract_response_text(provider, safe_resp)
-    if not str(response_text or "").strip():
-        raise ValueError("Model returned an empty response.")
-
-    if cancel_check and cancel_check():
-        raise PluginJobCancelled()
-
-    if plugin_kind == 'playbook':
-        content = response_text.strip()
-        content = re.sub(r'^```[a-zA-Z0-9_+-]*\n', '', content)
-        content = re.sub(r'\n```$', '', content)
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        with open(target_path, 'w') as f:
-            f.write(content)
-    else:
-        file_blocks = re.findall(r'###\s*FILE:\s*(.+?)\s*\n```[a-zA-Z0-9_+-]*\n(.*?)```', response_text, re.DOTALL)
-        if not file_blocks:
-            raise ValueError("Model response did not contain any ### FILE: blocks.")
-        manifest_found = False
-        os.makedirs(target_path, exist_ok=True)
-        for filename, content in file_blocks:
-            filename = os.path.basename(filename.strip())
-            if not filename:
-                continue
-            if filename == 'manifest.json':
-                manifest_found = True
-            with open(os.path.join(target_path, filename), 'w') as f:
-                f.write(content)
-        if not manifest_found:
-            raise ValueError("Model response did not include a manifest.json file.")
+def _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=None, progress_callback=None):
+    """Use Claude Code with the selected model's Anthropic-compatible endpoint."""
+    return generate_artifact(plugin_kind, target_path, messages, host, api_key, model, ssl_verify,
+                             cancel_check=cancel_check, progress_callback=progress_callback)
 
 
 def _plugin_job_wrapper(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, messages, provider, host, api_key, model, ssl_verify):
@@ -2372,44 +2581,97 @@ def _plugin_job_wrapper(job_id, run_id, plugin_kind, safe_name, target_path, ass
     try:
         if _cancelled():
             return
-        _update_plugin_job_state(run_id, job_id, status_detail=f"Sending generation request to {model}")
-        _perform_plugin_generation(plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=_cancelled)
+        _update_plugin_job_state(run_id, job_id, status_detail=f"Starting Claude Code with {model}")
+        generation = _perform_plugin_generation(
+            plugin_kind, target_path, messages, provider, host, api_key, model, ssl_verify, cancel_check=_cancelled,
+            progress_callback=lambda detail: _update_plugin_job_state(run_id, job_id, status_detail=detail),
+        ) or {}
+        if _cancelled():
+            return
         _write_plugin_provenance(plugin_kind, safe_name, run_id, asset_name, messages[-1]['content'])
-        _update_plugin_job_state(run_id, job_id, status="success", status_detail="Generation completed.", end_time=datetime.now().isoformat())
-    except PluginJobCancelled:
+        reports = generation.pop("test_reports", [])
+        for report in reports:
+            report.update(tool=safe_name, generation_job_id=job_id)
+            write_report(Path(PLUGINS_DIR) / "test_results" / safe_name / (report["test_id"] + ".json"), report)
+        detail = "Generation completed."
+        if reports:
+            detail += f" Tests: {reports[-1]['status']}."
+        if plugin_kind in DOCUMENT_KINDS:
+            validation = validate_document(PLUGINS_DIR, plugin_kind, safe_name)
+            generation["validation"] = validation
+            detail += f" Validation: {validation['status']}."
+        _update_plugin_job_state(run_id, job_id, status="success", status_detail=detail, generation=generation,
+                                 test_id=reports[-1]["test_id"] if reports else None, end_time=datetime.now().isoformat())
+        if plugin_kind == 'mcp_tool' and not reports and not _cancelled():
+            try:
+                report = _start_plugin_tests(safe_name, "generation")
+                _update_plugin_job_state(run_id, job_id, test_id=report["test_id"])
+            except Exception as test_error:
+                # Generation succeeded; a test infrastructure failure must not hide the artifact.
+                _update_plugin_job_state(run_id, job_id, test_error=_safe_client_error(test_error, 'Unable to start tests.'))
+    except (PluginJobCancelled, GenerationCancelled):
         app.logger.info('Plugin job canceled job_id=%s', job_id)
     except Exception as exc:
         if _cancelled():
             return
         detail = _safe_client_error(str(exc), 'Plugin generation failed.')
         _update_plugin_job_state(run_id, job_id, status="failed", status_detail=detail, error=detail, end_time=datetime.now().isoformat())
+    finally:
+        with _plugin_jobs_lock:
+            _plugin_generation_targets.discard(os.path.abspath(target_path))
 
 
 @app.route('/api/scaffolding/generate', methods=['POST'])
 def generate_scaffolding():
-    """Generate an MCP tool or markdown playbook using the same provider-agnostic LLM call as Analysis Jobs."""
+    """Generate files with Claude Code, validate them, and run container tests."""
     data = request.json or {}
     run_id = data.get("run_id")
     asset_name = data.get("asset_name")
     api_key = _extract_optional_api_key(data)
     base_url = data.get("base_url") or data.get("url")
-    provider = _normalize_llm_provider(data.get("provider"))
+    provider = _normalize_llm_provider(data.get("provider") or "openai")
     model = data.get("model", "")
     ssl_verify = _normalize_ssl_verify(data.get("ssl_verify"))
     kind_override = data.get("kind")
-    overwrite = bool(data.get("overwrite", False))
+    source_analysis_job = data.get("analysis_job_id")
+    instructions = data.get("instructions", "")
+    if not isinstance(instructions, str) or len(instructions) > 12000:
+        return jsonify({"success": False, "error": "Instructions must be text of at most 12,000 characters."}), 400
+    overwrite = data.get("overwrite", False)
+    if not isinstance(overwrite, bool):
+        return jsonify({"success": False, "error": "overwrite must be a boolean."}), 400
 
     if not run_id or not asset_name:
         return jsonify({"success": False, "error": "run_id and asset_name are required."}), 400
-    if not model:
+    if not isinstance(model, str) or not model.strip():
         return jsonify({"success": False, "error": "No model selected."}), 400
+    _validate_run_id(run_id)
+    _validate_filename(asset_name)
+    try:
+        claude_executable()
+        host = normalize_endpoint(base_url or ('http://localhost:11434' if provider == 'ollama_direct' else 'http://localhost:8080'))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
-    prompt_path = os.path.join(RUNS_DIR, run_id, "scaffolding", asset_name, "CLAUDE_PROMPT.md")
-    if not os.path.exists(prompt_path):
-        return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
-
-    with open(prompt_path, 'r') as f:
-        prompt_content = f.read()
+    if source_analysis_job:
+        _validate_filename(source_analysis_job)
+        with _analysis_lock:
+            analysis = dict(_analysis_jobs.get(source_analysis_job) or {})
+        analysis = analysis or _load_analysis_job_record(source_analysis_job)
+        if not analysis or analysis.get("run_id") != run_id or analysis.get("status") != "success":
+            return jsonify({"success": False, "error": "A successful analysis job from this session is required."}), 400
+        response = analysis.get("response") or analysis.get("result")
+        if not isinstance(response, str) or not response.strip():
+            return jsonify({"success": False, "error": "The analysis job has no saved response."}), 400
+        prompt_content = f"# Create {asset_name} from analysis {source_analysis_job}\n\n" + response
+    else:
+        prompt_path = os.path.join(RUNS_DIR, run_id, "scaffolding", asset_name, "CLAUDE_PROMPT.md")
+        if not os.path.exists(prompt_path):
+            return jsonify({"success": False, "error": f"Scaffolding for {asset_name} not found."}), 404
+        with open(prompt_path, 'r') as f:
+            prompt_content = f.read()
+    if instructions.strip():
+        prompt_content += "\n\n## User instructions\n\n" + instructions.strip()
 
     # Feed in analyst notes, if any — human context/corrections the automated analysis may have missed
     analyst_notes = _load_analyst_notes(run_id)
@@ -2421,8 +2683,13 @@ def generate_scaffolding():
         )
 
     # Determine plugin kind + collision-checked target path in plugins/
-    plugin_kind = _infer_plugin_kind(kind_override, prompt_content)
+    try:
+        plugin_kind = _infer_plugin_kind(kind_override, prompt_content)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     safe_name = _slugify_plugin_name(asset_name)
+    if plugin_kind == "skill":
+        safe_name = re.sub(r"[^a-z0-9]+", "-", asset_name.lower()).strip("-")[:64].rstrip("-") or "generated-skill"
     target_path = _plugin_target_path(plugin_kind, safe_name)
 
     if os.path.exists(target_path) and not overwrite:
@@ -2434,22 +2701,30 @@ def generate_scaffolding():
             "error": f"A plugin named '{safe_name}' already exists at that location. Confirm overwrite or choose a different name.",
         }), 409
 
-    if plugin_kind == 'playbook':
-        format_instructions = (
-            "\n\nReturn only the completed Markdown playbook content as your entire response. "
-            "Do not wrap it in a code fence, do not add any commentary before or after it — "
-            "return the raw Markdown document directly, ready to save as-is."
-        )
+    if plugin_kind in DOCUMENT_KINDS:
+        format_instructions = "\n\n" + document_instructions(plugin_kind, safe_name)
     else:
         format_instructions = (
-            "\n\nReturn your output as one or more file blocks, using exactly this format for each file:\n\n"
-            "### FILE: <relative filename>\n"
-            "```\n<file content>\n```\n\n"
+            "\n\nCreate the actual artifact files using your file tools in the current workspace. "
             "You must include exactly one manifest.json file using this schema: "
             '{"name": "<tool_name>", "description": "<what it does and how to use it>", '
-            '"command": "<path or binary to execute>", "args": ["<templated args, e.g. {args}>"], '
-            '"allow_args": true}. Include the implementation script referenced by "command" as its own '
-            "FILE block too. Do not include any prose outside the FILE blocks."
+            '"command": "<interpreter or binary, e.g. python3>", "base_args": ["<relative script path>"], '
+            '"allow_args": true}. Use an interpreter command for scripts and include the implementation referenced by "base_args" as its own '
+            "file too. Do not return Markdown file blocks; write files to disk."
+            "\nAlso include tests/suite.json and any tests/fixtures/ files needed for functional checks. "
+            "The test runner uses a trusted Python 3.12 slim container with the Python standard library, "
+            "no external network, a read-only artifact at /artifact, and a writable temporary working directory. "
+            "Choose template python-files for fixture-based tests, or python-http for a local HTTP fixture server. "
+            "Do not generate Dockerfiles, install dependencies, or reference real targets/credentials. "
+            "Include a smoke case, a useful known-input/expected-output case, and an invalid-input case. "
+            "Every case must assert output, not just exit status. Use this test schema:\n"
+            '{"version":1,"template":"python-files","cases":[{"name":"known input",'
+            '"args":["{artifact}/tests/fixtures/sample.txt"],"exit_code":0,'
+            '"stdout_contains":["expected result"],"timeout_seconds":10}]}\n'
+            "Cases can use stderr_contains or stdout_json (exact JSON equality) instead of stdout_contains. "
+            "For python-http add http_routes, for example "
+            '{"/health":{"status":200,"body":"ok"}}, and use {target_url}/health in case args. '
+            "Limits: 1–12 cases, timeout_seconds 1–20 each. Derive expectations from the asset requirements."
         )
 
     system_prompt = (
@@ -2458,40 +2733,57 @@ def generate_scaffolding():
         "Produce complete, working output — not a plan, not pseudocode."
     )
     user_prompt = prompt_content + format_instructions
-    host = _normalize_provider_base_url(provider, base_url or 'http://localhost:11434')
 
-    job_id = f"plugin_job_{int(time.time())}_{safe_name}"
+    job_id = f"plugin_job_{uuid.uuid4().hex}"
     start_time = datetime.now().isoformat()
     initial_record = {
         "job_id": job_id,
         "run_id": run_id,
         "asset_name": asset_name,
+        "analysis_job_id": source_analysis_job,
         "kind": plugin_kind,
         "safe_name": safe_name,
         "target_path": os.path.relpath(target_path, os.path.dirname(os.path.abspath(__file__))),
         "provider": provider,
+        "generation_backend": "claude_cli",
+        "base_url": host,
+        "ssl_verify": ssl_verify,
+        "generation_messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
         "model": model,
         "status": "running",
-        "status_detail": f"Sending generation request to {model}",
+        "status_detail": f"Starting Claude Code with {model}",
         "start_time": start_time,
         "last_update_time": start_time,
         "end_time": None,
         "error": None,
     }
     with _plugin_jobs_lock:
+        if os.path.abspath(target_path) in _plugin_generation_targets:
+            return jsonify({"success": False, "error": "Generation is already running for this artifact."}), 409
+        # Recheck under the same lock used to reserve the target: another worker
+        # may have completed while this request was preparing its prompt.
+        if os.path.exists(target_path) and not overwrite:
+            return jsonify({"success": False, "collision": True, "error": "This artifact already exists."}), 409
         _plugin_jobs[job_id] = dict(initial_record)
-    _write_plugin_job_record(run_id, job_id, initial_record)
+        _write_plugin_job_record(run_id, job_id, initial_record)
+        _plugin_generation_targets.add(os.path.abspath(target_path))
 
     generation_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
-    threading.Thread(
-        target=_plugin_job_wrapper,
-        args=(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, generation_messages, provider, host, api_key, model, ssl_verify),
-        daemon=True,
-    ).start()
+    try:
+        threading.Thread(
+            target=_plugin_job_wrapper,
+            args=(job_id, run_id, plugin_kind, safe_name, target_path, asset_name, generation_messages, provider, host, api_key, model, ssl_verify),
+            daemon=True,
+        ).start()
+    except Exception:
+        with _plugin_jobs_lock:
+            _plugin_generation_targets.discard(os.path.abspath(target_path))
+        _update_plugin_job_state(run_id, job_id, status="failed", error="Unable to start generation worker.", end_time=now_timestamp())
+        return jsonify({"success": False, "error": "Unable to start generation worker."}), 500
 
     return jsonify({"success": True, "job_id": job_id})
 
@@ -3961,7 +4253,7 @@ def analyze_session(run_id):
     api_key_override = _extract_optional_api_key(data)
     ssl_verify_override = _normalize_ssl_verify(data.get("ssl_verify")) if "ssl_verify" in data else None
     model_override = (data.get("model") or "").strip() or None
-    job_id = f"job_{int(time.time())}_{run_id}"
+    job_id = f"job_{uuid.uuid4().hex}"
 
     app.logger.info(
         'Analysis job requested job_id=%s run_id=%s span=%s provider=%s model=%s url=%s outputs=%s ssl_verify=%s auth=%s',
@@ -4004,8 +4296,7 @@ def analyze_session(run_id):
 
     with _analysis_lock:
         _analysis_jobs[job_id] = dict(initial_record)
-
-    _write_analysis_job_record(run_id, job_id, initial_record)
+        _write_analysis_job_record(run_id, job_id, initial_record)
 
     def _job_wrapper():
         def _job_cancelled():
@@ -4032,25 +4323,17 @@ def analyze_session(run_id):
             )
             if _job_cancelled():
                 return
+            _create_scaffolding_from_analysis(run_id, details.get('response'))
             completed_record = {
-                **_analysis_jobs.get(job_id, {}),
-                **details,
-                "job_id": job_id,
+                **{key: value for key, value in details.items() if key not in {"run_id", "job_id"}},
                 "status": "success",
                 "status_detail": f"Completed via {details.get('completion_path', 'initial')} pass",
                 "end_time": datetime.now().isoformat(),
                 "result": details.get("response"),
                 "response": details.get("response"),
-                "error": None,
             }
-            with _analysis_lock:
-                _analysis_jobs[job_id] = completed_record
-            _write_analysis_job_record(run_id, job_id, completed_record)
-
-            try:
-                _create_scaffolding_from_analysis(run_id, details.get('response'))
-            except Exception as scaffold_err:
-                app.logger.error(f"Failed to create AI scaffolding for job {job_id}: {scaffold_err}")
+            if not _update_analysis_job_state(run_id, job_id, **completed_record):
+                return
 
             app.logger.info('Analysis job completed job_id=%s completion_path=%s', job_id, details.get('completion_path'))
         except AnalysisJobCancelled:
@@ -4062,17 +4345,13 @@ def analyze_session(run_id):
                 return
             app.logger.error(f"Analysis job {job_id} failed: {e}")
             failed_record = {
-                **_analysis_jobs.get(job_id, {}),
-                "job_id": job_id,
                 "status": "failed",
                 "status_detail": "Failed",
                 "completion_path": "failed",
                 "end_time": datetime.now().isoformat(),
                 "error": _safe_client_error(e, 'Analysis failed.'),
             }
-            with _analysis_lock:
-                _analysis_jobs[job_id] = failed_record
-            _write_analysis_job_record(run_id, job_id, failed_record)
+            _update_analysis_job_state(run_id, job_id, **failed_record)
 
     threading.Thread(target=_job_wrapper, daemon=True).start()
     return jsonify({"success": True, "job_id": job_id})
@@ -4221,6 +4500,9 @@ def _perform_llm_analysis(run_id, span_req, ollama_url_override=None, model_over
             response_text = _analysis_extract_response_text(request_data["llm_provider"], fallback_safe_resp) or response_text
             safe_resp = fallback_safe_resp
 
+    if not _analysis_response_is_valid(response_text, span_req, request_data.get("analysis_outputs"), request_data.get("meaningful_evidence", False)):
+        raise ValueError("Analysis did not satisfy the required format after initial, rewrite, and fallback passes.")
+
     _progress("Finalizing analysis result")
     safe_request_data = {k: v for k, v in request_data.items() if k != "api_key"}
     return {
@@ -4246,7 +4528,7 @@ def list_analysis_jobs():
 
     with _analysis_lock:
         for job_id, record in _analysis_jobs.items():
-            disk_jobs.setdefault(job_id, dict(record))
+            disk_jobs[job_id] = dict(record)
 #----------------------------------------------------------------------------------------------REMOVE LATER
     #sorted_jobs = sorted(
     #    [_public_analysis_job_record(_to_json_safe({"job_id": k, **v})) for k, v in disk_jobs.items()],
@@ -4400,14 +4682,14 @@ def get_artifact(run_id, filename):
 def _validate_run_id(run_id: str):
     """Prevent path traversal in run_id."""
     import re
-    if not re.match(r'^[\w\-\.]+$', run_id):
+    if not isinstance(run_id, str) or not re.fullmatch(r'[\w.\-]+', run_id) or '..' in run_id or run_id == '.':
         abort(400, "Invalid run_id")
 
 
 def _validate_filename(filename: str):
     """Prevent path traversal in artifact filename."""
     import re
-    if not re.match(r'^[\w\-\.]+$', filename) or '..' in filename:
+    if not isinstance(filename, str) or not re.fullmatch(r'[\w.\-]+', filename) or '..' in filename or filename == '.':
         abort(400, "Invalid filename")
 
 
