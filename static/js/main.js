@@ -153,6 +153,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let _analysisJobPathFilter = 'all';
     let _sessionsById = {};
     let _policyDraft = { allow: ['*'], disallow: [] };
+    let _llmRouteGateway = '';
+    let _llmRouteGatewayAdded = false;
     let _activePolicyEntryType = 'allow';
     const CHAT_SCOPE_LEVELS = [
         {
@@ -314,6 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let _awaitingPostToolReplyDecision = false;
     let _awaitingDangerousToolApproval = false;
     let _awaitingToolTimeoutDecision = false;
+    let _toolTimeoutDecisionVersion = 0;
     let _activeToolState = null;
     let _activeToolTicker = null;
     const LIVE_LOG_STORAGE_PREFIX = 'live-log:';
@@ -510,7 +513,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (!Object.prototype.hasOwnProperty.call(_toolGuideSelections, toolName)) {
-                _toolGuideSelections[toolName] = false;
+                _toolGuideSelections[toolName] = cb.checked;
             }
 
             let guideLabel = baseLabel.querySelector(`span.tool-guide-inline[data-tool-guide-for="${toolName}"]`);
@@ -524,16 +527,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 checkbox.type = 'checkbox';
                 checkbox.className = 'tool-guide-checkbox';
                 checkbox.value = toolName;
+                checkbox.setAttribute('aria-label', `Include ${TOOL_GUIDE_LABELS[toolName]}`);
                 checkbox.addEventListener('click', (event) => {
                     event.stopPropagation();
                 });
                 checkbox.addEventListener('change', () => {
                     _toolGuideSelections[toolName] = checkbox.checked;
+                    renderInlineToolGuideControls();
                     persistLastSettings();
                 });
 
                 const icon = document.createElement('i');
                 icon.className = 'ph ph-file-text';
+                icon.setAttribute('aria-hidden', 'true');
+                icon.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!checkbox.disabled) checkbox.click();
+                });
 
                 guideLabel.appendChild(checkbox);
                 guideLabel.appendChild(icon);
@@ -547,6 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             guideLabel.classList.toggle('is-disabled', !cb.checked);
+            guideLabel.classList.toggle('is-selected', cb.checked && Boolean(_toolGuideSelections[toolName]));
         });
     }
 
@@ -728,6 +740,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 kaliCommandType: kaliCommandType?.value || 'python',
                 policyEntryType: getSelectedPolicyEntryType(),
                 policyDraft: normalizePolicy(_policyDraft),
+                llmRouteGateway: _llmRouteGateway,
+                llmRouteGatewayAdded: _llmRouteGatewayAdded,
                 toolCheckboxStates,
                 toolGuideSelections: _toolGuideSelections,
                 toolsJson: toolsJsonArea?.value || '',
@@ -752,7 +766,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function restoreLastSettings() {
         try {
-            let raw = document.getElementById('cli-config-defaults')?.textContent || '';
+            const cliDefaults = JSON.parse(document.getElementById('cli-config-defaults')?.textContent || '{}');
+            let raw = JSON.stringify(cliDefaults);
             try {
                 raw = localStorage.getItem(LAST_SETTINGS_STORAGE_KEY)
                     || sessionStorage.getItem(LAST_SETTINGS_SESSION_STORAGE_KEY) || raw;
@@ -808,6 +823,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
 
+            _toolGuideSelections = {};
             if (payload.toolGuideSelections && typeof payload.toolGuideSelections === 'object') {
                 _toolGuideSelections = Object.fromEntries(
                     Object.entries(payload.toolGuideSelections).map(([name, enabled]) => [name, Boolean(enabled)])
@@ -828,6 +844,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (payload.policyDraft && typeof payload.policyDraft === 'object') {
                 _policyDraft = normalizePolicy(payload.policyDraft);
             }
+            _llmRouteGateway = cliDefaults.llmRouteGateway || '';
+            _llmRouteGatewayAdded = Boolean(payload.llmRouteGatewayAdded);
+            if (payload.llmRouteGateway !== _llmRouteGateway) {
+                if (_llmRouteGatewayAdded) {
+                    _policyDraft.disallow = _policyDraft.disallow.filter(value => value !== payload.llmRouteGateway);
+                }
+                _llmRouteGatewayAdded = false;
+            }
+            ensureLlmGatewayExcluded();
 
             const policyEntryType = payload.policyEntryType === 'disallow' ? 'disallow' : 'allow';
             policyEntryTypeInputs.forEach(input => {
@@ -889,6 +914,9 @@ document.addEventListener('DOMContentLoaded', () => {
         persistLastSettings();
     });
     toolCheckboxes.forEach(cb => cb.addEventListener('change', () => {
+        if (Object.prototype.hasOwnProperty.call(TOOL_GUIDE_LABELS, cb.value)) {
+            _toolGuideSelections[cb.value] = cb.checked;
+        }
         updateToolsJson();
         renderInlineToolGuideControls();
         persistLastSettings();
@@ -1145,16 +1173,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Restore keylogger setting from localStorage
     try {
         const keyloggerEnabled = localStorage.getItem('keylogger:enabled');
-        if (keyloggerEnabled === 'true') {
-            keyloggerEnableToggle.checked = true;
+        if (keyloggerEnableToggle) {
+            keyloggerEnableToggle.checked = keyloggerEnabled !== 'false';
         }
         const networkCaptureEnabled = localStorage.getItem('logger:network_capture:enabled');
         if (networkCaptureEnabled === 'true' && logNetworkCaptureToggle) {
             logNetworkCaptureToggle.checked = true;
         }
         const syscallsEnabled = localStorage.getItem('logger:syscalls:enabled');
-        if (syscallsEnabled === 'true' && logSyscallsToggle) {
-            logSyscallsToggle.checked = true;
+        if (logSyscallsToggle) {
+            logSyscallsToggle.checked = syscallsEnabled !== 'false';
         }
         const savedChatScope = localStorage.getItem('chat:scope');
         const savedScopeIndex = CHAT_SCOPE_LEVELS.findIndex(scope => scope.id === savedChatScope);
@@ -1288,6 +1316,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const entryType = entryTypeOverride === 'disallow' ? 'disallow' : (entryTypeOverride === 'allow' ? 'allow' : getSelectedPolicyEntryType());
         const defaultValue = entryType === 'allow' ? ['*'] : [];
         _policyDraft[entryType] = parsePolicyList(policyTargetsInput.value, defaultValue);
+        ensureLlmGatewayExcluded();
+    }
+
+    function ensureLlmGatewayExcluded() {
+        if (_llmRouteGateway && !_policyDraft.disallow.includes(_llmRouteGateway)) {
+            _policyDraft.disallow.push(_llmRouteGateway);
+            _llmRouteGatewayAdded = true;
+        }
     }
 
     policyEntryTypeInputs.forEach(input => {
@@ -1304,6 +1340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         _activePolicyEntryType = getSelectedPolicyEntryType();
         persistLastSettings();
     });
+    policyTargetsInput?.addEventListener('blur', updatePolicyEntryEditor);
     updatePolicyEntryEditor();
 
     // ---------------------------------------------------------------
@@ -2695,6 +2732,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cancelDangerousToolBtn.addEventListener('click', () => resolveDangerousToolApproval('cancel'));
 
     function closeToolTimeoutModal() {
+        _toolTimeoutDecisionVersion++;
         _awaitingToolTimeoutDecision = false;
         toolTimeoutModalOverlay.style.display = 'none';
         if (toolTimeoutWaitSelect) {
@@ -2707,6 +2745,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function resolveToolTimeoutDecision(action, waitSeconds = null) {
         if (!_serviceRunning || !_awaitingToolTimeoutDecision) return;
+        const decisionVersion = _toolTimeoutDecisionVersion;
 
         if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = true;
         if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = true;
@@ -2723,6 +2762,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify(payload)
             });
             const data = await response.json();
+
+            // The tool may finish (or reach another checkpoint) while this request is in flight.
+            if (decisionVersion !== _toolTimeoutDecisionVersion) return;
+            if (data.code === 'no_pending_tool_timeout') {
+                closeToolTimeoutModal();
+                return;
+            }
 
             if (!data.success) {
                 throw new Error(data.error || 'Could not resolve tool timeout decision.');
@@ -2747,6 +2793,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderActiveToolEntry();
             }
         } catch (error) {
+            if (decisionVersion !== _toolTimeoutDecisionVersion) return;
             if (toolTimeoutWaitSelect) toolTimeoutWaitSelect.disabled = false;
             if (backgroundToolTimeoutBtn) backgroundToolTimeoutBtn.disabled = false;
             killToolTimeoutBtn.disabled = false;
@@ -3589,6 +3636,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             }
             case 'tool_result': {
+                closeToolTimeoutModal();
                 const label = event.cancelled ? 'Cancelled' : (event.graceful_stop ? 'Stopped' : (event.exit_code === 0 ? 'Completed' : 'Failed'));
                 const chipClass = event.cancelled ? 'is-error' : (event.graceful_stop ? 'is-waiting' : (event.exit_code === 0 ? 'is-complete' : 'is-error'));
                 finalizeActiveToolEntry(
@@ -3645,6 +3693,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 dangerousToolModalOverlay.style.display = 'flex';
                 break;
             case 'tool_timeout_decision':
+                _toolTimeoutDecisionVersion++;
                 _awaitingToolTimeoutDecision = true;
                 progressModal.style.display = 'none';
                 markActiveToolWaiting('Paused at a timeout checkpoint. Choose when to ask again, background it, or stop it.');

@@ -8,6 +8,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 class TestToolTimeoutDecisions:
+    def test_finished_timeout_checkpoint_returns_machine_readable_code(self, monkeypatch):
+        import app
+        from unittest.mock import Mock
+
+        session = Mock()
+        session.resolve_tool_timeout_decision.return_value = False
+        monkeypatch.setitem(app._session_state, "status", "running")
+        monkeypatch.setitem(app._session_state, "session", session)
+
+        response = app.app.test_client().post(
+            "/api/session/tool_timeout_action",
+            json={"action": "wait", "wait_seconds": 60},
+        )
+
+        assert response.status_code == 409
+        assert response.get_json()["code"] == "no_pending_tool_timeout"
+        session.resolve_tool_timeout_decision.assert_called_once_with("wait", wait_seconds=60)
+
     def test_wait_timeout_decision_writes_selected_interval(self, tmp_path, monkeypatch):
         import mcp_client
 

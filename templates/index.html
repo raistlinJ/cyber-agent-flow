@@ -313,6 +313,7 @@
                                     <i class="ph ph-toolbox"></i>
                                     Kali Tools Configuration
                                 </h2>
+                                <p class="input-hint">Selecting a tool also includes its bundled guide, when available. Use the document icon to toggle the guide separately.</p>
 
                                 <div class="input-group config-card-lite">
                                     <label>Advanced Access</label>
@@ -582,7 +583,7 @@
                                 <div class="input-group config-card-lite">
                                     <label><i class="ph ph-keyboard"></i>&nbsp; Keystrokes</label>
                                     <label class="checkbox-container" for="keylogger-enable-toggle">
-                                        <input type="checkbox" id="keylogger-enable-toggle">
+                                        <input type="checkbox" id="keylogger-enable-toggle" checked>
                                         <span>
                                             <strong>Enable Keylogging</strong>
                                             <p class="input-hint" style="margin-top: 0.3rem;">Capture browser and system-wide keystrokes for interaction pattern analysis. Sensitive fields (passwords, API keys) are excluded.</p>
@@ -606,7 +607,7 @@
                                 <div class="input-group config-card-lite">
                                     <label><i class="ph ph-terminal-window"></i>&nbsp; System Calls</label>
                                     <label class="checkbox-container" for="log-syscalls-toggle">
-                                        <input type="checkbox" id="log-syscalls-toggle">
+                                        <input type="checkbox" id="log-syscalls-toggle" checked>
                                         <span>
                                             <strong>Log System Calls</strong>
                                             <p class="input-hint" style="margin-top: 0.3rem;">Captures low-level syscall activity for the running process using strace when available and stores it under each run.</p>

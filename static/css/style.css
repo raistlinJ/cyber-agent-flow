@@ -508,6 +508,10 @@ body {
     opacity: 0.55;
 }
 
+.tool-guide-inline.is-selected i {
+    color: var(--primary-color);
+}
+
 .policy-entry-toggle {
     display: inline-flex;
     align-items: center;

@@ -1702,7 +1702,31 @@ def _web_cli_defaults():
             defaults.pop('url', None)
     except ValueError:
         defaults.pop('url', None)
+    policy = config.get('network_policy')
+    if isinstance(policy, dict):
+        defaults['policyDraft'] = {
+            key: [item for item in policy.get(key, fallback) if isinstance(item, str)]
+            for key, fallback in (('allow', ['*']), ('disallow', []))
+            if isinstance(policy.get(key, fallback), list)
+        }
+    from ipaddress import ip_address
+    try:
+        defaults['llmRouteGateway'] = str(ip_address(config.get('llm_route_gateway', '')))
+        defaults['llmRouteGatewayAdded'] = bool(config.get('llm_route_gateway_managed'))
+    except ValueError:
+        pass
     return defaults
+
+
+def _session_network_policy(policy):
+    defaults = _web_cli_defaults()
+    policy = policy or defaults.get('policyDraft') or {'allow': ['*'], 'disallow': []}
+    policy = {'allow': list(policy.get('allow', ['*'])),
+              'disallow': list(policy.get('disallow', []))}
+    gateway = defaults.get('llmRouteGateway')
+    if gateway and gateway not in policy['disallow']:
+        policy['disallow'].append(gateway)
+    return policy
 
 
 @app.route('/')
@@ -1798,10 +1822,10 @@ def session_start():
     max_turns = int(data.get('max_turns', 20))
     tool_timeout = int(data.get('tool_timeout', 120))
     auto_approve_dangerous = bool(data.get('auto_approve_dangerous'))
-    network_policy = data.get('network_policy') or {"allow": ["*"], "disallow": []}
-    keylogger_enabled = bool(data.get('keylogger_enabled'))
+    network_policy = _session_network_policy(data.get('network_policy'))
+    keylogger_enabled = bool(data.get('keylogger_enabled', True))
     network_capture_enabled = bool(data.get('network_capture_enabled'))
-    syscall_logger_enabled = bool(data.get('syscall_logger_enabled'))
+    syscall_logger_enabled = bool(data.get('syscall_logger_enabled', True))
     enabled_tool_guides = data.get('enabled_tool_guides')
     if isinstance(enabled_tool_guides, list):
         enabled_tool_guides = [str(item).strip() for item in enabled_tool_guides if str(item).strip()]
@@ -2983,7 +3007,11 @@ def session_tool_timeout_action():
         return jsonify({'success': False, 'error': 'Session cannot resolve tool timeout decisions.'}), 409
 
     if not session.resolve_tool_timeout_decision(action, wait_seconds=wait_seconds):
-        return jsonify({'success': False, 'error': 'No pending tool timeout decision to resolve.'}), 409
+        return jsonify({
+            'success': False,
+            'code': 'no_pending_tool_timeout',
+            'error': 'No pending tool timeout decision to resolve.',
+        }), 409
 
     app.logger.info('Tool timeout decision submitted action=%s wait_seconds=%s', action, wait_seconds)
     if action == 'wait':
