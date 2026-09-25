@@ -982,7 +982,7 @@ def _run_dir_for_current_session() -> str | None:
     run_id = os.environ.get("MCP_CURRENT_RUN_ID")
     if not run_id:
         return None
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs", run_id)
+    return os.path.join(os.environ.get("CAF_RUN_BASE_DIR", os.path.dirname(os.path.abspath(__file__))), "runs", run_id)
 
 
 def _timeout_control_dir() -> str | None:
@@ -2120,10 +2120,10 @@ def _evaluate_network_policy(policy: dict, arguments: dict) -> tuple[bool, str |
     for target in targets:
         for entry in disallow_entries:
             if _entry_matches_target(entry, target):
-                return False, f"Target '{target['value']}' is blocked by disallow rule '{entry}'."
+                return False, "Target is not permitted by the execution policy."
 
         if not allow_any and not any(_entry_matches_target(entry, target) for entry in allow_entries):
-            return False, f"Target '{target['value']}' is outside the allow list."
+            return False, "Target is not permitted by the execution policy."
 
     return True, None
 

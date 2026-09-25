@@ -115,6 +115,14 @@ Conversation turns are stored alongside generation jobs in
 settings to start a turn. `revision` and `artifact_sha256` come from the GET response
 and prevent submitting stale context. Tests retain the existing `/tests` endpoint.
 
+## Generation and evaluation are separate applications
+
+These generation and repair controls belong to the main CAF tool. To study whether
+the resulting artifact helps, finish development, retain provenance and current
+test/validation reports, and pass a frozen selection to `cyber-agent-flow-eval`.
+The evaluator shares CAF's agent engine but does not run this generation workflow,
+repair artifacts, or start the WebUI. See [artifact evaluation workflow](artifact-evaluation-workflow.md).
+
 ## Developer verification
 
 ```sh

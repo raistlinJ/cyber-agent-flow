@@ -59,3 +59,9 @@ runs/
 # reviewed tool/playbook can be shared deliberately later with:
 #   git add -f <path-to-manifest-and-script-or-playbook>
 plugins/
+
+# Evaluation datasets and trial traces
+eval-runs/
+
+# Private imported evaluation packages
+eval-inputs/

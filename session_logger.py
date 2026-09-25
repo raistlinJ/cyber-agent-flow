@@ -48,7 +48,7 @@ class SessionLogger:
         self._event_callback = event_callback
 
         if base_dir is None:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.environ.get("CAF_RUN_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
 
         self.run_dir = os.path.join(base_dir, "runs", run_id)
         self.tool_calls_dir = os.path.join(self.run_dir, "tool_calls")
@@ -363,7 +363,7 @@ def make_run_id(prefix: str = "") -> str:
 def load_session_list(base_dir: str = None) -> list:
     """Return a sorted list of session metadata dicts from the runs/ directory."""
     if base_dir is None:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.environ.get("CAF_RUN_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
     runs_dir = os.path.join(base_dir, "runs")
     if not os.path.isdir(runs_dir):
         return []

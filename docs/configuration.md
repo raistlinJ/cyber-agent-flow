@@ -2,6 +2,14 @@
 
 CyberAgentFlow uses a JSON-based configuration system for both CLI, WebUI, and SSH Server sessions. This document describes all available configuration options.
 
+This page describes the **main application**. The separate evaluator uses a
+[YAML contract](experiments.md), not this interactive JSON file. Set its
+`execution.network_policy` explicitly in the evaluation runtime template; importing
+a ScenarioForge package preserves those lists and does not read them from the WebUI
+or copy them from `configs/cli.json`. Evaluation prompts hide the lists by default
+using `execution.reveal_network_policy: false`; that option belongs to evaluation
+YAML, not this interactive configuration schema.
+
 ## Configuration File Location
 
 - **CLI**: `configs/cli.json` (if present, loaded automatically)

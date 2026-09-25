@@ -5,6 +5,18 @@ Research and implementation plan for CyberAgentFlow and ScenarioForge
 Date: 2026-09-17  
 Status: Proposed study and software roadmap; experiments have not been conducted.
 
+Implementation update (2026-09-24): a separate headless evaluation application now
+shares CAF's engine and tools while owning YAML schedules, per-attempt execution,
+verifiers and dataset export. The main application owns interactive teaming,
+analysis, artifact generation, repair and container tests/document validation.
+ScenarioForge supplies version 3 task packages, historical readiness, explicit
+starting/discoverable facts and audience-specific guides/graphs. CAF retains its
+execution scope; discovery evaluations hide policy lists and objective addresses
+from model prompts. The apps exchange packages by manual transfer in the air-gapped
+lab. See the [current workflow](../docs/artifact-evaluation-workflow.md) and
+[implemented evaluator contract](../docs/experiments.md). The milestones below
+remain the broader research design, not a claim that every component is complete.
+
 ## 1. Purpose
 
 Evaluate whether adding a generated tool, skill, playbook, markdown guide, or other knowledge artifact improves an agent's ability to complete cybersecurity tasks. Measure verified outcomes, reliability, resource use, and operator effort rather than response appearance or tool-call counts alone.
@@ -109,7 +121,9 @@ The current ScenarioForge repository provides useful building blocks:
 - Reproduction bundles with manifests and hashes.
 - Participant and facilitator guides with audience-specific content.
 
-These capabilities support environment preparation. They are not yet an integrated agent benchmark or proof of complete environment reset. Task-specific verifiers must still be implemented.
+These capabilities now connect through an evaluation export/import adapter with
+exact-answer and flag verifiers. They do not prove complete environment reset or
+independent live-state verification. More specialized task verifiers remain future work.
 
 Use three scenario partitions where practical:
 
@@ -306,9 +320,15 @@ Predeclare one primary contrast and endpoint. Label other analyses exploratory o
 
 ## 13. Software additions to CyberAgentFlow
 
+Implementation update: an initial [YAML evaluation runner](../docs/experiments.md) now provides sequential process-isolated attempts, frozen catalog/guidance inputs, schedules, basic answer verifiers, checkpoints, and JSONL/CSV exports. This is a partial Phase 1 implementation; the documentation records remaining isolation, telemetry, executable snapshot, and environment lifecycle requirements. No research outcomes are implied. ScenarioForge evaluation-package export/import now connects saved tasks, private flag verifiers, scenario/deployment identity, and historical readiness gates. Live per-trial readiness and restoration are still required for the broader lifecycle contract.
+
 ### Existing foundations
 
-The repository already includes `MCPSession`, session/message persistence, tool-call records, a SQLite event store, generated-artifact fingerprints, tool tests, and document validation. These support the implementation but do not constitute an experiment runner or efficacy evaluator.
+The repository includes `MCPSession`, session/message persistence, tool-call records,
+a SQLite event store, generated-artifact fingerprints, tool tests and document
+validation. The separate evaluator now uses these foundations for controlled
+attempts and basic outcome checks. Generation tests remain distinct from efficacy
+evaluation; passing them does not establish improvement on scenario tasks.
 
 ### Required components
 

@@ -163,6 +163,19 @@ by the generated plan. `CYBER_AGENT_FLOW_TEST_IMAGE` can select an administrator
 image implementing the same `/runner/runner.py` harness contract. The default templates
 are deliberately small; they are not replicas of a complete Kali deployment.
 
+## Handoff from testing to evaluation
+
+This test runner is part of the main application's artifact workflow. The separate
+YAML evaluator does not invoke it automatically and does not require a passing report
+before launching a trial. Select candidates according to your study protocol and
+retain the current report, source fingerprint, image identity and generation lineage.
+
+The evaluator then measures agent task completion with and without that frozen
+artifact. Its catalog/guidance hash does not include all executable dependencies,
+and it does not automatically import test/repair costs into the dataset. Preserve
+those records separately. See [the end-to-end workflow](artifact-evaluation-workflow.md)
+for the explicit handoff and the difference between tests and evaluation.
+
 ## Developer verification
 
 ```sh

@@ -14,11 +14,18 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 |-----------|-------------|---------------|
 | **WebUI** | Browser-based dashboard with live chat, session browser, and analysis tools | *This document* |
 | **Terminal CLI** | Full-featured REPL with persistent split-screen UI, slash commands, and tab completion | [docs/cli.md](docs/cli.md) |
+| **Separate evaluation CLI** | Headless experimentation application sharing the agent engine; YAML trials, ScenarioForge import and datasets | [docs/experiments.md](docs/experiments.md) |
 | **SSH Server** | Remote-access CLI server — connect from anywhere with `ssh -p 2222 user@host` | [docs/server.md](docs/server.md) |
 
 ---
 
 ## Core Capabilities
+
+For the complete **generate → test/validate → freeze → evaluate** workflow, see
+[Artifacts and evaluation](docs/artifact-evaluation-workflow.md). The main CAF
+application creates and tests artifacts; the separate `cyber-agent-flow-eval`
+project consumes them for controlled comparisons. Configure its `engine.path` to
+this CAF checkout; both reuse the same engine.
 
 - **Fully Localized Execution** — Runs entirely on your local machine or trusted VM. Optional API key auth is supported for authenticated Ollama-compatible endpoints, but credentials stay local and are never written into run logs.
 - **Agentic Tool Execution** — The LLM autonomously triggers local Kali Linux utilities (`nmap`, `tshark`, `arpspoof`, etc.) via the MCP server and integrates raw output directly into its reasoning loop.
@@ -57,6 +64,11 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 ```
 
 ---
+
+The architecture above shows the main WebUI path. The separate evaluator enters
+the shared engine through its own execution adapter, bypassing Flask and using its own
+YAML configuration, workers, records and scoring. See the
+[application-boundary diagram](../cyber-agent-flow-eval/docs/artifact-evaluation-workflow.md#main-application-versus-evaluator).
 
 ## Requirements
 

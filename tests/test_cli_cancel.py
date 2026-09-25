@@ -1,6 +1,7 @@
 """Tests for CLI cancel/interrupt handling, persistent prompt, config loading, and MCPSession cancellation."""
 
 import asyncio
+import pytest
 import argparse
 import io
 import json
@@ -247,7 +248,8 @@ class TestMCPSessionCancelTracking:
         )
         assert session._current_tool_task is None
 
-    def test_chat_clears_current_tool_task_in_finally(self):
+    @pytest.mark.asyncio
+    async def test_chat_clears_current_tool_task_in_finally(self):
         """After chat() finishes (even with error), _current_tool_task should be None."""
         import mcp_client
 
@@ -268,7 +270,7 @@ class TestMCPSessionCancelTracking:
 
         session._run_agent_loop = _fake_agent_loop
 
-        asyncio.run(session.chat("test prompt"))
+        await session.chat("test prompt")
 
         assert session._current_tool_task is None
 

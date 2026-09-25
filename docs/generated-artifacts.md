@@ -71,6 +71,23 @@ becomes available for documents; tools retain the **Test** button and container 
 RAG edits regenerate chunks automatically. Failed edits leave the previous artifact
 intact. Reports become outdated when their files change.
 
+## Handoff to the separate evaluator
+
+Generation, editing and validation belong to the main CAF application. The separate
+`cyber-agent-flow-eval` application consumes selected artifacts; it does not invoke
+these generation APIs or repair candidates during trials.
+
+After development, select a version with current validation/test reports and archive
+its source and provenance. Configure generated tools through an explicit native MCP
+catalog and tool selection, and documents through `guidance_files`. Files in the
+artifact library are not automatically loaded by the evaluator. Skills are plain
+instruction text unless you explicitly prepare additional references; RAG packages
+do not activate retrieval, and templates are not automatically filled.
+
+See [the complete generation-to-evaluation workflow](artifact-evaluation-workflow.md)
+for freezing dependencies, comparing conditions, and keeping held-out answers out of
+the generated material. A valid format or passing tool test is not an efficacy result.
+
 ## API and extensions
 
 - `GET /api/artifacts/types` returns supported types and generation contracts.
