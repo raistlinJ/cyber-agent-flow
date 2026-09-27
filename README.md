@@ -69,6 +69,16 @@ The architecture above shows the main WebUI path. The separate evaluator enters
 the shared engine through its own execution adapter, bypassing Flask and using its own
 YAML configuration, workers, records and scoring. See the
 [application-boundary diagram](../cyber-agent-flow-eval/docs/artifact-evaluation-workflow.md#main-application-versus-evaluator).
+For the full host workflow, use
+[`cyber-agent-flow-orchestrator`](../cyber-agent-flow-orchestrator/README.md):
+ScenarioForge deployment/export → configured artifact generation/testing → frozen
+condition artifacts → `cyber-agent-flow-eval` trials and datasets. The orchestrator
+and evaluator coordinator run on the Proxmox host; CAF and the thin evaluation
+worker run in participant-vm. CAF still owns the engine, tool execution and artifact
+APIs. Standalone evaluator execution remains supported.
+For the evaluator's Proxmox execution layer, see the updated
+[ScenarioForge / CAF evaluation figure](scenarioforge_cyber-agent-flow.png) and
+[three simple experiments](../cyber-agent-flow-eval/examples/README.md).
 
 ## Requirements
 

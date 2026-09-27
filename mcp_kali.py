@@ -2082,6 +2082,15 @@ def _entry_matches_target(entry: str, target: dict) -> bool:
             return target_host == (parsed.hostname or '').lower().rstrip('.')
         return False
 
+    # IP/CIDR scope applies to numeric URL hosts as well as bare addresses.
+    # Hostnames remain hostnames; this does not implicitly resolve DNS targets.
+    if target_kind == 'url':
+        try:
+            target_value = str(ipaddress.ip_address(target_host))
+            target_kind = 'ip'
+        except ValueError:
+            pass
+
     try:
         if '/' in entry_lower:
             entry_net = ipaddress.ip_network(entry_lower, strict=False)
