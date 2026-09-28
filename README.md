@@ -79,6 +79,9 @@ APIs. Standalone evaluator execution remains supported.
 For the evaluator's Proxmox execution layer, see the updated
 [ScenarioForge / CAF evaluation figure](scenarioforge_cyber-agent-flow.png) and
 [three simple experiments](../cyber-agent-flow-eval/examples/README.md).
+The [evaluation flow diagram](scenarioforge_cyber-agent-flow-eval.png) shows how
+the orchestrator delegates trial scheduling, guest execution and private scoring
+to the evaluator while keeping artifact preparation outside scored trials.
 
 ## Requirements
 
