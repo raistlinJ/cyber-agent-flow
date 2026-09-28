@@ -366,3 +366,7 @@ The `Idx` column shown in the output can be passed directly to `--continue` to r
 
 > [!TIP]
 > You can also open `runs/<run_id>/transcript.md` directly in any Markdown viewer for a clean, readable audit trail of what the agent did.
+
+Tool configuration is read into a per-session snapshot under `runs/`; the CLI never
+overwrites the tracked `kali_tools.default.json` catalog. See [runtime tool catalogs and legacy
+migration](configuration.md#runtime-tool-catalogs) for local defaults and overrides.

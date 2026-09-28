@@ -21,6 +21,7 @@ from durable_event_store import DurableEventStore
 from gen_tool_tests import TestRun, TestBusyError, latest_report, write_report, tool_path, fingerprint
 from claude_generation import generate_artifact, refine_artifact, claude_executable, normalize_endpoint, GenerationCancelled
 from pathlib import Path
+from tool_config import session_tools_path, validate_tools
 from artifact_catalog import ARTIFACT_TYPES, DOCUMENT_KINDS, infer_kind, document_instructions
 from artifact_store import document_path, read_document, document_fingerprint, validate_document, validation_report, list_documents
 from gen_tool_test_runtime import cleanup_resources, RuntimeBusyError
@@ -1882,13 +1883,15 @@ def session_start():
                 'error': 'No Kali tools are enabled. Select at least one tool before starting a native session.',
             }), 400
 
-    # Write tools config if provided
     if tools_config:
-        with open(os.path.abspath('kali_tools.json'), 'w') as f:
-            json.dump(tools_config, f, indent=2)
+        try:
+            validate_tools(tools_config)
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
 
     server_type = "apt" if is_apt else "native"
     run_id = _make_run_id(server_type)
+    tools_path = session_tools_path(Path(__file__).resolve().parent, run_id, tools_config) if tools_config else None
     _event_store.create_run(run_id, "starting", {
         "server_type": server_type,
         "model": model,
@@ -1936,6 +1939,7 @@ def session_start():
             max_turns=max_turns,
             tool_timeout=tool_timeout,
             network_policy=network_policy,
+            tools_config_path=tools_path,
             enabled_tool_guides=enabled_tool_guides,
             enabled_playbooks=enabled_playbooks,
             auto_approve_dangerous=auto_approve_dangerous,

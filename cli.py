@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from tool_config import default_tools_path, session_tools_path, validate_tools
 import re
 import shlex
 import signal
@@ -536,34 +537,12 @@ def _install_slash_completion(get_session_ids=None) -> None:
     pass
 
 
-def _copy_tools_config_if_requested(path_text: str | None) -> list[str] | None:
-    if not path_text:
-        config_path = PROJECT_DIR / "kali_tools.json"
-        if not config_path.exists():
-            raise FileNotFoundError(f"Tools config not found: {config_path}")
-        return None
-
-    config_path = _resolve_path(path_text)
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Tools config not found: {config_path}")
-
-    with config_path.open() as config_file:
-        config = json.load(config_file)
-
-    tool_names = [
-        str(tool.get("name", "")).strip()
-        for tool in config.get("tools", [])
-        if isinstance(tool, dict) and str(tool.get("name", "")).strip()
-    ]
-
-    target_path = PROJECT_DIR / "kali_tools.json"
-    if config_path.resolve() != target_path.resolve():
-        with target_path.open("w") as target_file:
-            json.dump(config, target_file, indent=2)
-            target_file.write("\n")
-
-    return tool_names or None
+def _read_tools_config(path_text):
+    # The legacy provisioned/default value selects local settings or shipped defaults.
+    config_path = default_tools_path(PROJECT_DIR) if not path_text or path_text == "kali_tools.json" else _resolve_path(path_text)
+    with config_path.open() as stream:
+        config = validate_tools(json.load(stream))
+    return config, [tool["name"].strip() for tool in config["tools"]] or None
 
 
 def _format_run_path(run_id: str, filename: str = "") -> str:
@@ -1075,7 +1054,7 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="Optional API key. Prefer MCP_API_KEY for shell history safety.")
     parser.add_argument("--no-ssl-verify", action="store_true", help="Disable TLS verification for proxied HTTPS providers.")
     parser.add_argument("--server-command", help="Command used to launch the MCP server.")
-    parser.add_argument("--tools-config", help="Path to a kali_tools.json-compatible file. Defaults to ./kali_tools.json.")
+    parser.add_argument("--tools-config", help="Path to a kali_tools.json-compatible file. Defaults to local kali_tools.json when present, otherwise kali_tools.default.json.")
     parser.add_argument("--continue", dest="continue_run", type=str, metavar="RUN_ID_OR_INDEX",
                         help="Restore a previous interaction by run ID or index (view the 'Idx' column via 'cli.py list-runs').")
     parser.add_argument("--context-window", type=int, help="LLM context window budget in tokens.")
@@ -1133,7 +1112,7 @@ def _effective_urgency(args: argparse.Namespace) -> str | None:
 
 async def _start_session(args: argparse.Namespace, event_handler: TerminalEventHandler) -> MCPSession:
     _validate_session_args(args)
-    enabled_tool_guides = _copy_tools_config_if_requested(args.tools_config)
+    tools_config, enabled_tool_guides = _read_tools_config(args.tools_config)
     server_type = "apt" if "/usr/share/mcp-kali-server/mcp_server.py" in args.server_command else "cli"
 
     run_id = None
@@ -1176,6 +1155,7 @@ async def _start_session(args: argparse.Namespace, event_handler: TerminalEventH
         max_turns=args.max_turns,
         tool_timeout=args.tool_timeout,
         network_policy=args.network_policy,
+        tools_config_path=session_tools_path(PROJECT_DIR, run_id, tools_config),
         enabled_tool_guides=enabled_tool_guides,
         auto_approve_dangerous=auto_approve,
     )

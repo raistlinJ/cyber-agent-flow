@@ -20,4 +20,4 @@ The agent loop auto-loads only the guides for currently enabled tools.
 - Keep guidance operational, not theoretical.
 - Prefer short examples that match real tool schema and constraints.
 - Include defaults, guardrails, and common failure patterns.
-- Use exact tool names as shown in `kali_tools.json` or built-in MCP tool names.
+- Use exact tool names as shown in `kali_tools.default.json` (or local `kali_tools.json`) or built-in MCP tool names.

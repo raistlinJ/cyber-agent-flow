@@ -33,7 +33,7 @@ YAML, not this interactive configuration schema.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `server_command` | string | `"venv/bin/python mcp_kali.py"` | Command to launch the MCP server (Kali tools wrapper) |
-| `tools_config` | string | `"kali_tools.json"` | Path to the JSON file defining available tools |
+| `tools_config` | string | `"kali_tools.json"` | Tool catalog path; uses untracked `kali_tools.json` when present, otherwise shipped `kali_tools.default.json` |
 
 ### Context & Performance
 
@@ -299,3 +299,25 @@ The SSH server requires the `asyncssh` Python package, which is listed in `requi
 ```
 
 If `asyncssh` is not present in the virtualenv, `cli-server.py` will fail to import and the server will not start. See the [SSH Server Troubleshooting](server.md#troubleshooting) section for details.
+
+### Runtime tool catalogs
+
+`kali_tools.default.json` is the tracked, shipped catalog. Optional machine-specific
+settings live in Git-ignored `kali_tools.json`. If that local file is absent, the
+native MCP server and CLI use the shipped defaults. ScenarioForge's existing
+`"tools_config": "kali_tools.json"` setting works with this fallback. An explicit
+absolute path to `kali_tools.default.json` always selects the shipped catalog.
+
+WebUI and CLI sessions save private snapshots under
+`runs/<run-id>/tools-config-<unique-id>.json`, passed to the MCP child through
+`CAF_TOOLS_CONFIG_PATH`. They do not overwrite either catalog. Continued sessions
+receive a new snapshot, retaining earlier snapshots for inspection. Explicit CLI
+config files are read and snapshotted. WebUI selections remain in browser settings.
+The evaluator's existing environment override still selects its experiment catalog.
+
+Older versions tracked and rewrote `kali_tools.json` during normal use. On update,
+the orchestrator can replace that legacy file when it is the only unstaged tracked
+change and the target no longer tracks it. Its old bytes are retained in a private
+guest maintenance backup; the update removes the tracked copy and CAF uses shipped
+defaults unless you supply a new local file. Other source edits and staged changes
+still require review. Subsequent source updates leave untracked local settings alone.

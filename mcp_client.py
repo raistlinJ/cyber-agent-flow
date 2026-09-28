@@ -1442,6 +1442,7 @@ class MCPSession:
         allowed_tools: list[str] | None = None,
         guidance_text: str | None = None,
         reveal_network_policy: bool = True,
+        tools_config_path: str | None = None,
     ):
         self.llm_provider = str(llm_provider or "ollama_direct").strip() or "ollama_direct"
         self.ollama_url = _normalize_provider_base_url(self.llm_provider, ollama_url)
@@ -1449,6 +1450,7 @@ class MCPSession:
         self.ssl_verify = bool(ssl_verify)
         self.model = model
         self.server_command = server_command
+        self.tools_config_path = os.path.abspath(tools_config_path) if tools_config_path else None
         self.context_window = context_window
         self.max_turns = max_turns
         self.tool_timeout = tool_timeout
@@ -2207,6 +2209,7 @@ class MCPSession:
             args=cmd_parts[1:],
             env={
                 **os.environ,
+                **({"CAF_TOOLS_CONFIG_PATH": self.tools_config_path} if self.tools_config_path else {}),
                 "MCP_CURRENT_RUN_ID": self.run_id,
                 "MCP_MODEL": self.model,
                 "MCP_OLLAMA_URL": self.ollama_url,

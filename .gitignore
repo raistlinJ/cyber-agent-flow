@@ -65,3 +65,6 @@ eval-runs/
 
 # Private imported evaluation packages
 eval-inputs/
+
+# Local tool configuration; shipped defaults live in kali_tools.default.json
+/kali_tools.json

@@ -234,7 +234,7 @@ Toggle **Urgency off** to omit the urgency directive for that prompt.
 
 When a tool launches a preserved interactive session (e.g. a Metasploit shell), the backend issues a session ID. The agent can continue interacting via dedicated `interactive_session_*` tools without hanging. You can also take over manually in your own terminal using the recreation guidance shown in the result.
 
-Enable interactive session support for a tool by setting `"interactive_capable": true` in `kali_tools.json`.
+To customize tools locally, copy `kali_tools.default.json` to Git-ignored `kali_tools.json`. Enable interactive session support for a tool by setting `"interactive_capable": true` in that local file. WebUI and CLI sessions use per-session snapshots and leave the shipped catalog unchanged.
 
 ---
 

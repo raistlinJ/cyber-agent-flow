@@ -3,6 +3,7 @@ import json
 import subprocess
 import time
 import os
+from pathlib import Path
 import shlex
 import re
 import errno
@@ -115,7 +116,8 @@ _TOOL_STATUS_FILENAME = "tool_status.json"
 
 def _tools_config_path() -> str:
     """Allow isolated remote jobs to supply a per-run tool catalog."""
-    return os.environ.get("CAF_TOOLS_CONFIG_PATH") or "kali_tools.json"
+    from tool_config import default_tools_path
+    return os.environ.get("CAF_TOOLS_CONFIG_PATH") or str(default_tools_path(Path(__file__).resolve().parent))
 
 _tools_config_cache: dict | None = None
 _tools_config_mtime: float = 0.0
