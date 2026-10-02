@@ -2338,12 +2338,14 @@ class MCPSession:
         if self._logger:
             self._logger.save_messages(self.messages)
 
-    async def chat(self, prompt: str, cancel_event: asyncio.Event | None = None, scope: str | None = None, urgency: str | None = None):
+    async def chat(self, prompt: str, cancel_event: asyncio.Event | None = None, scope: str | None = None, urgency: str | None = None, progress_callback=None):
         """
         Send a user prompt into the running session. Runs the full agent loop
         (LLM → tool calls → LLM … until text-only response), then returns.
 
-        The conversation history carries over between calls.
+        The conversation history carries over between calls. An optional async
+        progress_callback receives bounded tool evidence between turns and may
+        return assistance text. Assistance never increases the turn budget.
         """
         if not self._started:
             _emit(self.event_callback, "error", {"message": "Session not started. Call start() first."})
@@ -2352,7 +2354,7 @@ class MCPSession:
         # Serialise chat calls so two prompts don't overlap
         async with self._chat_lock:
             try:
-                await self._run_agent_loop(prompt, cancel_event, scope=scope, urgency=urgency)
+                await self._run_agent_loop(prompt, cancel_event, scope=scope, urgency=urgency, **({"progress_callback": progress_callback} if progress_callback else {}))
             except asyncio.CancelledError:
                 # Top level task was aborted violently, cleanly exit
                 if cancel_event:
@@ -2404,12 +2406,28 @@ class MCPSession:
                 })
                 await asyncio.sleep(delay_seconds)
 
-    async def _run_agent_loop(self, prompt: str, cancel_event: asyncio.Event | None, scope: str | None = None, urgency: str | None = None):
+    async def _run_agent_loop(self, prompt: str, cancel_event: asyncio.Event | None, scope: str | None = None, urgency: str | None = None, progress_callback=None):
         """Core agent loop for a single chat turn."""
         self._logger.log_prompt(prompt)
         self.messages.append({"role": "user", "content": prompt})
         self._save_messages()
         turn_tool_results: list[dict] = []
+        observed_results = 0
+
+        async def offer_hint(turn, final_answer=None):
+            nonlocal observed_results
+            if progress_callback is None or turn >= self.max_turns or (cancel_event and cancel_event.is_set()):
+                return False
+            observation = {"turn": turn, "results": [str(r.get("result", ""))[:1200]
+                           for r in turn_tool_results[observed_results:][-2:] if r.get("exit_code") in (None, 0)], "final_answer": final_answer}
+            observed_results = len(turn_tool_results)
+            hint = await progress_callback(observation)
+            if not hint:
+                return False
+            self.messages.append({"role": "user", "content": "Evaluator assistance: " + hint})
+            self._save_messages()
+            _emit(self.event_callback, "progressive_hint", {"turn": turn, "message": hint})
+            return True
         provider_name = _normalize_provider_name(self.llm_provider)
 
         max_iterations = self.max_turns
@@ -2624,6 +2642,8 @@ class MCPSession:
 
             # If no tool calls, this turn is done
             if not tool_calls:
+                if await offer_hint(iteration + 1, content):
+                    continue
                 _emit(self.event_callback, "chat_done", {
                     "message": "Ready for next prompt."
                 })
@@ -2632,6 +2652,7 @@ class MCPSession:
             # Execute each tool call via MCP
             if await self._execute_tool_calls(tool_calls, turn_tool_results, cancel_event):
                 return
+            await offer_hint(iteration + 1)
 
         # Hit iteration limit for this turn
         _emit(self.event_callback, "status", {
