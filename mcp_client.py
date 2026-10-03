@@ -2371,7 +2371,15 @@ class MCPSession:
                     self._current_tool_task = None
                 _emit_chat_cancelled(self.event_callback)
             except Exception as e:
-                if _is_transient_transport_error(e):
+                if isinstance(e, requests.exceptions.ConnectTimeout):
+                    _emit(self.event_callback, "error", {
+                        "message": "Connection to the LLM provider timed out. Verify the configured model URL, network route and model server availability."
+                    })
+                elif isinstance(e, requests.exceptions.ConnectionError):
+                    _emit(self.event_callback, "error", {
+                        "message": "Could not connect to the LLM provider. Verify the configured model URL and port, and ensure the model server is listening and reachable. See worker.log for connection details."
+                    })
+                elif _is_transient_transport_error(e):
                     _emit(self.event_callback, "error", {
                         "message": "Connection to the LLM provider was reset mid-request. Please retry the prompt; if this repeats, verify the model server is healthy and reachable."
                     })
