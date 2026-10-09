@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+import hashlib
 from datetime import datetime
 
 from timestamp_utils import now_timestamp
@@ -46,6 +47,7 @@ class SessionLogger:
                             to enable real-time SSE broadcasting.
         """
         self._event_callback = event_callback
+        self.run_id = run_id
 
         if base_dir is None:
             base_dir = os.environ.get("CAF_RUN_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
@@ -54,9 +56,13 @@ class SessionLogger:
         self.tool_calls_dir = os.path.join(self.run_dir, "tool_calls")
         self.artifacts_dir = os.path.join(self.run_dir, "artifacts")
         self._tool_counter = 0
+        self.last_evidence_id = None
 
         os.makedirs(self.tool_calls_dir, exist_ok=True)
         os.makedirs(self.artifacts_dir, exist_ok=True)
+        # Continuing a standalone session must not overwrite earlier evidence.
+        self._tool_counter = max([0] + [int(name.split('_', 1)[0]) for name in os.listdir(self.tool_calls_dir)
+                                      if name.endswith('.json') and name.split('_', 1)[0].isdigit()])
 
         self._metadata_path = os.path.join(self.run_dir, "metadata.json")
         self._transcript_path = os.path.join(self.run_dir, "transcript.md")
@@ -136,6 +142,9 @@ class SessionLogger:
         path = os.path.join(self.tool_calls_dir, filename)
 
         record = {
+            "evidence_id": f"{self.run_id}:tool-{self._tool_counter:06d}",
+            "output_sha256": hashlib.sha256(result.encode()).hexdigest(),
+            "output_file": f"artifacts/{self._tool_counter:03d}_{safe_name}_output.txt" if len(result) > 1024 else None,
             "seq": self._tool_counter,
             "timestamp": _now_formatted(),
             "tool": name,
@@ -148,6 +157,7 @@ class SessionLogger:
             "graceful_stop": graceful_stop,
             "cancelled": cancelled,
         }
+        self.last_evidence_id = record['evidence_id']
 
         with open(path, "w") as f:
             json.dump(record, f, indent=2)
@@ -173,6 +183,8 @@ class SessionLogger:
             f.write(f"```\n{preview}\n```\n\n")
 
         self._emit_event("tool_result", {
+            "evidence_id": record['evidence_id'],
+            "record_file": 'tool_calls/' + filename,
             "tool": name,
             "args": args,
             "result": result if len(result) <= 4096 else result[:4096] + "...(truncated)",

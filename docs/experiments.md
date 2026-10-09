@@ -11,3 +11,17 @@ Use the installed `cyber-agent-flow-eval` command or `python -m cyber_agent_flow
 from the evaluator environment. The former `python -m experiments` command was removed
 from CAF. Add `engine.path` (CAF checkout) and optionally `engine.python` (CAF interpreter)
 to migrated YAML files; move/rebase catalog and guidance paths and start a new run output.
+
+## Challenge rubrics and evidence IDs
+
+Evaluator-managed tasks can include a public challenge rubric and evidence-report
+scaffold. Exact checks, an independent evidence-reading judge, or both establish
+completion. Outcomes distinguish success, partial completion, failure and missing
+verification. This is configured in the separate evaluator/orchestrator; CAF's
+standalone sessions and tool workflows require neither application.
+
+Native tool-call JSON/events now include a stable `evidence_id` and full-output
+SHA-256. Large output points to its saved artifact. Continuing a session preserves
+prior evidence IDs/files, and the agent can cite these IDs in its report. IDs and
+hashes identify recorded observations; an agent's claim alone is not proof of
+completion. See the [rubric and study guide](../../cyber-agent-flow-orchestrator/docs/rubric-experiments.md).

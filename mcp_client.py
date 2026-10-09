@@ -2857,6 +2857,7 @@ class MCPSession:
                         self._active_interactive_sessions.discard(closed_id)
 
                 context_result = _truncate_tool_output(result_text)
+                context_result += "\n[Evidence ID: " + self._logger.last_evidence_id + "]"
                 self.messages.append({
                     "role": "tool",
                     "content": context_result,
