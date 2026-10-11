@@ -1,4 +1,5 @@
 import asyncio
+import ast
 import json
 import subprocess
 import time
@@ -16,7 +17,7 @@ import termios
 import atexit
 from urllib.parse import urlparse
 from mcp.server import Server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, CallToolResult
 
 server = Server("mcp-kali")
 
@@ -1208,6 +1209,8 @@ def _run_subprocess_with_timeout_prompt(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             stdin=subprocess.DEVNULL,
         )
@@ -1226,6 +1229,8 @@ def _run_subprocess_with_timeout_prompt(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     checkpoint_index = 0
     _clear_timeout_control_files()
@@ -2118,9 +2123,19 @@ def _entry_matches_target(entry: str, target: dict) -> bool:
     return False
 
 
-def _evaluate_network_policy(policy: dict, arguments: dict) -> tuple[bool, str | None]:
+def _evaluate_network_policy(policy: dict, arguments: dict, tool_name: str | None = None) -> tuple[bool, str | None]:
     normalized = _normalize_network_policy(policy)
-    targets = _extract_targets_from_args(arguments)
+    if tool_name == 'python3' and isinstance(arguments.get('args'), str):
+        try:
+            code = ast.parse(arguments['args'])
+        except SyntaxError:
+            return False, 'Python tool requires valid source code for target validation.'
+        # Inspect literal destinations in source, not method names such as
+        # s.close, which are Python identifiers rather than network hosts.
+        literals = [n.value for n in ast.walk(code) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        targets = _extract_targets_from_args({'literals':literals})
+    else:
+        targets = _extract_targets_from_args(arguments)
     if not targets:
         return True, None
 
@@ -2241,7 +2256,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if not tool_config:
         return [TextContent(type="text", text=f"Error: Tool {name} not found in config")]
 
-    policy_allowed, policy_message = _evaluate_network_policy(_NETWORK_POLICY, arguments)
+    policy_allowed, policy_message = _evaluate_network_policy(_NETWORK_POLICY, arguments, name)
     if not policy_allowed:
         return [TextContent(type="text", text=f"Policy blocked tool call to {name}: {policy_message}")]
 
@@ -2464,18 +2479,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif stderr:
             output += f"\nSTDERR:\n{stderr}"
 
+        exit_code = 0 if execution.get("interactive_handoff") or execution.get("interactive_preserved") or execution.get("graceful_stop") else int(execution.get("returncode") or 0)
         # Log the tool call
         _logger.log_tool_call(
             name=name,
             args=arguments,
             result=output or "Command executed successfully (no output)",
             duration_ms=duration_ms,
-            exit_code=0 if execution.get("interactive_handoff") or execution.get("interactive_preserved") or execution.get("graceful_stop") else int(execution.get("returncode") or 0),
+            exit_code=exit_code,
             stderr=stderr,
             graceful_stop=execution.get("graceful_stop", False),
         )
 
-        return [TextContent(type="text", text=output or "Command executed successfully (no output)")]
+        return CallToolResult(content=[TextContent(type="text", text=output or "Command executed successfully (no output)")],
+                              structuredContent={"exit_code":exit_code}, isError=exit_code!=0)
     except subprocess.TimeoutExpired as e:
         if name == "msf_run":
             err_msg = (
@@ -2487,11 +2504,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         else:
             err_msg = f"Execution error: Command timed out after {int(e.timeout)} seconds"
         _logger.log_tool_call(name=name, args=arguments, result=err_msg, exit_code=-1)
-        return [TextContent(type="text", text=err_msg)]
+        return CallToolResult(content=[TextContent(type="text", text=err_msg)], structuredContent={"exit_code":-1}, isError=True)
     except Exception as e:
         err_msg = f"Execution error: {str(e)}"
         _logger.log_tool_call(name=name, args=arguments, result=err_msg, exit_code=-1)
-        return [TextContent(type="text", text=err_msg)]
+        return CallToolResult(content=[TextContent(type="text", text=err_msg)], structuredContent={"exit_code":-1}, isError=True)
 
 async def main():
     try:

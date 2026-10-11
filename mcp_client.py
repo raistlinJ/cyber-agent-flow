@@ -22,6 +22,7 @@ replaced with a compact summary, keeping the most recent turns intact.
 """
 
 import asyncio
+import ast
 import ipaddress
 import json
 import os
@@ -876,9 +877,19 @@ def _entry_matches_target(entry: str, target: dict) -> bool:
     return False
 
 
-def _evaluate_network_policy(policy: dict, arguments: dict) -> tuple[bool, str | None]:
+def _evaluate_network_policy(policy: dict, arguments: dict, tool_name: str | None = None) -> tuple[bool, str | None]:
     normalized = _normalize_network_policy(policy)
-    targets = _extract_targets_from_args(arguments)
+    if tool_name == 'python3' and isinstance(arguments.get('args'), str):
+        try:
+            code = ast.parse(arguments['args'])
+        except SyntaxError:
+            return False, 'Python tool requires valid source code for target validation.'
+        # Inspect literal destinations in source, not method names such as
+        # s.close, which are Python identifiers rather than network hosts.
+        literals = [n.value for n in ast.walk(code) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        targets = _extract_targets_from_args({'literals':literals})
+    else:
+        targets = _extract_targets_from_args(arguments)
     if not targets:
         return True, None
 
@@ -2690,7 +2701,7 @@ class MCPSession:
             tool_name, tool_args = _extract_tool_info(tc)
             tool_call_id = _tool_call_identifier(tc)
 
-            policy_allowed, policy_message = _evaluate_network_policy(self.network_policy, tool_args)
+            policy_allowed, policy_message = _evaluate_network_policy(self.network_policy, tool_args, tool_name)
             if self.allowed_tools is not None and tool_name not in self.allowed_tools:
                 policy_allowed, policy_message = False, "Tool excluded by execution configuration"
             if not policy_allowed:
@@ -2805,7 +2816,9 @@ class MCPSession:
                     )
 
                 is_error = getattr(result, "isError", False)
-                exit_code = -1 if is_error else 0
+                structured = getattr(result, "structuredContent", None) or {}
+                recorded_code = structured.get("exit_code") if isinstance(structured, dict) else None
+                exit_code = recorded_code if type(recorded_code) is int else -1 if is_error else 0
 
                 graceful_stop = result_text.startswith("[GRACEFUL STOP]")
                 is_cancelled = bool(cancel_event and cancel_event.is_set())

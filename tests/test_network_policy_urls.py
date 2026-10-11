@@ -25,3 +25,14 @@ def test_numeric_url_scope(module_name, allow, disallow, url, expected):
     assert allowed is expected
     if not allowed:
         assert message == 'Target is not permitted by the execution policy.'
+
+
+@pytest.mark.parametrize('module_name',['mcp_client','mcp_kali'])
+def test_python_literal_targets_do_not_treat_methods_as_hosts(module_name):
+    module=importlib.import_module(module_name)
+    code='import socket\nfor host,port in [("10.51.24.2",11521),("10.46.25.2",4505)]:\n s=socket.create_connection((host,port),timeout=5)\n s.close()'
+    policy={'allow':['10.51.24.0/24','10.46.25.0/24'],'disallow':['192.168.0.53/32']}
+    assert module._evaluate_network_policy(policy,{'args':code},'python3')==(True,None)
+    assert module._evaluate_network_policy(policy,{'args':code.replace('10.46.25.2','192.168.0.53')},'python3')[0] is False
+    assert module._evaluate_network_policy(policy,{'args':code.replace('10.46.25.2','203.0.113.5')},'python3')[0] is False
+    assert module._evaluate_network_policy(policy,{'args':'syntax ???'},'python3')[0] is False

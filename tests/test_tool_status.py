@@ -46,3 +46,26 @@ def test_tool_status_ipc_flow(tmp_path):
         # Clear files
         mcp_kali._clear_timeout_control_files()
         assert not os.path.exists(status_path)
+
+
+@pytest.mark.parametrize('logged',[False,True])
+def test_binary_service_output_does_not_abort_execution(tmp_path,monkeypatch,logged):
+    import sys
+    monkeypatch.setattr(mcp_kali,'_run_dir_for_current_session',lambda: str(tmp_path) if logged else None)
+    monkeypatch.setattr(mcp_kali,'_clear_timeout_control_files',lambda: None)
+    result=mcp_kali._run_subprocess_with_timeout_prompt(
+        [sys.executable,'-c','import sys;sys.stdout.buffer.write(bytes([255,65]));sys.exit(7)'],
+        5,'curl',{},idle_timeout_seconds=0)
+    assert result['stdout']=='\ufffdA'
+    assert result['returncode']==7
+
+
+@pytest.mark.parametrize('code',[0,7,28])
+def test_mcp_results_expose_actual_exit_code(monkeypatch,code):
+    import asyncio
+    monkeypatch.setattr(mcp_kali,'_get_tools_config',lambda:{'tools':[{'name':'curl','command':'curl'}]})
+    monkeypatch.setattr(mcp_kali,'_NETWORK_POLICY',{'allow':['10.0.0.0/24'],'disallow':[]})
+    monkeypatch.setattr(mcp_kali,'_run_subprocess_with_timeout_prompt',lambda *a,**k:{'stdout':'output','stderr':'failure' if code else '', 'returncode':code,'duration_ms':1})
+    result=asyncio.run(mcp_kali.call_tool('curl',{'args':'http://10.0.0.2/'}))
+    assert result.structuredContent=={'exit_code':code}
+    assert result.isError is (code!=0)
