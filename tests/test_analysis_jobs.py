@@ -44,6 +44,20 @@ def test_analysis_accepts_required_markdown_headings(span, prefix):
     assert app._analysis_response_is_valid(response, span, ["tooling_assets"])
 
 
+def test_analysis_trial_helper_is_requested_and_templated():
+    import app
+
+    outputs = app._normalize_analysis_outputs(["trial_helper", "trial_helper", "unknown"])
+    assert outputs == ["trial_helper"]
+    sections = app._analysis_required_sections("Entire Session", outputs)
+    assert "Generated Trial Helper" in sections
+    prompt = app._build_system_prompt_for_analysis(
+        "Entire Session", app._format_analysis_sections(sections), True, outputs
+    )
+    assert "fresh agent" in prompt
+    assert "Never include recovered flags" in prompt
+
+
 @pytest.mark.parametrize("invalid_passes", [0, 1, 2, 3])
 def test_analysis_retry_validation(monkeypatch, tmp_path, invalid_passes):
     import app

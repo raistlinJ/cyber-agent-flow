@@ -842,7 +842,7 @@ def _normalize_analysis_outputs(raw_outputs) -> list[str]:
     seen = set()
     for value in raw_outputs or []:
         normalized = str(value or "").strip().lower()
-        if normalized in {"tooling_assets", "progress_analysis"} and normalized not in seen:
+        if normalized in {"tooling_assets", "progress_analysis", "trial_helper"} and normalized not in seen:
             allowed.append(normalized)
             seen.add(normalized)
     return allowed
@@ -863,6 +863,8 @@ def _analysis_required_sections(span_req: str, analysis_outputs=None) -> list[st
             sections.insert(5, "Progress Analysis")
         if "tooling_assets" in outputs:
             sections.insert(len(sections) - 1, "Recommended Tooling Assets")
+        if "trial_helper" in outputs:
+            sections.insert(len(sections) - 1, "Generated Trial Helper")
         return sections
 
     sections = [
@@ -876,6 +878,8 @@ def _analysis_required_sections(span_req: str, analysis_outputs=None) -> list[st
         sections.insert(4, "Progress Analysis")
     if "tooling_assets" in outputs:
         sections.insert(len(sections) - 1, "Recommended Tooling Assets")
+    if "trial_helper" in outputs:
+        sections.insert(len(sections) - 1, "Generated Trial Helper")
     return sections
 
 
@@ -925,6 +929,12 @@ def _build_analysis_output_template(span_req: str, analysis_outputs=None) -> str
             "- Remaining Blocker: <unknown, risk, or unresolved dependency>\n"
             "- Potential Reduction: <time, turns, or manual effort that could be saved now>\n"
             "- Impact On Next Step: <how this changes prioritization>"
+        ),
+        "Generated Trial Helper": (
+            "Write a concise Markdown playbook for a fresh agent attempting the same class of task.\n"
+            "Include useful decision points, tool-selection advice, validation steps, and recovery paths.\n"
+            "Do not include flags, passwords, tokens, exact answers, private references, or claims about the prior run.\n"
+            "Do not include this placeholder text in the completed response."
         ),
         "Recommended Next Changes": (
             "- Change: <what to do next>\n"
@@ -1435,6 +1445,13 @@ def _build_system_prompt_for_analysis(span_req, sections_text, meaningful_eviden
                 "- Whether it changes the recommended next step\n\n"
                 if "progress_analysis" in normalized_outputs else ""
             )
+            + (
+                "In the Generated Trial Helper section, write a self-contained Markdown playbook that can be supplied as optional guidance to a fresh agent on a clean rerun. "
+                "Base it only on participant-visible transcript and tool evidence. Generalize from observed friction into procedural advice, decision points, tool choices, validation checks, and recovery paths. "
+                "Never include recovered flags, passwords, tokens, exact challenge answers, private references, judge-only material, or statements that reveal the outcome of the reviewed run. "
+                "Do not mention this analysis or the previous run.\n\n"
+                if "trial_helper" in normalized_outputs else ""
+            )
             +
             "You must explicitly compare observed behavior against the enabled tool inventory. Call out when a tool was available but unused.\n"
             "Be explicit when estimating savings. Use approximate but defensible ranges like 'save 1-2 tool calls', 'reduce manual steps by 50-70%', or 'cut repeated search attempts from 5 turns to 2'. "
@@ -1463,6 +1480,10 @@ def _build_system_prompt_for_analysis(span_req, sections_text, meaningful_eviden
             + (
                 "In Progress Analysis, summarize the major findings already established in this slice, the current blockers, and the most defensible time or turn reductions available right now. "
                 if "progress_analysis" in normalized_outputs else ""
+            )
+            + (
+                "In Generated Trial Helper, provide a concise reusable playbook for a fresh agent. Exclude exact answers, credentials, flags, tokens, private references, and prior-run outcomes. "
+                if "trial_helper" in normalized_outputs else ""
             )
             +
             "Prefer tactical recommendations that can be acted on immediately during the current engagement."
