@@ -78,6 +78,44 @@
       "description": "BGP peer manipulation and route injection tool (ExaBGP). Used to establish BGP sessions with a peer, announce or withdraw prefixes, and probe BGP implementations. Typically invoked with a configuration file: exabgp <config.conf>. Can also be used for BGP fuzzing and monitoring. Requires exabgp installed (apt install exabgp).",
       "allow_args": true,
       "timeout_seconds": 60
+    },
+    {
+      "name": "shell",
+      "command": "/bin/false",
+      "description": "Run one low-risk local inspection command from CAF's strict allowlist. Supports ls, cat, grep, docker, ip, ss, ps, uname, id, pwd, whoami, find, and netstat. Does not allow pipes, redirects, or command chaining.",
+      "allow_args": true,
+      "timeout_seconds": 120
+    },
+    {
+      "name": "shell_extended",
+      "command": "/bin/false",
+      "description": "Run one bounded, read-oriented network command through CAF guardrails. Supports curl, dig, host, nslookup, openssl s_client, tracepath, traceroute, and ping with enforced safety limits.",
+      "allow_args": true,
+      "timeout_seconds": 120
+    },
+    {
+      "name": "shell_sequence",
+      "command": "/bin/false",
+      "description": "Run up to three shell_extended-compatible commands in sequence. Pass a JSON array of command strings or one command per line.",
+      "allow_args": true,
+      "timeout_seconds": 120
+    },
+    {
+      "name": "msf_run",
+      "command": "msfconsole",
+      "base_args": ["-q", "-x", "{args}"],
+      "description": "Execute a bounded Metasploit command sequence through msfconsole batch mode. Interactive sessions are preserved for the interactive_session tools when possible.",
+      "allow_args": true,
+      "timeout_seconds": 300,
+      "interactive_capable": true
+    },
+    {
+      "name": "shell_dangerous",
+      "command": "/bin/sh",
+      "description": "Execute a less restricted command with /bin/sh -lc. Supports pipes, redirects, and command chaining. CAF requires explicit approval unless dangerous actions are deliberately auto-approved for an isolated unattended run.",
+      "allow_args": true,
+      "timeout_seconds": 300,
+      "interactive_capable": true
     }
   ]
 }

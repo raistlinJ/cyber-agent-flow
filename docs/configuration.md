@@ -307,6 +307,10 @@ settings live in Git-ignored `kali_tools.json`. If that local file is absent, th
 native MCP server and CLI use the shipped defaults. ScenarioForge's existing
 `"tools_config": "kali_tools.json"` setting works with this fallback. An explicit
 absolute path to `kali_tools.default.json` always selects the shipped catalog.
+The shipped catalog exposes the guarded command-line tools `shell`,
+`shell_extended`, `shell_sequence`, and `msf_run`, plus `shell_dangerous`.
+`shell_dangerous` still requires CAF's explicit approval unless the embedding
+caller deliberately enables unattended dangerous approval.
 
 WebUI and CLI sessions save private snapshots under
 `runs/<run-id>/tools-config-<unique-id>.json`, passed to the MCP child through
