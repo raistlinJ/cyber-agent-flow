@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const analysisApiKeyInput = document.getElementById('analysis-api-key');
     const maxTurnsInput = document.getElementById('max-turns');
     const toolTimeoutInput = document.getElementById('tool-timeout');
+    const toolNoTimeout = document.getElementById('tool-no-timeout');
+    function syncToolNoTimeout() { if (toolNoTimeout && toolTimeoutInput) { toolNoTimeout.checked = Number(toolTimeoutInput.value) === 0; toolTimeoutInput.disabled = toolNoTimeout.checked; } }
+    toolNoTimeout?.addEventListener('change', () => { if (toolNoTimeout.checked) { toolTimeoutInput.dataset.finiteTimeout = toolTimeoutInput.value || '120'; toolTimeoutInput.value = '0'; } else { toolTimeoutInput.value = toolTimeoutInput.dataset.finiteTimeout || '120'; } syncToolNoTimeout(); toolTimeoutInput.dispatchEvent(new Event('change', {bubbles:true})); });
     const policyTargetsInput = document.getElementById('policy-targets');
     const policyEntryHint = document.getElementById('policy-entry-hint');
     const policyEntryTypeInputs = document.querySelectorAll('input[name="policy-entry-type"]');
@@ -805,8 +808,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (maxTurnsInput && payload.maxTurns) {
                 maxTurnsInput.value = String(payload.maxTurns);
             }
-            if (toolTimeoutInput && payload.toolTimeout) {
+            if (toolTimeoutInput && payload.toolTimeout != null) {
                 toolTimeoutInput.value = String(payload.toolTimeout);
+                syncToolNoTimeout();
             }
 
             if (kaliCommandType && payload.kaliCommandType) {
@@ -2889,8 +2893,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (!Number.isInteger(toolTimeout) || toolTimeout < 1 || toolTimeout > 3600) {
-            showAlert('Default tool timeout must be between 1 and 3600 seconds.', 'error');
+        if (!Number.isInteger(toolTimeout) || toolTimeout < 0 || toolTimeout > 3600) {
+            showAlert('Default tool timeout must be between 0 and 3600 seconds (0 means no timeout and may wait indefinitely).', 'error');
             return;
         }
 

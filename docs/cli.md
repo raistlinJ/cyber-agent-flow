@@ -370,3 +370,8 @@ The `Idx` column shown in the output can be passed directly to `--continue` to r
 Tool configuration is read into a per-session snapshot under `runs/`; the CLI never
 overwrites the tracked `kali_tools.default.json` catalog. See [runtime tool catalogs and legacy
 migration](configuration.md#runtime-tool-catalogs) for local defaults and overrides.
+
+
+Use `--tool-timeout 0` for **no timeout**. This disables MCP elapsed and idle
+checkpoints; a hung tool may wait indefinitely. You can still cancel the run.
+Explicit time limits passed to a command remain in effect.

@@ -1884,8 +1884,8 @@ def session_start():
     if max_turns < 1 or max_turns > 100:
         return jsonify({'success': False, 'error': 'max_turns must be between 1 and 100'}), 400
 
-    if tool_timeout < 1 or tool_timeout > 3600:
-        return jsonify({'success': False, 'error': 'tool_timeout must be between 1 and 3600'}), 400
+    if tool_timeout < 0 or tool_timeout > 3600:
+        return jsonify({'success': False, 'error': 'tool_timeout must be between 0 and 3600; 0 means no timeout and may wait indefinitely'}), 400
 
     if not model:
         return jsonify({'success': False, 'error': 'No model selected'}), 400

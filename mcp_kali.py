@@ -110,6 +110,7 @@ _MSF_RUN_DEFAULT_TIMEOUT = 90
 _MSF_RUN_DEFAULT_WFS_DELAY = 10
 _MAX_SHELL_SEQUENCE_COMMANDS = 3
 _TIMEOUT_CONTROL_DIRNAME = "control"
+UNLIMITED_TOOL_TIMEOUT_SUPPORTED = True
 _TIMEOUT_REQUEST_FILENAME = "tool_timeout_request.json"
 _TIMEOUT_RESPONSE_FILENAME = "tool_timeout_response.json"
 _TOOL_STATUS_FILENAME = "tool_status.json"
@@ -1211,7 +1212,7 @@ def _run_subprocess_with_timeout_prompt(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout_seconds,
+            timeout=timeout_seconds or None,
             stdin=subprocess.DEVNULL,
         )
         return {
@@ -1240,6 +1241,9 @@ def _run_subprocess_with_timeout_prompt(
     next_checkpoint_at = t0 + first_checkpoint
     idle_limit = int(idle_timeout_seconds or _DEFAULT_IDLE_TIMEOUT_SECONDS)
     idle_limit = max(0, idle_limit)
+    if timeout_seconds == 0:
+        next_checkpoint_at = float("inf")
+        idle_limit = 0
     last_activity_at = t0
     last_status_at = t0
     last_seen_sizes = (0, 0)
@@ -1490,6 +1494,9 @@ def _run_interactive_subprocess_with_timeout_prompt(
     next_checkpoint_at = t0 + first_checkpoint
     idle_limit = int(idle_timeout_seconds or _DEFAULT_IDLE_TIMEOUT_SECONDS)
     idle_limit = max(0, idle_limit)
+    if timeout_seconds == 0:
+        next_checkpoint_at = float("inf")
+        idle_limit = 0
     transcript = ""
     last_activity_at = t0
     last_status_at = t0
@@ -2283,7 +2290,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     return [TextContent(type="text", text=error_text)]
     elif name == "shell_sequence":
         default_timeout = int(os.environ.get("MCP_TOOL_TIMEOUT", 120))
-        timeout_seconds = int(tool_config.get("timeout_seconds", default_timeout) or default_timeout)
+        timeout_seconds = 0 if default_timeout == 0 else int(tool_config.get("timeout_seconds") if tool_config.get("timeout_seconds") is not None else default_timeout)
         output, exit_code, duration_ms = await asyncio.to_thread(_run_shell_sequence, arguments, timeout_seconds, config=config)
         _logger.log_tool_call(
             name=name,
@@ -2364,7 +2371,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             
             if has_args_ph or has_timeout_ph:
                 cmd.extend([
-                    a.replace("{args}", user_args).replace("{timeout}", timeout_val) 
+                    a.replace("{args}", user_args).replace("{timeout}", "0" if os.environ.get("MCP_TOOL_TIMEOUT") == "0" else timeout_val)
                     for a in base_args
                 ])
                 # If there was a {timeout} but no {args} placeholder, we still
@@ -2391,7 +2398,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         t0 = time.time()
         default_timeout = int(os.environ.get("MCP_TOOL_TIMEOUT", 300))
-        timeout_seconds = int(tool_config.get("timeout_seconds", default_timeout) or default_timeout)
+        timeout_seconds = 0 if default_timeout == 0 else int(tool_config.get("timeout_seconds") if tool_config.get("timeout_seconds") is not None else default_timeout)
         first_checkpoint_seconds = int(
             tool_config.get("first_checkpoint_seconds", _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS)
             or _DEFAULT_FIRST_TIMEOUT_CHECKPOINT_SECONDS

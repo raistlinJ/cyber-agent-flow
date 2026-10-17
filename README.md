@@ -345,3 +345,11 @@ documents, agent skills, RAG document packages, reusable templates, and structur
 alongside tools and playbooks. Open **Configuration → Artifacts** to preview, download,
 validate, and continue editing them. See [Generated artifacts](docs/generated-artifacts.md)
 for file formats, storage paths, and RAG ingestion details.
+
+
+Tool actions support **No timeout** in the runtime controls, or
+`--tool-timeout 0` in the CLI (`"tool_timeout": 0` in session configuration).
+This disables MCP elapsed and idle timeout checkpoints, including catalog
+checkpoint limits. **A hung command can then wait indefinitely.** Cancellation
+still works, and explicit command-level options (for example a network client's
+own timeout) still apply. Positive timeout defaults are unchanged.
