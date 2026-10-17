@@ -249,9 +249,10 @@
                                         <label for="tool-timeout">Default Tool Timeout (seconds)</label>
                                         <div class="input-with-icon">
                                             <i class="ph ph-hourglass"></i>
-                                            <input type="number" id="tool-timeout" min="1" max="3600" step="1" value="120">
+                                            <input type="number" id="tool-timeout" min="0" max="3600" step="1" value="120">
                                         </div>
-                                        <span class="input-hint">Default time before asking to keep waiting when a tool is running.</span>
+                                        <label class="checkbox-container"><input type="checkbox" id="tool-no-timeout"> No timeout</label>
+                                        <span class="input-hint">Default time before asking to keep waiting. No timeout (0) disables elapsed and idle checkpoints and can lead to an infinite wait. Explicit limits in a command still apply.</span>
                                     </div>
                                 </div>
                             </div>

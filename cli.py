@@ -1059,7 +1059,7 @@ def _add_session_args(parser: argparse.ArgumentParser) -> None:
                         help="Restore a previous interaction by run ID or index (view the 'Idx' column via 'cli.py list-runs').")
     parser.add_argument("--context-window", type=int, help="LLM context window budget in tokens.")
     parser.add_argument("--max-turns", type=int, help="Maximum LLM/tool iterations per prompt.")
-    parser.add_argument("--tool-timeout", type=int, help="Default timeout for tool executions in seconds.")
+    parser.add_argument("--tool-timeout", type=int, help="Default timeout for tool executions in seconds; 0 disables it and may wait indefinitely.")
     parser.add_argument("--allow", action="append", help="Allowed target entry. Repeat or comma-separate values. Default: *")
     parser.add_argument("--disallow", action="append", help="Disallowed target entry. Repeat or comma-separate values.")
     parser.add_argument("--scope", choices=SCOPE_CHOICES, help="Per-prompt scope control.")
@@ -1098,8 +1098,8 @@ def _validate_session_args(args: argparse.Namespace) -> None:
         raise ValueError("--max-turns must be between 1 and 100.")
     if args.context_window < 1024:
         raise ValueError("--context-window must be at least 1024.")
-    if args.tool_timeout < 1 or args.tool_timeout > 3600:
-        raise ValueError("--tool-timeout must be between 1 and 3600.")
+    if args.tool_timeout < 0 or args.tool_timeout > 3600:
+        raise ValueError("--tool-timeout must be between 0 and 3600 (0 disables the timeout and may wait indefinitely).")
 
 
 def _effective_scope(args: argparse.Namespace) -> str | None:

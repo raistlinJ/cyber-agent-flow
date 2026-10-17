@@ -118,7 +118,7 @@ async def _worker(job_dir: Path) -> int:
             ssl_verify=bool(spec.get("ssl_verify", True)), model=spec["model"],
             server_command=spec["server_command"], run_id=spec["run_id"], event_callback=emit,
             context_window=int(spec.get("context_window") or 8192), max_turns=int(spec.get("max_turns") or 20),
-            tool_timeout=int(spec.get("tool_timeout") or 120), network_policy=spec.get("network_policy") or {"allow": ["*"], "disallow": []},
+            tool_timeout=int(spec.get("tool_timeout", 120)), network_policy=spec.get("network_policy") or {"allow": ["*"], "disallow": []},
             auto_approve_dangerous=bool(spec.get("auto_approve_dangerous")),
         )
         tools = await session.start()
