@@ -2130,17 +2130,122 @@ def _entry_matches_target(entry: str, target: dict) -> bool:
     return False
 
 
+def _extract_python_network_targets(code: ast.AST) -> list[dict]:
+    """Extract network destinations without treating ordinary strings as hosts.
+
+    Python snippets often contain dotted filenames (for example
+    ``README.txt``) in protocol commands or display labels.  The generic
+    argument parser cannot distinguish those from hostnames, so Python gets a
+    small amount of AST-aware handling: URLs and numeric addresses remain
+    globally visible, while bare hostnames are accepted only from known
+    network-call destination arguments.
+    """
+    literals = [
+        node.value
+        for node in ast.walk(code)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    targets = [
+        target
+        for target in _extract_targets_from_args({'literals': literals})
+        if target.get('kind') != 'hostname'
+    ]
+
+    bindings: dict[str, list[ast.AST]] = {}
+
+    def bind(target: ast.AST, value: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            bindings.setdefault(target.id, []).append(value)
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            for child_target, child_value in zip(target.elts, value.elts):
+                bind(child_target, child_value)
+
+    for node in ast.walk(code):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            names = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for name in names:
+                if value is not None:
+                    bind(name, value)
+        elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List, ast.Set)):
+            for value in node.iter.elts:
+                bind(node.target, value)
+
+    def string_values(node: ast.AST | None, seen: set[str] | None = None) -> list[str]:
+        if node is None:
+            return []
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, ast.Name) and node.id in bindings:
+            seen = set(seen or ())
+            if node.id in seen:
+                return []
+            seen.add(node.id)
+            values: list[str] = []
+            for value in bindings[node.id]:
+                values.extend(string_values(value, seen))
+            return values
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            values: list[str] = []
+            for item in node.elts:
+                values.extend(string_values(item, seen))
+            return values
+        return []
+
+    tuple_destination_calls = {'create_connection', 'connect', 'connect_ex'}
+    direct_destination_calls = {
+        'FTP', 'FTP_TLS', 'HTTPConnection', 'HTTPSConnection', 'SMTP',
+        'SMTP_SSL', 'Telnet', 'getaddrinfo', 'gethostbyaddr',
+        'gethostbyname', 'gethostbyname_ex', 'getnameinfo',
+    }
+    destination_keywords = {'address', 'host', 'hostname', 'url'}
+    destination_values: list[str] = []
+
+    for node in ast.walk(code):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            call_name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            call_name = node.func.id
+        else:
+            continue
+
+        if call_name in tuple_destination_calls and node.args:
+            destination = node.args[0]
+            if isinstance(destination, (ast.Tuple, ast.List)) and destination.elts:
+                destination = destination.elts[0]
+            destination_values.extend(string_values(destination))
+        elif call_name in direct_destination_calls and node.args:
+            destination_values.extend(string_values(node.args[0]))
+
+        if call_name in tuple_destination_calls | direct_destination_calls:
+            for keyword in node.keywords:
+                if keyword.arg in destination_keywords:
+                    destination_values.extend(string_values(keyword.value))
+
+    targets.extend(_extract_targets_from_args({'destinations': destination_values}))
+    unique: list[dict] = []
+    seen_targets = set()
+    for target in targets:
+        key = (target.get('kind'), target.get('value'), target.get('host'))
+        if key not in seen_targets:
+            seen_targets.add(key)
+            unique.append(target)
+    return unique
+
+
 def _evaluate_network_policy(policy: dict, arguments: dict, tool_name: str | None = None) -> tuple[bool, str | None]:
     normalized = _normalize_network_policy(policy)
     if tool_name == 'python3' and isinstance(arguments.get('args'), str):
+        source, source_error = _python_source_from_args(arguments['args'])
+        if source_error:
+            return False, source_error
         try:
-            code = ast.parse(arguments['args'])
+            code = ast.parse(source)
         except SyntaxError:
             return False, 'Python tool requires valid source code for target validation.'
-        # Inspect literal destinations in source, not method names such as
-        # s.close, which are Python identifiers rather than network hosts.
-        literals = [n.value for n in ast.walk(code) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
-        targets = _extract_targets_from_args({'literals':literals})
+        targets = _extract_python_network_targets(code)
     else:
         targets = _extract_targets_from_args(arguments)
     if not targets:
@@ -2159,6 +2264,44 @@ def _evaluate_network_policy(policy: dict, arguments: dict, tool_name: str | Non
             return False, "Target is not permitted by the execution policy."
 
     return True, None
+
+
+def _python_source_from_args(raw_args: str) -> tuple[str, str | None]:
+    """Normalize either raw source or a conventional ``-c`` invocation.
+
+    The Python catalog tool historically validated raw source but passed it to
+    ``python3`` as a filename.  Models that corrected that with ``-c`` then hit
+    the opposite problem because the policy parser tried to parse the literal
+    ``-c``.  Keep one source representation for both policy validation and
+    execution.
+    """
+    text = str(raw_args or '').strip()
+    if not text:
+        return '', 'Python tool requires source code.'
+    heredoc = re.match(
+        r'^\S*python(?:\d+(?:\.\d+)*)?\s+-\s+<<(?P<quote>[\'\"]?)(?P<label>[A-Za-z_][A-Za-z0-9_]*)'
+        r'(?P=quote)\r?\n(?P<source>[\s\S]*)\r?\n(?P=label)$',
+        text,
+    )
+    if heredoc:
+        source = heredoc.group('source').strip()
+        if not source:
+            return '', 'Python tool requires source code.'
+        return source, None
+    # Tool-calling models commonly include the executable even though the
+    # catalog tool already supplies it (``python3 -c "..."``).  Treat that as
+    # the same source payload instead of trying to parse ``python3`` as code.
+    if text == '-c' or text.startswith('-c ') or re.match(r'^\S*python(?:\d+(?:\.\d+)*)?\s+-c(?:\s|$)', text):
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            return '', 'Python tool requires a valid -c source argument.'
+        if parts and Path(parts[0]).name.startswith('python'):
+            parts = parts[1:]
+        if len(parts) != 2 or parts[0] != '-c' or not parts[1].strip():
+            return '', 'Python tool requires exactly one source string after -c.'
+        return parts[1], None
+    return text, None
 
 # Session logging — optional: if session_logger.py is unavailable the server still works
 try:
@@ -2308,6 +2451,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         cmd = [tool_config["command"]]
         base_args = tool_config.get("base_args", [])
         user_args = arguments.get("args", "")
+        if name == "python3" and isinstance(user_args, str):
+            source, source_error = _python_source_from_args(user_args)
+            if source_error:
+                return [TextContent(type="text", text=source_error)]
+            cmd.extend(["-c", source])
+            base_args = []
+            user_args = ""
         has_timeout_ph = any("{timeout}" in str(a) for a in base_args)
         
         # For timeout-wrapped tools: extract duration hints the LLM may have
