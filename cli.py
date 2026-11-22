@@ -72,6 +72,7 @@ URGENCY_CHOICES = ("stealthy", "methodical", "balanced", "fast", "speed")
 TIMEOUT_WAIT_CHOICES = (30, 60, 90, 120, 300)
 SLASH_COMMANDS = (
     "/help",
+    "/artifacts",
     "/exit",
     "/quit",
     "/cancel",
@@ -1086,6 +1087,9 @@ def _create_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list-runs", help="List saved run metadata.")
     list_parser.add_argument("--limit", type=int, default=20, help="Maximum number of runs to show.")
 
+    from evidence_workspace import add_commands
+    add_commands(subparsers.add_parser("artifacts", help="Manage evidence studies and reviewed artifacts."))
+
     return parser
 
 
@@ -1507,10 +1511,25 @@ async def _handle_repl_command(
 
     if command in {"/exit", "/quit"}:
         return False, current_scope, current_urgency, active_session_id
+    if command == "/artifacts":
+        from evidence_workspace import add_commands, command as artifact_command
+        parser = argparse.ArgumentParser(prog="/artifacts", exit_on_error=False, add_help=False)
+        add_commands(parser)
+        if len(parts) == 1 or parts[1] in ("help", "--help", "-h"):
+            event_handler._print(parser.format_help())
+        else:
+            try:
+                options = parser.parse_args(parts[1:])
+                result = await asyncio.to_thread(artifact_command, options)
+                event_handler._print(json.dumps(result, indent=2))
+            except (SystemExit, argparse.ArgumentError, OSError, ValueError, KeyError) as exc:
+                event_handler._print(f"Artifact command failed: {exc}")
+        return True, current_scope, current_urgency, active_session_id
     if command == "/help":
         event_handler._print(
             f"{Colors.BOLD}Commands:{Colors.RESET}\n"
             f"  {Colors.ACCENT_PRIMARY}/help{Colors.RESET}                       Show this help.\n"
+            f"  {Colors.ACCENT_PRIMARY}/artifacts{Colors.RESET}                  Manage evidence studies and reviewed artifacts.\n"
             f"  {Colors.ACCENT_PRIMARY}/exit{Colors.RESET}                       Stop the session.\n"
             f"  {Colors.ACCENT_PRIMARY}/cancel{Colors.RESET}                     Cancel active background task immediately.\n"
             f"  {Colors.ACCENT_PRIMARY}/force_analyze{Colors.RESET}               Cancel active background task and queue an analysis prompt.\n"
@@ -1814,6 +1833,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = _create_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "artifacts":
+            from evidence_workspace import command
+            print(json.dumps(command(args), indent=2))
+            return 0
         if args.command == "list-runs":
             return _list_runs(args)
         args = _resolve_session_args(args)

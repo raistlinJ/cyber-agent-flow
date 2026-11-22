@@ -33,7 +33,10 @@ except Exception as _system_loggers_import_err:
     NetworkCaptureLogger = None
     SyscallLogger = None
 
+from evidence_web import views as evidence_views
+
 app = Flask(__name__)
+app.register_blueprint(evidence_views)
 
 LOCAL_GGUF_MODEL_SEARCH_ENV = "CYBER_AGENT_FLOW_GGUF_DIR"
 MAX_LOCAL_GGUF_MODEL_RESULTS = 1_000

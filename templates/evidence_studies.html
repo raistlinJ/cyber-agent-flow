@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Evidence studies · CyberAgentFlow</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/evidence_studies.css') }}">
+<script defer src="{{ url_for('static', filename='js/evidence_studies.js') }}"></script>
+</head><body><main>
+<header><a href="/">← CyberAgentFlow</a><h1>Evidence studies</h1></header>
+<p id="message" role="status" aria-live="polite"></p>
+<section aria-labelledby="runs-title">
+<div class="section-head"><h2 id="runs-title">Runs</h2><button id="compare" type="button" disabled>Compare selected runs</button></div>
+<div id="new-run"><label for="profile">Case profile</label> <select id="profile"></select> <button type="button" id="baseline">Run baseline</button></div>
+<details id="ranked"><summary>Automatically rank candidates</summary>
+<form id="study-form"><div id="study-counts" class="counts"></div><div class="actions">
+<label>Keep up to <input name="keep_top" type="number" value="2" min="0" required></label>
+<label>Repetitions <input name="repetitions" type="number" value="1" min="1" required></label>
+<label>Selection <select name="selection"><option value="improve">More flags than baseline</option><option value="ranked">Highest-ranked scores</option></select></label>
+<button type="button" id="plan">Preview plan</button><button type="submit">Run ranked study</button></div></form></details>
+<p id="no-profiles" hidden>Register a case and model configuration in the host’s evidence profiles to start a study.</p>
+<div id="runs"></div>
+</section>
+<section aria-labelledby="work-title"><h2 id="work-title">Artifact reviews</h2><div id="reviews"></div></section>
+<section aria-labelledby="saved-title"><h2 id="saved-title">Runnable experiments</h2><div id="saved"></div></section>
+<section id="detail" hidden tabindex="-1"></section>
+</main></body></html>

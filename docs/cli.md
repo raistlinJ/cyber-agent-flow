@@ -375,3 +375,5 @@ migration](configuration.md#runtime-tool-catalogs) for local defaults and overri
 Use `--tool-timeout 0` for **no timeout**. This disables MCP elapsed and idle
 checkpoints; a hung tool may wait indefinitely. You can still cancel the run.
 Explicit time limits passed to a command remain in effect.
+
+Use `cli.py artifacts` from the shell or `/artifacts` in chat to analyze a registered case run, configure generated artifacts, save runnable experiments and compare flag recovery. See the [evidence study guide](evidence-study.md#review-a-completed-run-in-caf).

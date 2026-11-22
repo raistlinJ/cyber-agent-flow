@@ -40,7 +40,7 @@ class CyberAgentFlowSSHSession(PromptToolkitSSHSession):
             try:
                 cmd_parts = shlex.split(self.client_cmd)
                 # If the user only provided flags (e.g. --context-window), default to chat command
-                if cmd_parts and cmd_parts[0] not in ("chat", "run", "list-runs"):
+                if cmd_parts and cmd_parts[0] not in ("chat", "run", "list-runs", "artifacts"):
                     cmd_parts.insert(0, "chat")
                 args = parser.parse_args(cmd_parts)
             except SystemExit as e:
@@ -50,6 +50,16 @@ class CyberAgentFlowSSHSession(PromptToolkitSSHSession):
             args = argparse.Namespace(**vars(self.base_args))
             args.command = "chat"
             
+        if args.command == "artifacts":
+            import json
+            from evidence_workspace import command
+            try:
+                result = await asyncio.to_thread(command, args)
+                print(json.dumps(result, indent=2))
+            except (OSError, ValueError, KeyError) as exc:
+                print(f"Artifact command failed: {exc}")
+            return
+
         for k, v in vars(self.base_args).items():
             if getattr(args, k, None) is None:
                 setattr(args, k, v)

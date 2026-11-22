@@ -162,3 +162,5 @@ The `asyncssh` package is not installed in the current environment. Run `./start
 
 ### "cli-server.py: error: argument command: invalid choice"
 If you pass arguments via SSH (e.g., `ssh -p 2222 user@host -- --context-window 16384`) and receive an `invalid choice` error, you are likely running an older version of the code that required you to explicitly pass the `chat` subcommand first (`ssh ... -- chat --context-window ...`). Update to the latest code, which automatically defaults to `chat` when only flags are provided.
+
+An SSH exec session accepts `artifacts list` and the other [evidence study commands](evidence-study.md#review-a-completed-run-in-caf). Interactive SSH chat also supports `/artifacts`. The server uses its host-configured case profiles and workspace.

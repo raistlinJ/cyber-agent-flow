@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "url": "http://127.0.0.1:1234/v1",
+    "name": "local-model",
+    "api_key_env": "",
+    "ssl_verify": true
+  },
+  "generation_backend": "model",
+  "candidates": {"playbook": 1, "skill": 1, "tool": 1, "lora_suggestion": 1},
+  "selection": "improve",
+  "keep_top": 2,
+  "repetitions": 1,
+  "seed": 42,
+  "limits": {"max_turns": 8, "wall_seconds": 120, "context_window": 8192, "tool_timeout": 30}
+}

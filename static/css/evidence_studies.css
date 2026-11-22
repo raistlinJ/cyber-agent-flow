@@ -1,0 +1,17 @@
+:root {color-scheme:dark;font-family:Inter,system-ui,sans-serif;color:#e2e8f0;background:#101319}
+* {box-sizing:border-box}
+body {margin:0} main {max-width:64rem;margin:auto;padding:2.2rem clamp(1rem,5vw,4rem) 4rem}
+header {padding:.7rem 0 1.3rem} h1 {font-size:clamp(1.7rem,4vw,2.4rem);margin:.8rem 0 0} h2 {font-size:1.25rem;margin:0} h3 {font-size:1rem}
+a {color:#9fcaff} section {background:#181d26;border:1px solid #303b4d;border-radius:.75rem;margin:1rem 0;padding:1.25rem}
+.section-head,.actions,.row,#new-run {display:flex;align-items:center;gap:.65rem;flex-wrap:wrap}
+.section-head,.row {justify-content:space-between} #new-run,.row {margin-top:.9rem}
+.row {border-top:1px solid #303b4d;padding-top:.7rem} .secondary {color:#b4bfd0;font-size:.9rem}
+button,select,input {font:inherit;background:#202a38;color:inherit;border:1px solid #536581;border-radius:.4rem;padding:.4rem .65rem}
+button {cursor:pointer} button:hover:enabled {background:#304059} button:disabled {opacity:.52;cursor:default}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid #75b7ff;outline-offset:2px}
+input[type=number] {width:5rem} input[type=checkbox] {accent-color:#80baff} label {display:inline-flex;gap:.45rem;align-items:center}
+.counts {display:flex;gap:.9rem;flex-wrap:wrap;margin:1rem 0} .candidate {padding:.7rem 0;border-top:1px solid #303b4d}
+pre {white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.5;margin:.6rem 0 1rem;color:#cbd5e1}
+table {border-collapse:collapse;text-align:left;width:100%;font-size:.9rem}td,th {padding:.5rem .4rem;border-bottom:1px solid #344254}
+.wrap {overflow-x:auto} p {line-height:1.5} #message:empty {display:none}
+[hidden] {display:none!important} #ranked {margin-top:1rem} summary {cursor:pointer}

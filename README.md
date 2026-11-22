@@ -14,6 +14,7 @@ Unlike cloud-dependent conversational hacking tools, this platform ensures that 
 |-----------|-------------|---------------|
 | **WebUI** | Browser-based dashboard with live chat, session browser, and analysis tools | *This document* |
 | **Terminal CLI** | Full-featured REPL with persistent split-screen UI, slash commands, and tab completion | [docs/cli.md](docs/cli.md) |
+| **Case artifact study** | Run, analyze and repeat an offline two-flag ScenarioForge case with configurable artifacts | [Sealed case-file study](docs/evidence-study.md) |
 | **Separate evaluation CLI** | Headless experimentation application sharing the agent engine; YAML trials, ScenarioForge import and datasets | [docs/experiments.md](docs/experiments.md) |
 | **SSH Server** | Remote-access CLI server — connect from anywhere with `ssh -p 2222 user@host` | [docs/server.md](docs/server.md) |
 
